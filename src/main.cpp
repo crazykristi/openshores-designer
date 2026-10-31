@@ -38,6 +38,7 @@
 #include "shipgen.h"
 #include "planbuild.h"
 #include "sohfile.h"
+#include "version.h"
 #include "triplan.h"
 
 namespace {
@@ -1719,7 +1720,7 @@ int cmdGenerateBuilding(const QStringList& args)
 
 void usage()
 {
-	out() << "shipgen - Shores of Hazeron layout generator\n\n";
+	out() << "shipgen " SHIPGEN_VERSION " - Shores of Hazeron layout generator\n\n";
 	out() << "usage:\n";
 	out() << "  shipgen inspect   <design.SoH>\n";
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
@@ -2063,6 +2064,12 @@ int main(int argc, char* argv[])
 
 	const QString command = args.at(1);
 	const QStringList rest = args.mid(2);
+
+	if(command == "--version" || command == "version")
+	{
+		out() << "shipgen " SHIPGEN_VERSION "\n";
+		return 0;
+	}
 
 	if(command == "inspect")			return cmdInspect(rest);
 	if(command == "audit")				return cmdAudit(rest);

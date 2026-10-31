@@ -1,34 +1,41 @@
-# shipgen — Shores of Hazeron internal layout generator
+# Shipgen: a ship designer for Shores of Hazeron and OpenShores
 
-`shipgen` turns a 3D model of a ship and a short requirements brief into
-**finished Shores of Hazeron `.SoH` blueprints** with a complete internal
-layout: rooms, room voids, crew stations, berths, service panels and the hull
-volume that goes with them. It does spacecraft and buildings.
+Tools that make Shores of Hazeron blueprints (`.SoH`) offline, linked
+against the game's own engine source, so that every blueprint they write is
+checked by the engine's own report and opens in the game.
 
-It links directly against the Shores of Hazeron engine libraries, so every
-blueprint it writes is validated by the engine's own report engine and opens
-directly in the in-game designer.
+The main program is the **triangle designer**: draw a ship deck by deck
+with triangles, draw its rooms, doors, windows, ladders and stairs on the
+same triangles, paint it, and build the blueprint (`docs/DESIGNER.md`). The
+long-term aim is an offline designer inside the OpenShores client.
+
+| Program | What it is for |
+|---|---|
+| `shipgen-designer` | **The main program.** The triangle designer. |
+| `shipgen-gui` | Secondary: the automatic generator as a wizard, turning a 3D model and a short brief into a ship or building with a full interior. |
+| `shipgen` | The command line: inspect, audit and validate blueprints, generate, thin models, build designer plans. |
+| `shipgen-mesh` | Load a model, thin it to a number of faces, tidy it up, save it. |
+
+**Download:** the releases on GitHub
+(<https://github.com/crazykristi/openshores-designer/releases>) are an
+AppImage holding the designer, `shipgen-gui` and the command line; see
+*Release: the AppImage* below. **Code, git and making a release:**
+`docs/GIT_AND_RELEASES.md`.
+
+The generator from the command line, for example:
 
 ```
 shipgen generate --model ship.3ds --brief frigate.json --out designs/
 ```
 
-There are four programs:
-
-* `build/bin/shipgen` - the command line tool.
-* `build/bin/shipgen-gui` - the graphical tool: a wizard that walks you
-  through the choices, a 3D preview of the model with the hull drawn see
-  through, the validation report and a list of the generated blueprints.
-* `build/bin/shipgen-mesh` - the mesh tool (see below).
-* `build/bin/shipgen-designer` - the triangle designer: draw the hull, the
-  rooms, the doors and the paint on a grid of triangles, and build the
-  blueprint. See `docs/DESIGNER.md`.
-
 The full documentation is in `docs/`, starting at `docs/README.md`.
 
 ---
 
-## What it does
+## What the generator does
+
+The rest of this page is mostly about the generator (`shipgen`,
+`shipgen-gui`); the designer has its own page, `docs/DESIGNER.md`.
 
 | Input | What happens |
 |---|---|
@@ -429,11 +436,11 @@ remaining models are put together again.
 
 ## What comes next
 
-The plan for the MCP server and the offline designer is in
-`docs/MCP_AND_OFFLINE_DESIGNER.md`. The MCP server lets an AI drive the same
-operations this tool does, over a small JSON interface, with no game and no
-network; it has not been started. The triangle designer
-(`docs/DESIGNER.md`) is the first piece of an offline designer.
+The work list agreed with the user is `docs/BUILDING_TODO.md` (buildings
+first, power plants at the top, then ships, plus the designer's open
+items). The idea of an MCP server, letting an AI drive these tools, is
+written up in `docs/MCP_AND_OFFLINE_DESIGNER.md`; it is not started and
+waits on the user.
 
 ## Building
 
@@ -473,17 +480,18 @@ tested.
 
 ## Release: the AppImage
 
-The triangle designer (`shipgen-designer`) is the main program, released as
-an AppImage that also holds the generator's window (`shipgen-gui`, a
-secondary program) and the command line:
+Releases are an AppImage of the triangle designer that also holds
+`shipgen-gui` and the command line:
 
 ```
-./build.sh && ./package-appimage.sh      # build/shipgen-designer-x86_64.AppImage
-./shipgen-designer-x86_64.AppImage             # the triangle designer
-./shipgen-designer-x86_64.AppImage gui         # the generator's window
-./shipgen-designer-x86_64.AppImage shipgen <command> ...
+./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
+./shipgen-designer-0.3.0-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.0-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.0-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
+The version is in `src/version.h`; the steps of a release are in
+`docs/GIT_AND_RELEASES.md`.
 It bundles Qt 5 with its X11 and Wayland plugins, OpenAL and the other
 libraries, but not the C library, the OpenGL drivers, X11/xcb or the font
 libraries, which come from the system (the AppImage project's rules). It
@@ -584,8 +592,10 @@ and every room box is genuinely inside it. The suite inspects every generated
 ship for rooms outside the hull, rooms that share space, and doors without the
 voids that make them open; paints a single hull and a model in parts and checks
 the texture coordinates; and starts both graphical tools, drawing the 3D
-preview under Xvfb when it is available. A last run on this machine passed
-330 checks over 115 blueprints with no errors.
+preview under Xvfb when it is available. It also builds designer plans
+(doors, windows, ladders, stairs, ramps, bay doors, joined windows, the
+sloped hull) and checks the results. A last run on this machine passed 372
+checks over 126 blueprints with no errors.
 
 ---
 
@@ -618,9 +628,14 @@ src/gui/          the graphical tool
     preview.*       the 3D preview (also used by the mesh tool and the designer)
 src/meshapp/      the mesh tool
 src/designer/     the triangle designer
-tests/probe.cpp   a small program that checks how the engine's geometry
-                  primitives behave
+src/version.h     the release version (SHIPGEN_VERSION)
+tests/*.cpp       small probe programs (build_probe.sh builds one): how the
+                  engine's primitives behave, part vertices and normals,
+                  points inside a hull
 build.sh          builds the engine libraries, the CLI and the three Qt tools
+package-appimage.sh  packs the designer, shipgen-gui and the CLI into an AppImage
+packaging/        the AppImage's icon
+RELEASE_NOTES.md  the notes of the current release
 build-windows.ps1 convenience wrapper that runs build.sh in MSYS2
 deploy-windows.sh collects the Qt/OpenAL/MinGW DLLs for a Windows folder
 test.sh           runs the generator over a matrix of templates and hulls

@@ -47,6 +47,7 @@
 #include "planview.h"
 #include "preview.h"
 #include "shipgen.h"
+#include "version.h"
 
 namespace {
 
@@ -90,7 +91,7 @@ QLabel* Help(const QString& text)
 
 DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 {
-	setWindowTitle("Shipgen designer");
+	setWindowTitle("Shipgen designer " SHIPGEN_VERSION);
 
 	m_view = new PlanView;
 	m_preview = new DesignPreview;
@@ -487,7 +488,7 @@ bool DesignerWindow::OpenPlan(const QString& fileName)
 void DesignerWindow::RefreshTitle()
 {
 	const QString file = m_planFile.isEmpty() ? QString("unsaved") : QFileInfo(m_planFile).fileName();
-	setWindowTitle(QString("Shipgen designer - %1 (%2)%3").arg(m_plan.name, file, m_dirty ? " *" : ""));
+	setWindowTitle(QString("Shipgen designer %1 - %2 (%3)%4").arg(SHIPGEN_VERSION, m_plan.name, file, m_dirty ? " *" : ""));
 }
 
 void DesignerWindow::RefreshAll()

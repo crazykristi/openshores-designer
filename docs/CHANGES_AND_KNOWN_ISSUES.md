@@ -1,5 +1,15 @@
 # Changes and known issues
 
+## 31 October 2026: release 0.3.0-alpha
+
+The first release on GitHub (<https://github.com/crazykristi/openshores-designer>),
+a pre-release: an AppImage of the triangle designer with `shipgen-gui` and
+the command line (`package-appimage.sh`, `RELEASE_NOTES.md`). The version
+is in `src/version.h`; the designer's window title and `--version` show it.
+The documentation gained `docs/GIT_AND_RELEASES.md` (git, the AppImage,
+release steps); the stale status sections in `docs/README.md` and the
+history in `HANDOFF.md` were dropped in favour of this page.
+
 ## 31 October 2026: ramps and stairs
 
 The user asked for the ramp first, then stairwells. Both are made the way

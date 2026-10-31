@@ -3,7 +3,7 @@
 # AppImage, with the generator's window (shipgen-gui) and the shipgen
 # command line inside it too:
 #
-#   ./build.sh && ./package-appimage.sh            -> build/shipgen-designer-x86_64.AppImage
+#   ./build.sh && ./package-appimage.sh            -> build/shipgen-designer-<version>-x86_64.AppImage
 #
 #   ./shipgen-designer-x86_64.AppImage [...]          the triangle designer
 #   ./shipgen-designer-x86_64.AppImage gui [...]      the generator's window (shipgen-gui)
@@ -81,6 +81,12 @@ for f in "$APPDIR"/usr/lib/*.so*; do
 	bundle_deps "$f"
 done
 
+# The licence notice of the game source the programs include (it has to go
+# with every copy), and the release notes.
+mkdir -p "$APPDIR/usr/share/doc/shipgen"
+cp "$HERE/third_party/soh/LICENSE" "$APPDIR/usr/share/doc/shipgen/LICENSE-Shores-of-Hazeron"
+cp "$HERE/RELEASE_NOTES.md" "$APPDIR/usr/share/doc/shipgen/"
+
 # The launcher: the bundled libraries and plugins first, then the program
 # asked for.
 cat > "$APPDIR/AppRun" <<'EOF'
@@ -101,6 +107,7 @@ cat > "$APPDIR/shipgen-designer.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Shipgen Designer
+X-AppImage-Version=@VERSION@
 GenericName=Ship designer
 Comment=Draws ships for Shores of Hazeron and OpenShores, triangle by triangle
 Exec=shipgen-designer
@@ -108,6 +115,7 @@ Icon=shipgen-designer
 Categories=Graphics;3DGraphics;
 Terminal=false
 EOF
+sed -i "s/@VERSION@/$(sed -n 's/^#define SHIPGEN_VERSION "\(.*\)"$/\1/p' "$HERE/src/version.h")/" "$APPDIR/shipgen-designer.desktop"
 cp "$APPDIR/shipgen-designer.desktop" "$APPDIR/usr/share/applications/"
 cp "$HERE/packaging/shipgen-designer.png" "$APPDIR/shipgen-designer.png"
 cp "$HERE/packaging/shipgen-designer.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
@@ -128,7 +136,8 @@ if [ ! -x "$TOOL" ]; then
 	curl -fL -o "$TOOL" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
 	chmod +x "$TOOL"
 fi
-TARGET="$OUT/shipgen-designer-$ARCH.AppImage"
+VERSION="$(sed -n 's/^#define SHIPGEN_VERSION "\(.*\)"$/\1/p' "$HERE/src/version.h")"
+TARGET="$OUT/shipgen-designer-$VERSION-$ARCH.AppImage"
 rm -f "$TARGET"
 # Without FUSE (containers), appimagetool can run unpacked.
 ARCH="$ARCH" "$TOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$TARGET"

@@ -13,6 +13,7 @@
 #include "designerwindow.h"
 #include "dgdata.h"
 #include "logging.h"
+#include "version.h"
 
 int main(int argc, char* argv[])
 {
@@ -34,6 +35,7 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 	QApplication::setApplicationName("Shipgen designer");
+	QApplication::setApplicationVersion(SHIPGEN_VERSION);
 	QApplication::setApplicationDisplayName("Shipgen - draw a Shores of Hazeron ship with triangles");
 
 	// The engine's report and design code reaches for the global data object.
@@ -46,6 +48,7 @@ int main(int argc, char* argv[])
 	QCommandLineParser parser;
 	parser.setApplicationDescription("Draw a ship with triangles and turn it into a Shores of Hazeron blueprint.");
 	parser.addHelpOption();
+	parser.addVersionOption();
 	QCommandLineOption openOption(QStringList() << "o" << "open", "The plan to open.", "plan.json");
 	parser.addOption(openOption);
 	QCommandLineOption stepOption(QStringList() << "step", "The step to show: 1 ship, 2 hull, 3 rooms, 4 paint, 5 build.", "n");

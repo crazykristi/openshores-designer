@@ -1,122 +1,61 @@
 # Handoff state
 
-Updated 31 October 2026 after the user's second test in the game. Start at
-`docs/README.md`; what changed is in `docs/CHANGES_AND_KNOWN_ISSUES.md`.
+Updated 31 October 2026, at the 0.3.0-alpha release. Start at
+`docs/README.md`. What changed, test by test, is in
+`docs/CHANGES_AND_KNOWN_ISSUES.md` (that history is no longer repeated
+here); the user's in-game notes are in `work/ingame*/` (not in git).
 
-**31 October** (notes in `work/ingame2/ingame-test2-observations.md`):
-console chairs now lie on the floor facing fore; walk paths lie on the
-floors; doors are flush with the floor; a ladder path leads down from each
-hull door to below the hull; 3.5 times more maneuver drive; kit looks
-softened (glass domes, fainter big fields, smaller bronze wheels on the
-Brass Cruiser). Test files for the third test: `work/ingame3/`.
+## Where things stand
 
-**Later on 31 October**, after the third test
-(`work/ingame3/ingame-test3-observations.md`): the hull door's ladder moved
-in so that no jump is needed; ladders between decks get an opening and a
-visible ladder; generated ships get windows and the bridge is at the bow;
-the designer has bay doors, vehicle parking spots, a sturdier window tool
-and *New plan from a 3D model* (`shipgen plan-from-model`). Transporter pads
-are understood (`docs/SOH_FORMAT.md`). Test files: `work/ingame4/`
-(`WHAT_TO_TEST.md`).
+* **The triangle designer is the main program** (`shipgen-designer`,
+  `docs/DESIGNER.md`); `shipgen-gui` is secondary. The long-term aim is an
+  offline designer in the OpenShores client (source for reference in
+  `third_party/SoH-source/`, not in git).
+* **Code on GitHub:** <https://github.com/crazykristi/openshores-designer>.
+  The user pushes (no credentials on this machine for Claude). Workflow and
+  release steps: `docs/GIT_AND_RELEASES.md`.
+* **Release 0.3.0-alpha** (pre-release): `src/version.h`,
+  `RELEASE_NOTES.md`, the AppImage from `./package-appimage.sh`
+  (`build/shipgen-designer-0.3.0-alpha-x86_64.AppImage`). Built on
+  Fedora 44, so it needs a glibc that new.
+* **Tests:** `./test.sh`, last run 372 checks over 126 blueprints, no
+  errors.
+* **In the game** (the user's Wedge tests v1 to v6): the Wedge is fully
+  functional (crew loading, ladder, windows, lighting). The ramp, stairs,
+  sloped hull, joined windows, interior looks, door paint and bay door
+  switches were made after the last test; their test files are in
+  `work/ingame7/` (`WHAT_TO_TEST.md`).
+* **Rules learned in the game** are kept in `docs/SOH_FORMAT.md` (consoles
+  are floor chairs facing +Y, walk paths on the floor, ladder or ramp from
+  the hull door, room normals inward, door switches in reach, barriers
+  only count inside the hull's extents, 3.5 times the maneuver drive).
+* **Test Wedges** leave out shields, the weapon bay and the transporter
+  (`leaveOut`, the user's wish).
 
-**After the Wedge v4 production test** (it works fully, crew loading
-included): rooms are sunlit (they were very dark), the hull doorway has a
-floor plate, chairs sit at the windows; in the designer, windows on
-diagonals, metric units, and the importer thins big models and copes with
-overlapping pieces. Stairs and ramps are understood from the user's
-aircraft factory (`docs/SOH_FORMAT.md`, "Stairs and ramps"); stairwells and
-ramps are next on the designer list (`docs/BUILDING_TODO.md`). Test files:
-`work/ingame5/`.
-
-**Ramps and stairs** (the user: "ramp first, then stairwells"): hull doors
-up to 15 ft above the ground get a ramp instead of the ladder (designer and
-generator, `AddDoorRamp`; `--no-ramps` for the ladder); the designer has
-*Place stairs* (`AddStairFlight`, `AddRail`). Not yet tried in the game; test
-files `work/ingame6/`. The OpenShores source is in `third_party/SoH-source/`
-for reference (the build still uses `third_party/soh/`). The deployable ramp
-waits on how the fixed one does.
-
-**After the user's sixth test** (`work/ingame6/ingame-test6-observations.md`):
-room vertex normals now point into the room (they pointed every way; rooms
-were still dark); window sill and top and joined windows in the designer;
-hull door switches set within reach (the bay door could not be opened).
-Asked: which Wedge was tested (the ramp was not noticed). Multi-deck rooms
-and hull doors are on the list.
-
-**After the Wedge v6 test** (lighting works now): the ramp is solid (it is a
-hull part, so the engine looks for its barrier at all), chairs face fore,
-the Wedge's bridge has front windows, room surfaces and doors are told
-apart by texture and colour, and Wedges leave out shields, weapons and the
-transporter. Test files `work/ingame7/`. Asked the user about a sloped
-hull between decks.
-
-**Later on 31 October:** the code is on GitHub
-(https://github.com/crazykristi/openshores-designer; the user pushes).
-The triangle designer is the mainline application and main release item
-(an AppImage, `./package-appimage.sh`, holding shipgen-gui and the command
-line too); `shipgen-gui` is secondary. In the long run the designer becomes
-an offline designer in the OpenShores client. New: sloped
-hull between decks, background model import with progress (and 9 s instead
-of 86 s for half a million faces), an audit that copes with slanted rooms.
-
-**Next work:** the building todo list agreed with the user,
-`docs/BUILDING_TODO.md` (power plants first).
-
-**What the first half did:** blueprints from newer game builds are read
-completely (`src/sohfile.h`); doors and voids fixed (rooms had only existed
-while a door was open); the triangle designer, `shipgen-designer`.
-
-**What the second half did**, after the user's first test in the game
-(notes and readout in `work/ingame/wedge-ingame-readout.md`, four working
-blueprints the user exported in `exported/ships/`):
-
-1. **Winding.** The hull was see-through in the game: every hull and room we
-   made was wound the opposite way to the game's. Fixed for the generator,
-   the building generator and the designer (`OrientAsHull` and friends,
-   `src/interior.h`).
-2. **Fore is +Y.** The designer turns its blueprints, the generator turns
-   models that are longer along X (`--keep-axes`).
-3. **Engineering.** One engineer runs one FTL drive, chosen in the brief
-   (`"ftl"`), with `--ftl`, or in the designer; default the P wormhole drive.
-   The game fits the maneuver drive itself.
-4. **Doors and windows are cut** through the walls and the hull with the
-   engine's own jig cut (`JigCut`), on the faces near the opening only, with
-   a clean frame. Hull doors get a constant hull void in front, from the
-   ground up, and a walk path to the ground; side doors are preferred. The
-   designer has a window tool.
-5. **The audit** accepts hulls with door and window openings ("closed but
-   for openings").
-6. **New commands:** `parts`, `faces`, `cut`, `kit`.
-7. **The Aether kit**: seven blueprints (three ships, four buildings) in the
-   style of the user's Aetherite Capitol. `docs/AETHER_KIT.md`.
-
-**The next work is decided by the user.** The MCP server
-(`docs/MCP_AND_OFFLINE_DESIGNER.md`) has still not been started.
+**Next work:** whatever the user picks; the agreed list is
+`docs/BUILDING_TODO.md` (power plants first). Do not start the MCP server
+or the Windows build unasked.
 
 ## Questions for the user
 
-Answered (30 October 2026):
+Answered (30 and 31 October 2026), and recorded where they apply:
 
-* **White Star:** saved by the newest game build; its source is not
-  available; the format is closely based on the published source and partly
-  on the old pre-2016 ship designer. It has no hull void, which is why
-  players get stuck at its door.
-* **Designer defaults** (5 ft cells, 10 ft decks, 2 ft skin, doors one cell
-  wide): fine.
-* **Doors:** side doors; belly doors are buggy in the current game build.
-* **FTL:** a P wormhole drive for testing; selectable in the end.
+* White Star: saved by the newest game build; no hull void, hence players
+  get stuck at its door (`docs/SOH_FORMAT.md`).
+* Designer defaults (5 ft cells, 10 ft decks, 2 ft skin): fine. Side doors
+  (belly doors are buggy in the game). FTL: P wormhole drive by default,
+  selectable.
+* Buildings: minimal and expanded variants, the power plant list, the style
+  (Aether with high-tech and cyberpunk), decorations may stay hull, the
+  Windows build postponed (`docs/BUILDING_TODO.md`).
+* The drawn hull is the least the hull may be (the sloped hull only adds).
+* The designer is the main program; releases are an AppImage.
 
 Open:
 
-1. **The third test in the game**: `work/ingame3/` (`Wedge.SoH`,
-   `Military frigate_decks.SoH`, the seven kit blueprints). Do the chairs
-   sit right, can the hull door be walked into from the ground by the
-   ladder, does pathing inside work now? Do the softened kit looks work?
-2. Answered 2026-10-31, recorded in `docs/BUILDING_TODO.md`: minimal and
-   expanded variants, the power plant list, the style (Aether mixed with
-   high-tech and cyberpunk), the ships to make, decorations may stay hull,
-   the Windows build is postponed. Still open: windows on generated ships,
-   which 3D models go with which building. Teleporter pads are understood (`docs/SOH_FORMAT.md`).
+1. **The seventh test in the game:** `work/ingame7/WHAT_TO_TEST.md`.
+2. "Multi-block hull doors": bay doors from neighbouring door edges are
+   done; rooms and hull doors over more than one deck are on the list.
 
 ## What exists and works
 
@@ -125,6 +64,9 @@ Open:
 | Piece | State |
 |---|---|
 | `build.sh` | Builds the engine subset (AuUtil, AuMath, AuGL, AuGlobal, AuData) + `build/bin/shipgen` (CLI) + `build/bin/shipgen-gui` (GUI) + `build/bin/shipgen-mesh`. On MSYS2 it uses `build-windows/` and `.exe` files. |
+| `build.sh` (also) | `build/bin/shipgen-designer`, the triangle designer: `src/designer/` (window, plan view), `src/triplan.*` (the plan and its file), `src/planbuild.*` (plan to blueprint: hull, sloped decks, rooms, doors, windows, ladders, stairs, ramps, model import). |
+| `src/interior.*` | Rooms (styled floors, walls, ceilings), doors (painted, switches), hull doors with threshold and ramp, jig cuts, ladders, stairs and rails, walk paths. |
+| `src/version.h`, `package-appimage.sh`, `packaging/`, `RELEASE_NOTES.md` | The release: version, AppImage (designer + shipgen-gui + CLI), icon, notes (`docs/GIT_AND_RELEASES.md`). |
 | `build-windows.ps1`, `deploy-windows.sh` | The Windows entry point and the Qt/OpenAL/MinGW deployment step. |
 | `docs/WINDOWS.md` | The Windows build, deployment and troubleshooting guide. |
 | `src/shipgen.h`, `src/brief.cpp` | The brief model, the ship templates, brief JSON I/O. |
@@ -324,8 +266,8 @@ runtime DLLs into `build-windows/dist/`. `build-windows.ps1` is a wrapper
 that starts the MINGW64 shell for you. The full instructions, package list
 and troubleshooting notes are in `docs/WINDOWS.md`.
 
-**This has not been run on a Windows machine yet.** The Linux build and the
-330-check matrix still pass. The Windows branch needs a first real build,
+**This has not been run on a Windows machine yet** (postponed by the
+user). The Windows branch needs a first real build,
 then the smoke test in `docs/WINDOWS.md`. The known platform assumptions are:
 
 * x86_64 MSYS2, Qt 5.15, OpenAL Soft and the MinGW-w64 g++ toolchain;
@@ -526,21 +468,21 @@ scale them and the generator has to find the room inside the shape.
 
 ## What is still to do
 
-The user decides the next work. Known loose ends, in the order they would be
-worth doing:
+The user decides the next work; `docs/BUILDING_TODO.md` is the agreed list.
+Loose ends besides it:
 
-* The second test in the game (question 1 above).
-* The Windows build has not been run on Windows; `docs/WINDOWS.md` has the
-  smoke test. It now builds `shipgen-designer.exe` too.
+* The Windows build has never run on Windows (postponed by the user;
+  `docs/WINDOWS.md`).
+* An AppImage built on an older distribution, so that it runs on more
+  systems; and GitHub building it on each tag.
 * The designer: open existing blueprints, turrets, choosing where stations
-  go, rooms taller than a deck, the kit's looks in the paint step (end of
-  `docs/DESIGNER.md`).
-* Windows for the generator's ships and for buildings (the designer has
-  them; `JigCut` is ready for it).
-* The game's library texture images are in its `libAuTexture.dll`
-  (Steam/Proton prefix, `AppData/Local/OpenShores`); extracting them would
-  let our 3D views show the real materials.
-* Read and write part type 90 once its layout is known.
-* The import of a very detailed model takes about ten seconds.
+  go, rooms and hull doors over more than one deck, a deployable ramp,
+  showing the model faintly over the grid.
+* On big round hulls (the kit ships) rooms far from the skin get no
+  windows; the layout would have to put them against it.
+* The game's library texture images are in its `libAuTexture.dll`;
+  extracting them would let our 3D views show the real materials.
+* Read and write part type 90 once its layout is known; OpenShores adds
+  part types 92 and up (`ItemSpot`, `VehicleSpot`).
 * A building made from a model has no windows.
 * The stand-in industry table has a fixed set of industries.

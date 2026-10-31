@@ -13,6 +13,7 @@
 #include "dgdata.h"
 #include "logging.h"
 #include "mainwindow.h"
+#include "version.h"
 
 int main(int argc, char* argv[])
 {
@@ -38,6 +39,7 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 	QApplication::setApplicationName("Shipgen");
+	QApplication::setApplicationVersion(SHIPGEN_VERSION);
 	QApplication::setApplicationDisplayName("Shipgen - Shores of Hazeron blueprint generator");
 
 	// The engine's report and design code reaches for the global data object.

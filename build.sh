@@ -14,6 +14,9 @@
 #
 # On Linux this writes to build/. In an MSYS2/MinGW-w64 shell on Windows it
 # writes to build-windows/ and makes .exe files. See docs/WINDOWS.md.
+# CROSS=x86_64-w64-mingw32 makes the Windows build on Linux with that MinGW
+# cross compiler and its Qt (packaging/build-windows-cross.sh does it in a
+# container).
 #
 set -euo pipefail
 
@@ -27,6 +30,18 @@ case "$HOST" in
 	MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;;
 	*) ON_WINDOWS=0 ;;
 esac
+CROSS="${CROSS:-}"
+if [ -n "$CROSS" ]; then
+	ON_WINDOWS=1
+	CXX="${CXX:-$CROSS-g++}"
+	QMAKE="${QMAKE:-$CROSS-qmake-qt5}"
+	PKG_CONFIG="${PKG_CONFIG:-$CROSS-pkg-config}"
+	AR="${AR:-$CROSS-ar}"
+	RANLIB="${RANLIB:-$CROSS-ranlib}"
+fi
+AR="${AR:-ar}"
+RANLIB="${RANLIB:-ranlib}"
+PKG_CONFIG="${PKG_CONFIG:-pkg-config}"
 
 # ---------------------------------------------------------------- helpers --
 
@@ -105,6 +120,11 @@ if [ "$ON_WINDOWS" = 1 ]; then
 	QT_INC="$(unix_path "$("$QMAKE" -query QT_INSTALL_HEADERS)")"
 	QT_LIBS="$(unix_path "$("$QMAKE" -query QT_INSTALL_LIBS)")"
 	QT_BINS="$(unix_path "$("$QMAKE" -query QT_INSTALL_BINS)")"
+	# A cross Qt keeps moc and rcc (programs for this machine) apart.
+	QT_HOST_BINS="$(unix_path "$("$QMAKE" -query QT_HOST_BINS 2>/dev/null || true)")"
+	if [ -n "$QT_HOST_BINS" ] && [ -x "$QT_HOST_BINS/moc" ] && [ -n "$CROSS" ]; then
+		QT_BINS="$QT_HOST_BINS"
+	fi
 	MOC="$QT_BINS/moc.exe"
 	[ -f "$MOC" ] || MOC="$QT_BINS/moc"
 	RCC="$QT_BINS/rcc.exe"
@@ -119,15 +139,18 @@ if [ "$ON_WINDOWS" = 1 ]; then
 	CXXFLAGS="-std=c++11 -O2 -w -DNOMINMAX -DWIN32"
 	CXXFLAGS_TOOL="-std=c++11 -O2 -g -w -DNOMINMAX -DWIN32"
 
+	if [ -n "$CROSS" ]; then
+		MINGW_PREFIX="${MINGW_PREFIX:-$("$QMAKE" -query QT_INSTALL_PREFIX)}"
+	fi
 	MINGW_PREFIX="$(unix_path "${MINGW_PREFIX:-/mingw64}")"
 	# The engine says #include <al.h> on Windows, while OpenAL Soft installs
 	# its headers in include/AL. pkg-config knows; fall back to the usual
 	# MSYS2 location.
-	OPENAL_CFLAGS="${OPENAL_CFLAGS:-$(pkg-config --cflags openal 2>/dev/null || true)}"
+	OPENAL_CFLAGS="${OPENAL_CFLAGS:-$("$PKG_CONFIG" --cflags openal 2>/dev/null || true)}"
 	if [ -z "$OPENAL_CFLAGS" ] && [ -d "$MINGW_PREFIX/include/AL" ]; then
 		OPENAL_CFLAGS="-I$MINGW_PREFIX/include/AL"
 	fi
-	OPENAL_LIBS="${OPENAL_LIBS:-$(pkg-config --libs openal 2>/dev/null || true)}"
+	OPENAL_LIBS="${OPENAL_LIBS:-$("$PKG_CONFIG" --libs openal 2>/dev/null || true)}"
 	[ -n "$OPENAL_LIBS" ] || OPENAL_LIBS="-lopenal"
 
 	INCS="-I$QT_INC -I$QT_INC/QtCore -I$QT_INC/QtGui -I$QT_INC/QtWidgets -I$QT_INC/QtNetwork -I$QT_INC/QtSql -I$QT_INC/QtOpenGL $OPENAL_CFLAGS"
@@ -135,6 +158,10 @@ if [ "$ON_WINDOWS" = 1 ]; then
 
 	if [ -f "$QT_LIBS/libqtmain.a" ]; then
 		QTMAIN="-lqtmain"
+		GUI_LDFLAGS="-mwindows"
+	elif [ -f "$QT_LIBS/libqt5main.a" ]; then
+		# Fedora's MinGW Qt names it so.
+		QTMAIN="-lqt5main"
 		GUI_LDFLAGS="-mwindows"
 	elif [ -f "$QT_LIBS/libqtmaind.a" ]; then
 		QTMAIN="-lqtmaind"
@@ -236,8 +263,8 @@ archive_tree() {
 	# below it, even for the very large AuData and AuGlobal libraries.
 	rm -f "$LIBDIR/lib$name.a"
 	find "$OBJ/$tag" -maxdepth 1 -name '*.o' -print0 | \
-		xargs -0 -r ar rcs "$LIBDIR/lib$name.a"
-	ranlib "$LIBDIR/lib$name.a" 2>/dev/null || true
+		xargs -0 -r "$AR" rcs "$LIBDIR/lib$name.a"
+	"$RANLIB" "$LIBDIR/lib$name.a" 2>/dev/null || true
 	echo "  lib$name.a"
 }
 

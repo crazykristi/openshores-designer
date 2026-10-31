@@ -18,8 +18,8 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.1-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.1-alpha),
-a pre-release with bug fixes) are an AppImage holding the designer, `shipgen-gui` and the
+is [0.3.2-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.2-alpha),
+a pre-release: a smooth hull from 3D models, flips, emitters) are an AppImage holding the designer, `shipgen-gui` and the
 command line; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
@@ -486,9 +486,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.1-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.1-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.1-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.2-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.2-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.2-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in
@@ -497,7 +497,10 @@ It bundles Qt 5 with its X11 and Wayland plugins, OpenAL and the other
 libraries, but not the C library, the OpenGL drivers, X11/xcb or the font
 libraries, which come from the system (the AppImage project's rules). It
 runs on systems with a glibc at least as new as the one it was built on,
-so for the widest reach build it on an older distribution. The script
+so the release is built on Ubuntu 22.04 in a container:
+`packaging/build-appimage-portable.sh` (glibc 2.35 and newer). For
+Windows, `packaging/build-windows-cross.sh` cross-builds a zip of the
+programs on Linux (`docs/WINDOWS.md`). The script
 downloads `appimagetool` into `build/tools/` the first time;
 `APPDIR_ONLY=1 ./package-appimage.sh` makes only the folder
 `build/AppDir`, which runs as `build/AppDir/AppRun`.

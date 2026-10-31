@@ -22,12 +22,20 @@
 # (APPDIR_ONLY=1 makes only the folder, build/AppDir, without it).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="$HERE/build/bin"
-OUT="$HERE/build"
+# BIN (the programs) and OUT (where the AppDir and AppImage go) can be set,
+# as packaging/build-appimage-portable.sh does.
+BIN="${BIN:-$HERE/build/bin}"
+OUT="${OUT:-$HERE/build}"
 APPDIR="$OUT/AppDir"
-TOOLS="$OUT/tools"
+TOOLS="$HERE/build/tools"
 ARCH="$(uname -m)"
-QT_PLUGINS="${QT_PLUGINS:-$(qmake-qt5 -query QT_INSTALL_PLUGINS 2>/dev/null || echo /usr/lib64/qt5/plugins)}"
+if [ -z "${QT_PLUGINS:-}" ]; then
+	for q in qmake-qt5 qmake; do
+		QT_PLUGINS="$($q -query QT_INSTALL_PLUGINS 2>/dev/null)" && [ -d "$QT_PLUGINS" ] && break
+		QT_PLUGINS=""
+	done
+	QT_PLUGINS="${QT_PLUGINS:-/usr/lib64/qt5/plugins}"
+fi
 
 for program in shipgen-gui shipgen-designer shipgen; do
 	[ -x "$BIN/$program" ] || { echo "build/bin/$program is missing: run ./build.sh first" >&2; exit 1; }

@@ -22,6 +22,11 @@ here); the user's in-game notes are in `work/ingame*/` (not in git).
 * **Release 0.3.1-alpha** (bug fixes: the model import kept no plan; feedback on
   why an import went wrong), tagged `v0.3.1-alpha`; the user packages and
   publishes it.
+* **Release 0.3.2-alpha** (smooth model hull, flips, emitters, tooltips):
+  version set, notes written, not yet tagged. The AppImage is now built on
+  Ubuntu 22.04 (`packaging/build-appimage-portable.sh`, glibc 2.35+), and a
+  Windows zip is cross-built on Linux (`packaging/build-windows-cross.sh`,
+  tried under Wine only).
 * **Tests:** `./test.sh`, last run 373 checks over 126 blueprints, no
   errors.
 * **In the game** (the user's Wedge tests v1 to v6): the Wedge is fully
@@ -270,8 +275,10 @@ runtime DLLs into `build-windows/dist/`. `build-windows.ps1` is a wrapper
 that starts the MINGW64 shell for you. The full instructions, package list
 and troubleshooting notes are in `docs/WINDOWS.md`.
 
-**This has not been run on a Windows machine yet** (postponed by the
-user). The Windows branch needs a first real build,
+**Cross-built on Linux since 0.3.2-alpha** (`packaging/build-windows-cross.sh`,
+`CROSS=x86_64-w64-mingw32` in `build.sh`, Fedora's MinGW Qt in a container),
+and tried under Wine: the command line and the designer work. **It has not
+been run on a Windows machine yet**, and the MSYS2 path below not at all. The Windows branch needs a first real build,
 then the smoke test in `docs/WINDOWS.md`. The known platform assumptions are:
 
 * x86_64 MSYS2, Qt 5.15, OpenAL Soft and the MinGW-w64 g++ toolchain;

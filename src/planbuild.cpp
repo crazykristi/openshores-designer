@@ -4,7 +4,9 @@
 
 #include "planbuild.h"
 
+#include <QFile>
 #include <QFileInfo>
+#include <QTextStream>
 #include <QHash>
 #include <QMap>
 #include <QQueue>
@@ -13,6 +15,9 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <memory>
+#include <numeric>
+#include <queue>
 
 #include "audit.h"
 #include "mesh.h"
@@ -453,6 +458,730 @@ void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove =
 	mesh = out;
 }
 
+// The thinnest triangle the simplifier may leave: twice its area at least
+// this times its longest side squared (about 1 in 20). The engine drops a
+// triangle whose corners are on one line, but it keeps much thinner ones
+// than this (the Cyclops frigate's hull, saved and read back, stayed closed
+// down to 0.0005). What thin triangles do break is the cutting of doors and
+// windows (AuScFaceList::JigCut): at 0.01 the same plan came out with a
+// slightly different hull from run to run; at 0.05 it is the same each time.
+double SliverRatio()
+{
+	return 0.05;
+}
+
+// Brings a closed hull down to 'targetFaces' by collapsing edges, the
+// cheapest first by the quadric error of Garland and Heckbert, onto one of
+// their own ends (a half-edge collapse: no vertex moves, so the hull keeps
+// points of the shaped surface). What the flat merging cannot do, this can:
+// a rounded hull has few flat areas, but most of it bends so gently that far
+// fewer faces describe it.
+//
+// It keeps what the hull needs:
+//  * closed: an edge is only collapsed when exactly two faces share it and
+//    its ends have exactly two neighbours in common (the link condition), and
+//    no face may turn over or become a sliver (the engine drops a triangle
+//    whose corners are nearly on one line, which opens the hull);
+//  * the paint: a vertex on the edge between two colours may only slide
+//    along that edge, and the edges between colours carry extra planes in
+//    their quadrics, so they stay straight where they were;
+//  * the rooms: every vertex taken away is kept as a witness on the face over
+//    it. No witness may end up further outside the new surface (the surface
+//    moved in) than 'inward' allows for it, nor further inside (the surface
+//    moved out) or further from it than the move limit.
+// The move limits are tried in turn: when no edge can go within one, the
+// next (larger) one is taken, and every edge is tried again. The witnesses
+// keep the original surface, so a later limit is still measured from it.
+// Returns the faces left; 'usedMove' is the limit it ended on.
+// 'planeN' and 'planeD', when given, are the plane each face's quadric is
+// made of instead of its own (the panel's, for flat panels).
+// With 'regions' above 0 the paint index holds paint * regions + panel: the
+// borders between panels of one paint may straighten (the panels' planes
+// lead them to where the planes meet), only paint edges are held in place.
+int DecimateHull(IndexedMesh& mesh, int targetFaces, const QVector<double>& inward, const QVector<double>& moves,
+		double* usedMove = 0, const QVector<AuPoint>* planeN = 0, const QVector<double>* planeD = 0, int regions = 0)
+{
+	int stage = 0;
+	double maxMove = moves.isEmpty() ? 0.0 : moves.first();
+	if(usedMove)
+		*usedMove = maxMove;
+	const int nv = mesh.v.size();
+	const int nf = mesh.Faces();
+	if(nf <= targetFaces)
+		return nf;
+
+	// A symmetric 4x4 quadric in ten numbers.
+	struct Quadric
+	{
+		double q[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		void AddPlane(const AuPoint& n, double d, double w)
+		{
+			const double a = n.x, b = n.y, c = n.z;
+			q[0] += w*a*a; q[1] += w*a*b; q[2] += w*a*c; q[3] += w*a*d;
+			q[4] += w*b*b; q[5] += w*b*c; q[6] += w*b*d;
+			q[7] += w*c*c; q[8] += w*c*d; q[9] += w*d*d;
+		}
+		void Add(const Quadric& o) { for(int i = 0; i < 10; ++i) q[i] += o.q[i]; }
+		double At(const AuPoint& p) const
+		{
+			const double x = p.x, y = p.y, z = p.z;
+			return q[0]*x*x + 2*q[1]*x*y + 2*q[2]*x*z + 2*q[3]*x
+					+ q[4]*y*y + 2*q[5]*y*z + 2*q[6]*y
+					+ q[7]*z*z + 2*q[8]*z + q[9];
+		}
+	};
+
+	QVector<bool> alive(nf, true);
+	QVector<bool> gone(nv, false);
+	QVector<int> stamp(nv, 0);
+	QVector<QVector<int> > vf(nv);
+	for(int fi = 0; fi < nf; ++fi)
+		for(int j = 0; j < 3; ++j)
+			vf[mesh.f[fi*3 + j]] << fi;
+	auto facesOf = [&](int v) -> const QVector<int>& {
+		QVector<int>& list = vf[v];
+		QVector<int> live;
+		live.reserve(list.size());
+		for(int fi : list)
+			if(alive[fi])
+				live << fi;
+		list = live;
+		return list;
+	};
+	auto has = [&mesh](int fi, int v) {
+		return mesh.f[fi*3] == v || mesh.f[fi*3 + 1] == v || mesh.f[fi*3 + 2] == v;
+	};
+	auto rawNormal = [&mesh](int a, int b, int c) {
+		return (mesh.v[b] - mesh.v[a]).Cross(mesh.v[c] - mesh.v[a]);
+	};
+
+	// The quadrics: each face's plane, weighted by its area, and for each edge
+	// between two colours a plane standing up through it, weighted heavily.
+	QVector<Quadric> quadric(nv);
+	for(int fi = 0; fi < nf; ++fi)
+	{
+		const int* idx = &mesh.f[fi*3];
+		AuPoint n = rawNormal(idx[0], idx[1], idx[2]);
+		const double area2 = n.Length();
+		if(area2 < 1e-12)
+			continue;
+		n = n / area2;
+		double d = -n.Dot(mesh.v[idx[0]]);
+		if(planeN && planeD)
+		{
+			n = (*planeN)[fi];
+			d = (*planeD)[fi];
+		}
+		for(int j = 0; j < 3; ++j)
+			quadric[idx[j]].AddPlane(n, d, area2 / 2);
+	}
+	{
+		QHash<qint64, int> firstFace;
+		for(int fi = 0; fi < nf; ++fi)
+			for(int j = 0; j < 3; ++j)
+			{
+				const int a = mesh.f[fi*3 + j], b = mesh.f[fi*3 + (j + 1) % 3];
+				const qint64 key = qint64(qMin(a, b)) * nv + qMax(a, b);
+				QHash<qint64, int>::const_iterator it = firstFace.constFind(key);
+				if(it == firstFace.constEnd())
+				{
+					firstFace.insert(key, fi);
+					continue;
+				}
+				if(mesh.paint[it.value()] == mesh.paint[fi] ||
+						(regions > 0 && mesh.paint[it.value()] / regions == mesh.paint[fi] / regions))
+					continue;
+				AuPoint e = mesh.v[b] - mesh.v[a];
+				const double len = e.Length();
+				if(len < 1e-9)
+					continue;
+				AuPoint n = e.Cross(mesh.Normal(fi));
+				if(n.Length() < 1e-9)
+					continue;
+				n = n / n.Length();
+				const double d = -n.Dot(mesh.v[a]);
+				quadric[a].AddPlane(n, d, 10 * len * len);
+				quadric[b].AddPlane(n, d, 10 * len * len);
+			}
+	}
+
+	// The witnesses: the vertices taken away, on the face over them.
+	struct Witness { AuPoint p; double in; };
+	QVector<Witness> witnesses;
+	QVector<QVector<int> > onFace(nf);
+
+	// Closest point on triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5).
+	auto closest = [](const AuPoint& p, const AuPoint& a, const AuPoint& b, const AuPoint& c) {
+		const AuPoint ab = b - a, ac = c - a, ap = p - a;
+		const double d1 = ab.Dot(ap), d2 = ac.Dot(ap);
+		if(d1 <= 0 && d2 <= 0) return a;
+		const AuPoint bp = p - b;
+		const double d3 = ab.Dot(bp), d4 = ac.Dot(bp);
+		if(d3 >= 0 && d4 <= d3) return b;
+		const double vc = d1*d4 - d3*d2;
+		if(vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+		const AuPoint cp = p - c;
+		const double d5 = ab.Dot(cp), d6 = ac.Dot(cp);
+		if(d6 >= 0 && d5 <= d6) return c;
+		const double vb = d5*d2 - d1*d6;
+		if(vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+		const double va = d3*d6 - d5*d4;
+		if(va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+			return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+		const double denom = 1.0 / (va + vb + vc);
+		return a + ab * (vb * denom) + ac * (vc * denom);
+	};
+
+	struct Candidate
+	{
+		double	cost;
+		int		v, u, sv, su;
+		bool operator<(const Candidate& o) const { return cost > o.cost; }		// Cheapest on top.
+	};
+	std::priority_queue<Candidate> queue;
+	auto push = [&](int v, int u) {
+		if(gone[v] || gone[u] || v == u)
+			return;
+		Quadric q = quadric[v];
+		q.Add(quadric[u]);
+		queue.push(Candidate{ qMax(0.0, q.At(mesh.v[u])), v, u, stamp[v], stamp[u] });
+	};
+	// In order, so that the same hull always simplifies the same way (a
+	// QSet's order changes with Qt's hash seed from run to run).
+	auto neighbours = [&](int v) {
+		QVector<int> ring;
+		for(int fi : facesOf(v))
+			for(int j = 0; j < 3; ++j)
+				if(mesh.f[fi*3 + j] != v)
+					ring << mesh.f[fi*3 + j];
+		std::sort(ring.begin(), ring.end());
+		ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+		return ring;
+	};
+	for(int v = 0; v < nv; ++v)
+		for(int u : neighbours(v))
+			push(v, u);
+
+	int faces = nf;
+	int dbg[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+	struct Placement { int witness; int face; };
+	for(;;)
+	{
+	if(queue.empty() && faces > targetFaces && stage + 1 < moves.size())
+	{
+		// Stuck at this limit: the next one, and every edge again.
+		maxMove = moves[++stage];
+		if(usedMove)
+			*usedMove = maxMove;
+		for(int v = 0; v < nv; ++v)
+			if(!gone[v])
+				for(int u : neighbours(v))
+					push(v, u);
+	}
+	if(faces <= targetFaces || queue.empty())
+		break;
+	{
+		const Candidate c = queue.top();
+		queue.pop();
+		const int v = c.v, u = c.u;
+		if(gone[v] || gone[u] || c.sv != stamp[v] || c.su != stamp[u])
+			continue;
+		const QVector<int> star = facesOf(v);
+		if(star.size() < 3)
+			continue;
+
+		// The two faces on the edge, and the link condition.
+		QVector<int> onEdge;
+		for(int fi : star)
+			if(has(fi, u))
+				onEdge << fi;
+		if(onEdge.size() != 2)
+			{ ++dbg[0]; continue; }
+		const QVector<int> ringV = neighbours(v), ringU = neighbours(u);
+		int common = 0;
+		for(int w : ringV)
+			if(w != u && std::binary_search(ringU.begin(), ringU.end(), w))
+				++common;
+		if(common != 2)
+			{ ++dbg[1]; continue; }
+
+		// The paint: within one colour anything goes; on the edge between
+		// colours only along that edge, and only where it is not a corner of
+		// three colours or a bend in the colour edge.
+		bool oneColour = true;
+		for(int fi : star)
+			if(mesh.paint[fi] != mesh.paint[star.first()])
+				oneColour = false;
+		if(!oneColour)
+		{
+			if(mesh.paint[onEdge[0]] == mesh.paint[onEdge[1]])
+				{ ++dbg[2]; continue; }
+			QSet<int> colours;
+			for(int fi : star)
+				colours.insert(mesh.paint[fi]);
+			if(colours.size() != 2)
+				{ ++dbg[3]; continue; }
+			int colourEdges = 0;
+			for(int w : ringV)
+			{
+				int a = -1, b = -1;
+				for(int fi : star)
+					if(has(fi, w))
+						(a < 0 ? a : b) = fi;
+				if(a >= 0 && b >= 0 && mesh.paint[a] != mesh.paint[b])
+					++colourEdges;
+			}
+			if(colourEdges != 2)
+				{ ++dbg[4]; continue; }
+		}
+
+		// The faces after: nothing turns over, nothing becomes a sliver.
+		bool ok = true;
+		QVector<int> after;
+		for(int fi : star)
+		{
+			if(onEdge.contains(fi))
+				continue;
+			int idx[3] = { mesh.f[fi*3], mesh.f[fi*3 + 1], mesh.f[fi*3 + 2] };
+			for(int j = 0; j < 3; ++j)
+				if(idx[j] == v)
+					idx[j] = u;
+			const AuPoint n = rawNormal(idx[0], idx[1], idx[2]);
+			double longest = 0;
+			for(int j = 0; j < 3; ++j)
+				longest = qMax(longest, (mesh.v[idx[j]] - mesh.v[idx[(j + 1) % 3]]).Length());
+			if(n.Length() < SliverRatio() * longest * longest || (n / n.Length()).Dot(mesh.Normal(fi)) < 0.5 ||
+					// A panel's faces face its way, or no further from it than before.
+					(planeN && (n / n.Length()).Dot((*planeN)[fi]) < qMin(0.7, mesh.Normal(fi).Dot((*planeN)[fi]) - 0.05)))
+			{
+				ok = false;
+				break;
+			}
+			after << fi;
+		}
+		if(!ok || after.isEmpty())
+			{ ++dbg[5]; continue; }
+
+		// The witnesses of the faces round v, and v itself, against the
+		// faces after.
+		auto newCorners = [&](int fi, AuPoint p[3]) {
+			for(int j = 0; j < 3; ++j)
+			{
+				const int idx = mesh.f[fi*3 + j];
+				p[j] = mesh.v[idx == v ? u : idx];
+			}
+		};
+		QVector<int> toPlace;
+		for(int fi : star)
+			toPlace += onFace[fi];
+		const int own = witnesses.size();
+		witnesses << Witness{ mesh.v[v], inward[v] };
+		toPlace << own;
+		QVector<Placement> placed;
+		for(int w : toPlace)
+		{
+			const Witness& wit = witnesses[w];
+			double best = 1e300, signedBest = 0;
+			int bestFace = -1;
+			for(int fi : after)
+			{
+				AuPoint p[3];
+				newCorners(fi, p);
+				const AuPoint q = closest(wit.p, p[0], p[1], p[2]);
+				const double dist = (wit.p - q).Length();
+				if(dist < best)
+				{
+					best = dist;
+					bestFace = fi;
+					AuPoint n = (p[1] - p[0]).Cross(p[2] - p[0]);
+					n = n / n.Length();
+					signedBest = (wit.p - p[0]).Dot(n);
+				}
+			}
+			// Outside the new surface: it moved in there; inside: it moved out.
+			if(best > maxMove + 1e-9 || (signedBest > 0 && signedBest > qMin(wit.in, maxMove) + 1e-9))
+			{
+				ok = false;
+				break;
+			}
+			placed << Placement{ w, bestFace };
+		}
+		if(!ok)
+		{
+			++dbg[6];
+			witnesses.removeLast();
+			continue;
+		}
+
+		// Collapse.
+		for(int fi : onEdge)
+		{
+			alive[fi] = false;
+			onFace[fi].clear();
+			--faces;
+		}
+		for(int fi : after)
+		{
+			onFace[fi].clear();
+			for(int j = 0; j < 3; ++j)
+				if(mesh.f[fi*3 + j] == v)
+					mesh.f[fi*3 + j] = u;
+			vf[u] << fi;
+		}
+		for(const Placement& p : placed)
+			onFace[p.face] << p.witness;
+		vf[v].clear();
+		gone[v] = true;
+		quadric[u].Add(quadric[v]);
+		++stamp[u];
+		const QVector<int> ring = neighbours(u);
+		for(int w : ring)
+			++stamp[w];
+		// Every edge of the vertices whose stamps changed goes back on the
+		// queue, with its new cost (the stamps dropped the old entries).
+		for(int w : ring)
+		{
+			push(u, w);
+			for(int x : neighbours(w))
+			{
+				push(w, x);
+				push(x, w);
+			}
+		}
+	}
+	}
+
+	// Compact.
+	IndexedMesh out;
+	QVector<int> remap(nv, -1);
+	for(int fi = 0; fi < nf; ++fi)
+	{
+		if(!alive[fi])
+			continue;
+		for(int j = 0; j < 3; ++j)
+		{
+			const int old = mesh.f[fi*3 + j];
+			if(remap[old] < 0)
+			{
+				remap[old] = out.v.size();
+				out.v << mesh.v[old];
+			}
+			out.f << remap[old];
+		}
+		out.paint << mesh.paint[fi];
+	}
+	mesh = out;
+	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+		fprintf(stderr, "decimate: faces %d; rejected edge %d link %d paint-across %d colours %d colour-edges %d flip/sliver %d witness %d\n",
+				mesh.Faces(), dbg[0], dbg[1], dbg[2], dbg[3], dbg[4], dbg[5], dbg[6]);
+	return mesh.Faces();
+}
+
+// Groups the faces of a hull into about 'panels' panels that each face one
+// way: variational shape approximation (Cohen-Steiner, Alliez and Desbrun,
+// 2004) with its L2,1 measure, the area of a face times how far its normal
+// is from the panel's. A panel grows from its seed face over neighbouring
+// faces of the same paint, the best fitting first; then each panel's
+// direction and middle are fitted to its faces and its seed moved to its
+// best fitting face, and again. Panels are added where the fit is worst
+// until there are enough. Every piece of one paint gets at least one.
+// Returns the number of panels; 'region' is each face's panel, 'pn' and 'pd'
+// each panel's plane (n.p + d = 0).
+int PanelPartition(const IndexedMesh& mesh, int panels, QVector<int>& region, QVector<AuPoint>& pn, QVector<double>& pd)
+{
+	const int nf = mesh.Faces();
+	QVector<double> area(nf);
+	QVector<AuPoint> normal(nf), middle(nf);
+	for(int fi = 0; fi < nf; ++fi)
+	{
+		const AuPoint& a = mesh.v[mesh.f[fi*3]];
+		const AuPoint& b = mesh.v[mesh.f[fi*3 + 1]];
+		const AuPoint& c = mesh.v[mesh.f[fi*3 + 2]];
+		const AuPoint n = (b - a).Cross(c - a);
+		area[fi] = n.Length() / 2;
+		normal[fi] = mesh.Normal(fi);
+		middle[fi] = (a + b + c) / 3.0;
+	}
+	// Neighbours across edges, within one paint.
+	QVector<QVector<int> > next(nf);
+	{
+		QHash<qint64, int> firstFace;
+		const qint64 nv = mesh.v.size();
+		for(int fi = 0; fi < nf; ++fi)
+			for(int j = 0; j < 3; ++j)
+			{
+				const int a = mesh.f[fi*3 + j], b = mesh.f[fi*3 + (j + 1) % 3];
+				const qint64 key = qint64(qMin(a, b)) * nv + qMax(a, b);
+				QHash<qint64, int>::iterator it = firstFace.find(key);
+				if(it == firstFace.end())
+					firstFace.insert(key, fi);
+				else if(mesh.paint[it.value()] == mesh.paint[fi])
+				{
+					next[fi] << it.value();
+					next[it.value()] << fi;
+				}
+			}
+	}
+	auto error = [&](int fi, const AuPoint& n) {
+		const AuPoint d = normal[fi] - n;
+		return area[fi] * d.Dot(d);
+	};
+
+	// A seed in every piece of one paint: its biggest face.
+	QVector<int> seeds;
+	{
+		QVector<bool> seen(nf, false);
+		for(int start = 0; start < nf; ++start)
+		{
+			if(seen[start])
+				continue;
+			int biggest = start;
+			QVector<int> stack;
+			stack << start;
+			seen[start] = true;
+			while(!stack.isEmpty())
+			{
+				const int fi = stack.takeLast();
+				if(area[fi] > area[biggest])
+					biggest = fi;
+				for(int n : next[fi])
+					if(!seen[n])
+					{
+						seen[n] = true;
+						stack << n;
+					}
+			}
+			seeds << biggest;
+		}
+	}
+	QVector<AuPoint> dir;
+	for(int s : seeds)
+		dir << normal[s];
+
+	struct Entry
+	{
+		double	e;
+		int		face, proxy;
+		bool operator<(const Entry& o) const { return e > o.e; }
+	};
+	auto grow = [&]() {
+		region.fill(-1, nf);
+		std::priority_queue<Entry> queue;
+		for(int p = 0; p < seeds.size(); ++p)
+		{
+			region[seeds[p]] = p;
+			for(int n : next[seeds[p]])
+				queue.push(Entry{ error(n, dir[p]), n, p });
+		}
+		while(!queue.empty())
+		{
+			const Entry e = queue.top();
+			queue.pop();
+			if(region[e.face] >= 0)
+				continue;
+			region[e.face] = e.proxy;
+			for(int n : next[e.face])
+				if(region[n] < 0)
+					queue.push(Entry{ error(n, dir[e.proxy]), n, e.proxy });
+		}
+	};
+	auto fit = [&]() {
+		QVector<AuPoint> sum(seeds.size(), AuPoint(0, 0, 0));
+		for(int fi = 0; fi < nf; ++fi)
+			if(region[fi] >= 0)
+				sum[region[fi]] = sum[region[fi]] + normal[fi] * area[fi];
+		for(int p = 0; p < seeds.size(); ++p)
+			if(sum[p].Length() > 1e-12)
+				dir[p] = sum[p] / sum[p].Length();
+		// Each seed moves to the face of its panel that fits it best.
+		QVector<double> best(seeds.size(), 1e300);
+		for(int fi = 0; fi < nf; ++fi)
+		{
+			const int p = region[fi];
+			if(p < 0)
+				continue;
+			const double e = error(fi, dir[p]) / qMax(area[fi], 1e-12);
+			if(e < best[p])
+			{
+				best[p] = e;
+				seeds[p] = fi;
+			}
+		}
+	};
+	auto lloyd = [&](int rounds) {
+		for(int i = 0; i < rounds; ++i)
+		{
+			grow();
+			fit();
+		}
+		grow();
+	};
+
+	lloyd(3);
+	while(seeds.size() < panels)
+	{
+		// New panels where the fit is worst: in each of the worst panels, at
+		// its worst face; up to a quarter more at a time.
+		QVector<double> total(seeds.size(), 0.0);
+		QVector<int> worst(seeds.size(), -1);
+		for(int fi = 0; fi < nf; ++fi)
+		{
+			const int p = region[fi];
+			if(p < 0)
+				continue;
+			const double e = error(fi, dir[p]);
+			total[p] += e;
+			if(worst[p] < 0 || e > error(worst[p], dir[p]))
+				worst[p] = fi;
+		}
+		QVector<int> order(seeds.size());
+		for(int p = 0; p < order.size(); ++p)
+			order[p] = p;
+		std::sort(order.begin(), order.end(), [&total](int a, int b) { return total[a] > total[b]; });
+		const int add = qMin(panels - seeds.size(), qMax(1, seeds.size() / 4));
+		int added = 0;
+		for(int p : order)
+		{
+			if(added >= add || total[p] <= 1e-12 || worst[p] < 0 || worst[p] == seeds[p])
+				break;
+			seeds << worst[p];
+			dir << normal[worst[p]];
+			++added;
+		}
+		if(!added)
+			break;		// Every panel is already flat.
+		lloyd(2);
+	}
+	lloyd(6);
+
+	// Each panel's plane through the area-weighted middle of its faces.
+	pn = dir;
+	pd.fill(0.0, seeds.size());
+	QVector<AuPoint> centre(seeds.size(), AuPoint(0, 0, 0));
+	QVector<double> weight(seeds.size(), 0.0);
+	for(int fi = 0; fi < nf; ++fi)
+	{
+		if(region[fi] < 0)
+			region[fi] = 0;		// Cannot happen: every piece has a seed.
+		centre[region[fi]] = centre[region[fi]] + middle[fi] * area[fi];
+		weight[region[fi]] += area[fi];
+	}
+	for(int p = 0; p < seeds.size(); ++p)
+		pd[p] = weight[p] > 0 ? -pn[p].Dot(centre[p] / weight[p]) : 0.0;
+	return seeds.size();
+}
+
+// Presses the panels of a hull flat: each vertex goes onto the plane of its
+// panel, or where the planes of the panels round it meet (least squares,
+// with a little pull back to where it was, so that two nearly parallel
+// planes do not send it far). It moves at most 'maxMove', and in at most what
+// 'inward' allows for it (the rooms); a move that would turn a face over or
+// make a sliver is taken back. 'paint' holds paint * regions + panel.
+void FlattenPanels(IndexedMesh& mesh, int regions, const QVector<AuPoint>& pn, const QVector<double>& pd,
+		const QVector<double>& inward, double maxMove)
+{
+	const int nv = mesh.v.size(), nf = mesh.Faces();
+	QVector<QSet<int> > around(nv);
+	QVector<AuPoint> vnormal(nv, AuPoint(0, 0, 0));
+	for(int fi = 0; fi < nf; ++fi)
+	{
+		const int* idx = &mesh.f[fi*3];
+		const AuPoint n = (mesh.v[idx[1]] - mesh.v[idx[0]]).Cross(mesh.v[idx[2]] - mesh.v[idx[0]]);
+		for(int j = 0; j < 3; ++j)
+		{
+			around[idx[j]].insert(mesh.paint[fi] % regions);
+			vnormal[idx[j]] = vnormal[idx[j]] + n;
+		}
+	}
+	const QVector<AuPoint> original = mesh.v;
+	QVector<AuPoint> oldNormal(nf);
+	for(int fi = 0; fi < nf; ++fi)
+		oldNormal[fi] = mesh.Normal(fi);
+	for(int i = 0; i < nv; ++i)
+	{
+		if(around[i].isEmpty())
+			continue;
+		// (sum n n^T + eps I) x = sum n (-d) + eps p; eps pulls a corner of
+		// nearly parallel panels back towards where it was, instead of far
+		// along the line where they (almost) meet.
+		const double eps = 0.1;
+		double m[3][3] = { { eps, 0, 0 }, { 0, eps, 0 }, { 0, 0, eps } };
+		const AuPoint& p = original[i];
+		double r[3] = { eps * p.x, eps * p.y, eps * p.z };
+		QList<int> panelsHere = around[i].values();
+		std::sort(panelsHere.begin(), panelsHere.end());		// The same sum every run.
+		for(int g : panelsHere)
+		{
+			const double n[3] = { pn[g].x, pn[g].y, pn[g].z };
+			for(int a = 0; a < 3; ++a)
+			{
+				for(int b = 0; b < 3; ++b)
+					m[a][b] += n[a] * n[b];
+				r[a] += n[a] * -pd[g];
+			}
+		}
+		const double det = m[0][0]*(m[1][1]*m[2][2] - m[1][2]*m[2][1]) - m[0][1]*(m[1][0]*m[2][2] - m[1][2]*m[2][0])
+				+ m[0][2]*(m[1][0]*m[2][1] - m[1][1]*m[2][0]);
+		if(fabs(det) < 1e-12)
+			continue;
+		auto solve = [&](int col) {
+			double t[3][3];
+			for(int a = 0; a < 3; ++a)
+				for(int b = 0; b < 3; ++b)
+					t[a][b] = b == col ? r[a] : m[a][b];
+			return (t[0][0]*(t[1][1]*t[2][2] - t[1][2]*t[2][1]) - t[0][1]*(t[1][0]*t[2][2] - t[1][2]*t[2][0])
+					+ t[0][2]*(t[1][0]*t[2][1] - t[1][1]*t[2][0])) / det;
+		};
+		AuPoint move = AuPoint(solve(0), solve(1), solve(2)) - p;
+		const double length = move.Length();
+		if(length > maxMove)
+			move = move * (maxMove / length);
+		// Inwards no further than the rooms allow.
+		AuPoint n = vnormal[i];
+		if(n.Length() > 1e-12)
+		{
+			n = n / n.Length();
+			const double in = -move.Dot(n);
+			if(in > inward[i])
+				move = move + n * (in - inward[i]);
+		}
+		mesh.v[i] = p + move;
+	}
+	// Take back what turns a face over or makes a sliver, until nothing does.
+	for(int pass = 0; pass < 8; ++pass)
+	{
+		int undone = 0;
+		for(int fi = 0; fi < nf; ++fi)
+		{
+			const int* idx = &mesh.f[fi*3];
+			const AuPoint n = (mesh.v[idx[1]] - mesh.v[idx[0]]).Cross(mesh.v[idx[2]] - mesh.v[idx[0]]);
+			double longest = 0;
+			for(int j = 0; j < 3; ++j)
+				longest = qMax(longest, (mesh.v[idx[j]] - mesh.v[idx[(j + 1) % 3]]).Length());
+			if(n.Length() >= SliverRatio() * longest * longest && (n / n.Length()).Dot(oldNormal[fi]) > 0.3 &&
+					(n / n.Length()).Dot(pn[mesh.paint[fi] % regions]) >=
+						qMin(0.7, oldNormal[fi].Dot(pn[mesh.paint[fi] % regions]) - 0.05))
+				continue;
+			for(int j = 0; j < 3; ++j)
+				if(!(mesh.v[idx[j]] == original[idx[j]]))
+				{
+					mesh.v[idx[j]] = original[idx[j]];
+					++undone;
+				}
+		}
+		if(!undone)
+			break;
+	}
+	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+	{
+		int moved = 0;
+		for(int i = 0; i < nv; ++i)
+			if(!(mesh.v[i] == original[i]))
+				++moved;
+		fprintf(stderr, "flatten: %d of %d vertices moved\n", moved, nv);
+	}
+}
+
 // Splits every triangle into four at the middles of its edges. The surface
 // stays closed, and the rounding then has vertices close enough together to
 // follow a curve smaller than a cell.
@@ -824,23 +1553,616 @@ AuScDesign* BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull)
 	return design;
 }
 
+// The inside of a model found slice by slice, which needs no closed surface.
+//
+// The model is cut into thin horizontal slabs. In each slab every square of
+// a fine grid that a triangle of the model passes through is marked as
+// surface; then the outside is flooded in from the edge of the grid, round
+// the marks. What the flood cannot reach is inside. Models from the internet
+// are mostly open panels laid against each other, which the closed-solid test
+// throws away; here a gap only matters if the outside can flow through it
+// sideways, and gaps narrower than 'seal' squares are closed off first (the
+// marks are grown by that much for the flood, and the outside grown back
+// after). A slab is flooded on its own, so a missing top or bottom does not
+// matter at all. Every triangle is visited once, so a model of millions of
+// faces needs no thinning.
+class SliceSolid
+{
+public:
+	// The grid covers mn to mx with squares of 'step' and slabs as thick.
+	// Returns false when stopped.
+	// 'progress' is told the phase (0 marking the faces, 1 flooding the
+	// slices), how far it has got and how far it goes; false stops it.
+	bool	Build(const AuScTriList& tris, const AuPoint& mn, const AuPoint& mx, double step, int seal,
+			const std::function<bool(int phase, int done, int total)>& progress);
+	bool	Inside(const AuPoint& p) const
+	{
+		const int ix = int(floor((p.x - m_origin.x) / m_step));
+		const int iy = int(floor((p.y - m_origin.y) / m_step));
+		const int iz = int(floor((p.z - m_origin.z) / m_step));
+		if(ix < 0 || iy < 0 || iz < 0 || ix >= m_nx || iy >= m_ny || iz >= m_nz)
+			return false;
+		return m_cells[(qint64(iz) * m_ny + iy) * m_nx + ix] != CELL_OUT;
+	}
+	double	Step() const { return m_step; }
+	// The box the grid covers.
+	void	Extents(AuPoint& lo, AuPoint& hi) const
+	{
+		lo = m_origin;
+		hi = m_origin + AuPoint(m_nx, m_ny, m_nz) * m_step;
+	}
+	qint64	SurfaceCells() const { return m_surface; }
+	qint64	InsideCells() const { return m_inside; }
+
+private:
+	enum { CELL_OUT = 0, CELL_SURFACE = 1, CELL_IN = 2 };	// Not OUT, IN: the Windows headers define those as nothing.
+	void	Mark(int iz, const QVector<QPointF>& polygon);
+	void	Flood(int iz, int seal);
+
+	AuPoint				m_origin;
+	double				m_step = 1;
+	int					m_nx = 0, m_ny = 0, m_nz = 0;
+	QVector<quint8>		m_cells;
+	qint64				m_surface = 0, m_inside = 0;
+};
+
+// Marks every square of slab 'iz' that the convex polygon (a triangle cut to
+// the slab, seen from above; it may have collapsed to a segment or a point)
+// touches. Each row of squares takes the x range of the polygon's edges
+// inside the row's strip, which is exact for a convex polygon.
+void SliceSolid::Mark(int iz, const QVector<QPointF>& polygon)
+{
+	if(polygon.isEmpty())
+		return;
+	double ylo = polygon[0].y(), yhi = ylo;
+	for(const QPointF& p : polygon)
+	{
+		ylo = qMin(ylo, p.y());
+		yhi = qMax(yhi, p.y());
+	}
+	const int r0 = qMax(0, int(floor((ylo - m_origin.y) / m_step)));
+	const int r1 = qMin(m_ny - 1, int(floor((yhi - m_origin.y) / m_step)));
+	quint8* slab = m_cells.data() + qint64(iz) * m_ny * m_nx;
+	for(int iy = r0; iy <= r1; ++iy)
+	{
+		const double y0 = m_origin.y + iy * m_step, y1 = y0 + m_step;
+		double xlo = 1e300, xhi = -1e300;
+		auto take = [&](double x) { xlo = qMin(xlo, x); xhi = qMax(xhi, x); };
+		for(int i = 0; i < polygon.size(); ++i)
+		{
+			const QPointF& a = polygon[i];
+			const QPointF& b = polygon[(i + 1) % polygon.size()];
+			if(a.y() >= y0 && a.y() <= y1)
+				take(a.x());
+			const double dy = b.y() - a.y();
+			if(fabs(dy) < 1e-12)
+				continue;
+			for(double yy : { y0, y1 })
+			{
+				const double t = (yy - a.y()) / dy;
+				if(t > 0 && t < 1)
+					take(a.x() + (b.x() - a.x()) * t);
+			}
+		}
+		if(xlo > xhi)
+			continue;
+		const int c0 = qMax(0, int(floor((xlo - m_origin.x) / m_step)));
+		const int c1 = qMin(m_nx - 1, int(floor((xhi - m_origin.x) / m_step)));
+		quint8* row = slab + qint64(iy) * m_nx;
+		for(int ix = c0; ix <= c1; ++ix)
+			row[ix] = CELL_SURFACE;
+	}
+}
+
+// Floods the outside of slab 'iz' in from the edge of the grid; every square
+// it does not reach and that is not surface becomes inside.
+void SliceSolid::Flood(int iz, int seal)
+{
+	const int nx = m_nx, ny = m_ny;
+	quint8* slab = m_cells.data() + qint64(iz) * ny * nx;
+	// Grows a mask by 'r' squares (a square of 2r+1 round each), a row pass
+	// and a column pass.
+	auto grow = [nx, ny](QVector<quint8>& mask, int r) {
+		if(r <= 0)
+			return;
+		QVector<quint8> rows(mask.size(), 0);
+		for(int y = 0; y < ny; ++y)
+		{
+			const quint8* in = mask.constData() + qint64(y) * nx;
+			quint8* out = rows.data() + qint64(y) * nx;
+			int last = -1000000;
+			for(int x = 0; x < nx; ++x)		// Distance to the last mark on the left...
+			{
+				if(in[x])
+					last = x;
+				if(x - last <= r)
+					out[x] = 1;
+			}
+			last = 1000000;
+			for(int x = nx - 1; x >= 0; --x)	// ...and on the right.
+			{
+				if(in[x])
+					last = x;
+				if(last - x <= r)
+					out[x] = 1;
+			}
+		}
+		for(int x = 0; x < nx; ++x)
+		{
+			int last = -1000000;
+			for(int y = 0; y < ny; ++y)
+			{
+				if(rows[qint64(y) * nx + x])
+					last = y;
+				if(y - last <= r)
+					mask[qint64(y) * nx + x] = 1;
+			}
+			last = 1000000;
+			for(int y = ny - 1; y >= 0; --y)
+			{
+				if(rows[qint64(y) * nx + x])
+					last = y;
+				if(last - y <= r)
+					mask[qint64(y) * nx + x] = 1;
+			}
+		}
+	};
+	QVector<quint8> wall(nx * ny);
+	for(int i = 0; i < nx * ny; ++i)
+		wall[i] = slab[i] == CELL_SURFACE;
+	grow(wall, seal);
+	// The flood, from every square on the edge of the grid (which is kept
+	// clear of the model by the padding in Build).
+	QVector<quint8> outside(nx * ny, 0);
+	QVector<int> queue;
+	queue.reserve(nx * ny / 4);
+	auto push = [&](int x, int y) {
+		const int i = y * nx + x;
+		if(!wall[i] && !outside[i])
+		{
+			outside[i] = 1;
+			queue << i;
+		}
+	};
+	for(int x = 0; x < nx; ++x)
+	{
+		push(x, 0);
+		push(x, ny - 1);
+	}
+	for(int y = 0; y < ny; ++y)
+	{
+		push(0, y);
+		push(nx - 1, y);
+	}
+	for(int q = 0; q < queue.size(); ++q)
+	{
+		const int x = queue[q] % nx, y = queue[q] / nx;
+		if(x > 0)		push(x - 1, y);
+		if(x < nx - 1)	push(x + 1, y);
+		if(y > 0)		push(x, y - 1);
+		if(y < ny - 1)	push(x, y + 1);
+	}
+	// The outside grown back by the seal, so the sealing only closes gaps and
+	// does not thicken the model.
+	grow(outside, seal);
+	for(int i = 0; i < nx * ny; ++i)
+	{
+		if(slab[i] == CELL_SURFACE)
+			++m_surface;
+		else if(!outside[i])
+		{
+			slab[i] = CELL_IN;
+			++m_inside;
+		}
+	}
+}
+
+bool SliceSolid::Build(const AuScTriList& tris, const AuPoint& mn, const AuPoint& mx, double step, int seal,
+		const std::function<bool(int phase, int done, int total)>& progress)
+{
+	// A margin round the model, so that the flood can go all the way round it.
+	const int pad = seal + 2;
+	m_step = step;
+	m_origin = AuPoint(mn.x - pad * step, mn.y - pad * step, mn.z);
+	m_nx = int(ceil((mx.x - mn.x) / step)) + 2 * pad;
+	m_ny = int(ceil((mx.y - mn.y) / step)) + 2 * pad;
+	m_nz = qMax(1, int(ceil((mx.z - mn.z) / step)));
+	m_cells.fill(CELL_OUT, qint64(m_nx) * m_ny * m_nz);
+	m_surface = m_inside = 0;
+
+	// Each triangle is cut to every slab it crosses: the part of it between
+	// the slab's floor and ceiling, seen from above.
+	auto clip = [](const QVector<AuPoint>& in, double z, bool keepAbove) {
+		QVector<AuPoint> out;
+		for(int i = 0; i < in.size(); ++i)
+		{
+			const AuPoint& a = in[i];
+			const AuPoint& b = in[(i + 1) % in.size()];
+			const bool aIn = keepAbove ? a.z >= z : a.z <= z;
+			const bool bIn = keepAbove ? b.z >= z : b.z <= z;
+			if(aIn)
+				out << a;
+			if(aIn != bIn)
+			{
+				const double t = (z - a.z) / (b.z - a.z);
+				out << a + (b - a) * t;
+			}
+		}
+		return out;
+	};
+	for(int n = 0; n < tris.size(); ++n)
+	{
+		if(n % 200000 == 0 && progress && !progress(0, n, tris.size()))
+			return false;
+		const AuScTri& t = tris.at(n);
+		const QVector<AuPoint> corners = { AuPoint(t.V0()), AuPoint(t.V1()), AuPoint(t.V2()) };
+		const double zlo = qMin(corners[0].z, qMin(corners[1].z, corners[2].z));
+		const double zhi = qMax(corners[0].z, qMax(corners[1].z, corners[2].z));
+		const int k0 = qMax(0, int(floor((zlo - m_origin.z) / step)));
+		const int k1 = qMin(m_nz - 1, int(floor((zhi - m_origin.z) / step)));
+		for(int k = k0; k <= k1; ++k)
+		{
+			const double z0 = m_origin.z + k * step, z1 = z0 + step;
+			QVector<AuPoint> part = corners;
+			if(zlo < z0)
+				part = clip(part, z0, true);
+			if(zhi > z1 && !part.isEmpty())
+				part = clip(part, z1, false);
+			QVector<QPointF> flat;
+			for(const AuPoint& p : part)
+				flat << QPointF(p.x, p.y);
+			Mark(k, flat);
+		}
+	}
+	for(int k = 0; k < m_nz; ++k)
+	{
+		if(k % 64 == 0 && progress && !progress(1, k, m_nz))
+			return false;
+		Flood(k, seal);
+	}
+	return true;
+}
+
+// Turns, moves and scales a model's triangles the way PlanFromModel placed
+// it (TriPlan::model).
+static void PlaceModel(AuScTriList& tris, const PlanModel& model)
+{
+	auto transform = [&tris](const AuMatrix4x4& m) {
+		AuScTriList turned;
+		turned.reserve(tris.size());
+		for(const AuScTri& t : tris)
+		{
+			const AuPoint a = m.Project(AuPoint(t.V0())), b = m.Project(AuPoint(t.V1())), c = m.Project(AuPoint(t.V2()));
+			AuPoint n = (b - a).Cross(c - a);
+			n = n.Length() > 1e-12 ? n / n.Length() : AuPoint(0, 0, 1);
+			turned.append(AuScTri(AuScPoint(a, 0.f, 0.f, n), AuScPoint(b, 0.f, 0.f, n), AuScPoint(c, 0.f, 0.f, n)));
+		}
+		tris = turned;
+	};
+	if(model.yUp)
+	{
+		AuMatrix4x4 up;
+		up.RotateX(PI / 2);
+		transform(up);
+	}
+	AuMatrix4x4 m;
+	if(model.turn)
+		m.RotateZ(PI / 2);
+	if(model.flip)
+		m.RotateZ(PI);
+	transform(m);
+	const AuPoint centre(model.centre[0], model.centre[1], model.centre[2]);
+	AuScTriList placed;
+	placed.reserve(tris.size());
+	// Flipped with the plan after (TriPlan::Flip): mirrored about the grid's
+	// centre, and z about half the decks' height.
+	auto flip = [&model](AuPoint p) {
+		if(model.mirrorX) p.x = -p.x;
+		if(model.mirrorY) p.y = -p.y;
+		if(model.mirrorZ) p.z = model.height - p.z;
+		return p;
+	};
+	for(const AuScTri& t : tris)
+	{
+		const AuPoint a = flip((AuPoint(t.V0()) - centre) * model.scale);
+		const AuPoint b = flip((AuPoint(t.V1()) - centre) * model.scale);
+		const AuPoint c = flip((AuPoint(t.V2()) - centre) * model.scale);
+		AuPoint n = (b - a).Cross(c - a);
+		n = n.Length() > 1e-12 ? n / n.Length() : AuPoint(0, 0, 1);
+		placed.append(AuScTri(AuScPoint(a, 0.f, 0.f, n), AuScPoint(b, 0.f, 0.f, n), AuScPoint(c, 0.f, 0.f, n)));
+	}
+	tris = placed;
+}
+
+// The sliced solids of models, by file and placement: the import leaves its
+// own here, so that the designer does not read the model again for the hull
+// (a big model takes a minute to read).
+static QString ModelKey(const PlanModel& model, double cellFeet)
+{
+	return QString("%1|%2%3%4%11%12%13:%14|%5,%6,%7|%8|%9|%10").arg(QFileInfo(model.file).absoluteFilePath())
+			.arg(model.yUp).arg(model.turn).arg(model.flip)
+			.arg(model.centre[0], 0, 'g', 12).arg(model.centre[1], 0, 'g', 12).arg(model.centre[2], 0, 'g', 12)
+			.arg(model.scale, 0, 'g', 12).arg(model.sealFeet).arg(cellFeet)
+			.arg(model.mirrorX).arg(model.mirrorY).arg(model.mirrorZ).arg(model.height, 0, 'g', 12);
+}
+static QHash<QString, std::shared_ptr<SliceSolid> >& ModelSolids()
+{
+	static QHash<QString, std::shared_ptr<SliceSolid> > solids;
+	return solids;
+}
+
+// The grid of the slices for a model of this size: an eighth of a cell,
+// coarser only for a model too big for 150 million squares.
+static double SliceStep(const AuPoint& mn, const AuPoint& mx, double cellFeet)
+{
+	double fine = cellFeet / 8;
+	const AuPoint size = mx - mn;
+	const double cells = (size.x / fine + 8) * (size.y / fine + 8) * (size.z / fine + 1);
+	if(cells > 1.5e8)
+		fine *= pow(cells / 1.5e8, 1.0 / 3);
+	return fine;
+}
+
+// SHIPGEN_DUMP_HULL=<prefix>: the hull at each stage of BuildPlanHull as
+// <prefix>-<stage>.obj, for looking at it in a viewer (debugging only).
+static void DumpHull(const IndexedMesh& mesh, const char* stage)
+{
+	const QByteArray prefix = qgetenv("SHIPGEN_DUMP_HULL");
+	if(prefix.isEmpty())
+		return;
+	QFile file(QString::fromLocal8Bit(prefix) + "-" + stage + ".obj");
+	if(!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		return;
+	QTextStream out(&file);
+	for(const AuPoint& p : mesh.v)
+		out << "v " << p.x << " " << p.y << " " << p.z << "\n";
+	for(int i = 0; i < mesh.f.size(); i += 3)
+		out << "f " << mesh.f[i] + 1 << " " << mesh.f[i + 1] + 1 << " " << mesh.f[i + 2] + 1 << "\n";
+}
+
+// The sliced solid of a plan's model: from the cache, or read and sliced.
+static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& error)
+{
+	const QString key = ModelKey(plan.model, plan.cellFeet);
+	if(ModelSolids().contains(key))
+		return ModelSolids().value(key);
+	AuScTriList tris;
+	if(!LoadMeshFile(plan.model.file, tris, error))
+		return std::shared_ptr<SliceSolid>();
+	PlaceModel(tris, plan.model);
+	AuPoint mn, mx;
+	MeshExtents(tris, mn, mx);
+	const double fine = SliceStep(mn, mx, plan.cellFeet);
+	std::shared_ptr<SliceSolid> solid = std::make_shared<SliceSolid>();
+	solid->Build(tris, mn, mx, fine, qMax(0, int(ceil(plan.model.sealFeet / fine / 2 - 1e-9))), 0);
+	ModelSolids().insert(key, solid);
+	return solid;
+}
+
+// The hull of a plan made from a model (since 31 October 2026, smooth): the
+// model's sliced solid together with the rooms grown by the skin (so a room
+// drawn out past the model still has its wall), on a grid of cubes a quarter
+// of a cell across. Hull triangles drawn or rubbed out do not change it;
+// unticking the model as the hull goes back to the drawing.
+//
+// The cubes' own surface steps (the first version used it, and the shaping
+// after could only round the steps into jagged facets: the user's Omega
+// destroyer). Instead the grid is blurred a little ([1 2 1] each way), the
+// cubes over the half level make the surface, and its corners are moved onto
+// the level (surface nets), which keeps the cube surface's square faces (and
+// so its closedness) without the steps. Marching tetrahedra, tried first,
+// left so many slivers that the simplifying could not get far (the Cyclops
+// stopped at 16,674 faces). Slopes come out smooth; edges are rounded by about a cube; parts thinner than about two
+// cubes (antennas) go. Each face takes the paint of the plan triangle it
+// covers.
+//
+// Tried and left out: drawing each point onto the nearest point of the
+// model's own triangles. Point by point it followed every little detail of
+// the model, smaller than the cubes, and the hull came out crumpled; with the
+// moves averaged over the neighbours it was still noisier than without.
+static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
+{
+	const double h = plan.cellFeet / 4;
+	AuPoint lo, hi;
+	solid.Extents(lo, hi);
+	const QPointF g0 = plan.Corner(0, 0), g1 = plan.Corner(plan.Width(), plan.Depth());
+	const double skin = qMax(0.0, plan.skinFeet);
+	lo = AuPoint(qMin(lo.x, qMin(g0.x(), g1.x())), qMin(lo.y, qMin(g0.y(), g1.y())), qMin(lo.z, 0.0)) - AuPoint(skin, skin, skin);
+	hi = AuPoint(qMax(hi.x, qMax(g0.x(), g1.x())), qMax(hi.y, qMax(g0.y(), g1.y())),
+			qMax(hi.z, plan.Decks() * plan.deckFeet)) + AuPoint(skin, skin, skin);
+	// Two empty cubes all round, so the blurred grid is empty at its edge.
+	const AuPoint origin = lo - AuPoint(2 * h, 2 * h, 2 * h);
+	const int nx = int(ceil((hi.x - lo.x) / h)) + 4, ny = int(ceil((hi.y - lo.y) / h)) + 4,
+			nz = int(ceil((hi.z - lo.z) / h)) + 4;
+	const qint64 count = qint64(nx) * ny * nz;
+	auto index = [nx, ny](int i, int j, int k) { return (qint64(k) * ny + j) * nx + i; };
+	auto centreOf = [&](int i, int j, int k) { return origin + AuPoint(i + .5, j + .5, k + .5) * h; };
+	// The plan triangle a point is in (an invalid one off the grid).
+	auto triangleAt = [&plan](const AuPoint& p) {
+		const QPointF c0 = plan.Corner(0, 0);
+		const int cx = int(floor((p.x - c0.x()) / plan.cellFeet)), cy = int(floor((p.y - c0.y()) / plan.cellFeet));
+		const QPointF c = plan.CellCentre(cx, cy);
+		const double dx = p.x - c.x(), dy = p.y - c.y();
+		const int k = fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S);
+		return TriRef(int(floor(p.z / plan.deckFeet)), cx, cy, k);
+	};
+	// A room: the plan triangle's prism between its deck's floor and ceiling.
+	// Only the rooms join the model, not every drawn hull triangle: those
+	// come from the model already, and their zigzag edges, grown by the skin,
+	// stood out of its sides as teeth.
+	auto drawn = [&](const AuPoint& p) {
+		const TriRef t = triangleAt(p);
+		if(p.z < 0 || !plan.Valid(t) || plan.Room(t) < 0)
+			return false;
+		double z0, z1;
+		RoomHeights(plan, t.deck, z0, z1);
+		return p.z >= z0 && p.z <= z1;
+	};
+	// The rooms grown by the skin: their wall.
+	auto drawnWithSkin = [&](const AuPoint& p) {
+		if(drawn(p))
+			return true;
+		if(skin <= 0)
+			return false;
+		static const int kDirs[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+		for(const auto& d : kDirs)
+			if(drawn(p + AuPoint(d[0], d[1], d[2]) * skin))
+				return true;
+		return false;
+	};
+
+	// The grid, then blurred.
+	QVector<float> field(count, 0.f);
+	for(int k = 2; k < nz - 2; ++k)
+		for(int j = 2; j < ny - 2; ++j)
+			for(int i = 2; i < nx - 2; ++i)
+			{
+				const AuPoint p = centreOf(i, j, k);
+				if(solid.Inside(p) || drawnWithSkin(p))
+					field[index(i, j, k)] = 1.f;
+			}
+	{
+		QVector<float> blurred(count, 0.f);
+		const qint64 strides[3] = { 1, nx, qint64(nx) * ny };
+		const int sizes[3] = { nx, ny, nz };
+		for(int axis = 0; axis < 3; ++axis)
+		{
+			const qint64 st = strides[axis];
+			for(int k = 0; k < nz; ++k)
+				for(int j = 0; j < ny; ++j)
+					for(int i = 0; i < nx; ++i)
+					{
+						const int at = axis == 0 ? i : (axis == 1 ? j : k);
+						const qint64 c = index(i, j, k);
+						const float before = at > 0 ? field[c - st] : 0.f;
+						const float after = at < sizes[axis] - 1 ? field[c + st] : 0.f;
+						blurred[c] = 0.25f * before + 0.5f * field[c] + 0.25f * after;
+					}
+			field.swap(blurred);
+		}
+	}
+
+	// The surface of the cubes over the half level, with every corner then
+	// moved onto the smooth surface (surface nets: the mean of the points
+	// where the blurred grid crosses the level on the edges between the
+	// eight cube centres round the corner). The level is just over a half,
+	// so that no grid value (a multiple of 1/64) is ever on it.
+	const float level = 0.5f + 1.f / 256;
+	auto at = [&](int i, int j, int k) -> bool {
+		if(i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz)
+			return false;
+		return field[index(i, j, k)] > level;
+	};
+	IndexedMesh mesh;
+	QHash<qint64, int> cornerId;
+	QVector<std::array<int, 3> > cornerAt;
+	auto vertex = [&](int i, int j, int k) {
+		const qint64 key = (qint64(k) * (ny + 1) + j) * (nx + 1) + i;
+		QHash<qint64, int>::const_iterator it = cornerId.constFind(key);
+		if(it != cornerId.constEnd())
+			return it.value();
+		const int id = mesh.v.size();
+		mesh.v << origin + AuPoint(i, j, k) * h;
+		cornerAt << std::array<int, 3>{ { i, j, k } };
+		cornerId.insert(key, id);
+		return id;
+	};
+	auto paintAt = [&](const AuPoint& p) {
+		TriRef t = triangleAt(p);
+		t.deck = qBound(0, t.deck, plan.Decks() - 1);
+		return plan.Valid(t) ? plan.Paint(t) : 0;
+	};
+	auto quad = [&](int a, int b, int c, int d, int paint) {
+		mesh.f << a << b << c << a << c << d;
+		mesh.paint << paint << paint;
+	};
+	for(int k = 0; k < nz; ++k)
+		for(int j = 0; j < ny; ++j)
+			for(int i = 0; i < nx; ++i)
+			{
+				if(!at(i, j, k))
+					continue;
+				const int paint = paintAt(centreOf(i, j, k));
+				if(!at(i + 1, j, k)) quad(vertex(i+1, j, k), vertex(i+1, j+1, k), vertex(i+1, j+1, k+1), vertex(i+1, j, k+1), paint);
+				if(!at(i - 1, j, k)) quad(vertex(i, j, k), vertex(i, j, k+1), vertex(i, j+1, k+1), vertex(i, j+1, k), paint);
+				if(!at(i, j + 1, k)) quad(vertex(i, j+1, k), vertex(i, j+1, k+1), vertex(i+1, j+1, k+1), vertex(i+1, j+1, k), paint);
+				if(!at(i, j - 1, k)) quad(vertex(i, j, k), vertex(i+1, j, k), vertex(i+1, j, k+1), vertex(i, j, k+1), paint);
+				if(!at(i, j, k + 1)) quad(vertex(i, j, k+1), vertex(i+1, j, k+1), vertex(i+1, j+1, k+1), vertex(i, j+1, k+1), paint);
+				if(!at(i, j, k - 1)) quad(vertex(i, j, k), vertex(i, j+1, k), vertex(i+1, j+1, k), vertex(i+1, j, k), paint);
+			}
+	// Corner (i, j, k) is surrounded by the cube centres (i-1..i, j-1..j,
+	// k-1..k); every corner of the surface has a crossing among them.
+	auto value = [&](int i, int j, int k) -> float {
+		if(i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz)
+			return 0.f;
+		return field[index(i, j, k)];
+	};
+	for(int vi = 0; vi < mesh.v.size(); ++vi)
+	{
+		const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
+		float f[8];
+		for(int c = 0; c < 8; ++c)
+			f[c] = value(ci - 1 + (c & 1), cj - 1 + ((c >> 1) & 1), ck - 1 + ((c >> 2) & 1));
+		AuPoint sum(0, 0, 0);
+		int crossings = 0;
+		for(int c = 0; c < 8; ++c)
+			for(int axis = 0; axis < 3; ++axis)
+			{
+				const int o = c | (1 << axis);
+				if(o == c)
+					continue;
+				if((f[c] > level) == (f[o] > level))
+					continue;
+				const double t = (level - f[c]) / (f[o] - f[c]);
+				const AuPoint a((c & 1) - .5, ((c >> 1) & 1) - .5, ((c >> 2) & 1) - .5);
+				const AuPoint b((o & 1) - .5, ((o >> 1) & 1) - .5, ((o >> 2) & 1) - .5);
+				sum = sum + a + (b - a) * t;
+				++crossings;
+			}
+		if(crossings > 0)
+			mesh.v[vi] = mesh.v[vi] + sum / crossings * h;
+	}
+	return mesh;
+}
+
 PlanHull BuildPlanHull(const TriPlan& plan)
 {
 	PlanHull out;
 	const int rows = 2;
 	auto zOf = [&plan, rows](int level) { return level * plan.deckFeet / rows; };
-	IndexedMesh mesh = BuildPrisms(plan, [&plan](const TriRef& t) { return plan.Hull(t); }, zOf, rows, true, false,
-			[&plan](const TriRef& t) { return plan.Paint(t); });
+	// The model itself as the hull, when the plan was made from one and says
+	// so (ModelHullMesh); else the drawn triangles.
+	std::shared_ptr<SliceSolid> modelSolid;
+	if(plan.model.IsSet() && plan.model.asHull)
+	{
+		QString error;
+		modelSolid = ModelSolidFor(plan, error);
+		if(!modelSolid)
+			out.notes << QString("The model %1 could not be read (%2), so the hull is made from the drawn triangles.")
+					.arg(plan.model.file, error);
+	}
+	IndexedMesh mesh;
+	if(modelSolid)
+		mesh = ModelHullMesh(plan, *modelSolid);
+	else
+		mesh = BuildPrisms(plan, [&plan](const TriRef& t) { return plan.Hull(t); }, zOf, rows, true, false,
+				[&plan](const TriRef& t) { return plan.Paint(t); });
 	if(mesh.Faces() == 0)
 	{
 		out.notes << "There is no hull yet: draw some triangles first.";
 		return out;
 	}
-	if(plan.slopedDecks && plan.Decks() > 1 && !SlopeBetweenDecks(plan, mesh, zOf, rows))
-		out.notes << "The hull could not be sloped between the decks (it would not be a closed surface), so it "
-					 "steps from deck to deck.";
-	if(plan.smoothing > 0)
-		Subdivide(mesh);
+	if(modelSolid)
+		out.notes << QString("The hull is the model %1 (with a wall round the rooms): %2 faces before shaping.")
+				.arg(QFileInfo(plan.model.file).fileName()).arg(mesh.Faces());
+	else
+	{
+		if(plan.slopedDecks && plan.Decks() > 1 && !SlopeBetweenDecks(plan, mesh, zOf, rows))
+			out.notes << "The hull could not be sloped between the decks (it would not be a closed surface), so it "
+						 "steps from deck to deck.";
+		if(plan.smoothing > 0)
+			Subdivide(mesh);
+	}
 
 	// How far each vertex may be rounded in: the skin, and more where there
 	// is no room close by.
@@ -863,8 +2185,17 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 					roomPoints << RoomPoint{ c.x(), c.y(), z0, z1 };
 				}
 	}
-	QVector<double> allowance(mesh.v.size(), base + maxExtra);
-	for(int i = 0; i < mesh.v.size(); ++i)
+	// The model's own surface is the hull already (ModelHullMesh grew the
+	// drawn part by the skin): not inflated or smoothed again, only its
+	// slivers taken away (marching tetrahedra leave many; nothing may move
+	// more than a twentieth of a cube for it).
+	if(modelSolid)
+	{
+		DumpHull(mesh, "raw");
+		DecimateHull(mesh, 0, QVector<double>(mesh.v.size(), 1e9), QVector<double>() << plan.cellFeet / 80);
+	}
+	QVector<double> allowance(modelSolid ? 0 : mesh.v.size(), base + maxExtra);
+	for(int i = 0; i < allowance.size(); ++i)
 	{
 		const AuPoint& p = mesh.v[i];
 		double best = 1e30;
@@ -879,13 +2210,137 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 			allowance[i] = base + qBound(0.0, best - 0.5, maxExtra);
 	}
 
-	InflateAndSmooth(mesh, plan.skinFeet, plan.smoothing, allowance);
+	if(!modelSolid)
+	{
+		DumpHull(mesh, "raw");
+		InflateAndSmooth(mesh, plan.skinFeet, plan.smoothing, allowance);
+	}
+	DumpHull(mesh, "smoothed");
 	out.rawTriangles = mesh.Faces();
 	CollapseFlat(mesh);
 
-	// Over the budget: merge areas that are nearly flat, a little more each
-	// time, until it fits.
+	// Over the budget: simplified, the cheapest change to the shape first
+	// (DecimateHull), keeping the surface closed, the paint edges where they
+	// are and a wall round every room: the surface may come in towards a room
+	// only as far as leaves half the skin (at least half a foot), and nowhere
+	// further than 40 percent of a cell.
+	const double maxMove = plan.cellFeet * 0.4;
+	const double wall = qMax(0.5, plan.skinFeet * 0.5);
+	// How far the surface may come in at each vertex: its distance to the
+	// nearest room less the wall (no room near: only the move limits).
+	auto inwardFor = [&](const IndexedMesh& m) {
+		QVector<double> inward(m.v.size(), 1e9);
+		for(int i = 0; i < m.v.size() && !roomPoints.isEmpty(); ++i)
+		{
+			const AuPoint& p = m.v[i];
+			double best = 1e30;
+			for(const RoomPoint& r : roomPoints)
+			{
+				const double dx = r.x - p.x, dy = r.y - p.y;
+				const double dz = p.z < r.z0 ? r.z0 - p.z : (p.z > r.z1 ? p.z - r.z1 : 0.0);
+				const double horizontal = qMax(0.0, sqrt(dx*dx + dy*dy) - plan.cellFeet * 0.5);
+				best = qMin(best, sqrt(horizontal * horizontal + dz * dz));
+			}
+			inward[i] = qMax(0.0, best - wall);
+		}
+		return inward;
+	};
+
+	// Flat panels: the faces are grouped into panels facing one way each
+	// (PanelPartition), the panels simplified within themselves with their
+	// borders kept like paint edges, then pressed flat (FlattenPanels) and
+	// merged. The panel goes into the paint index until the end.
+	int regions = 0;
+	if(plan.panels > 0 && mesh.Faces() > 0)
+	{
+		QVector<int> region;
+		QVector<AuPoint> pn;
+		QVector<double> pd;
+		regions = PanelPartition(mesh, plan.panels, region, pn, pd);
+		QVector<AuPoint> faceN(mesh.Faces());
+		QVector<double> faceD(mesh.Faces());
+		for(int fi = 0; fi < mesh.Faces(); ++fi)
+		{
+			faceN[fi] = pn[region[fi]];
+			faceD[fi] = pd[region[fi]];
+			mesh.paint[fi] = mesh.paint[fi] * regions + region[fi];
+		}
+		const int before = mesh.Faces();
+		// Simplified within the panels, pressed flat, and again: pressing the
+		// borders onto the lines where the panels meet puts their vertices in
+		// a row, which the second round then takes away at no cost.
+		// A flat panel on a curved hull stands off the curve in its middle (a
+		// 50 ft panel on the test ellipsoid by about 7 ft), so the panels may
+		// move the surface a whole cell; the rooms keep their wall all the
+		// same. Three rounds: the ellipsoid in 100 panels, 1,054 faces after
+		// one, 648 after three.
+		const double panelMove = plan.cellFeet;
+		const int rounds = 3;
+		int simplified = 0;
+		for(int round = 0; round < rounds; ++round)
+		{
+			QVector<AuPoint> fn(mesh.Faces());
+			QVector<double> fd(mesh.Faces());
+			for(int fi = 0; fi < mesh.Faces(); ++fi)
+			{
+				fn[fi] = pn[mesh.paint[fi] % regions];
+				fd[fi] = pd[mesh.paint[fi] % regions];
+			}
+			DecimateHull(mesh, 0, inwardFor(mesh), QVector<double>() << panelMove, 0, &fn, &fd, regions);
+			if(round == 0)
+				simplified = mesh.Faces();
+			FlattenPanels(mesh, regions, pn, pd, inwardFor(mesh), panelMove);
+		}
+		CollapseFlat(mesh, 1.0, 0.1);
+		out.notes << QString("Flat panels: %1 panels; the hull went from %2 to %3 faces (%4 after pressing them "
+							 "flat and merging).").arg(regions).arg(before).arg(simplified).arg(mesh.Faces());
+	}
+
+	DumpHull(mesh, "merged");
 	const int merged = mesh.Faces();
+	if(mesh.Faces() > plan.maxFaces)
+	{
+		QVector<double> inward = inwardFor(mesh);
+		// Bigger ships may move further: the limit grows in steps up to one
+		// percent of the hull's longest side, as far as the budget needs.
+		AuPoint lo = mesh.v.first(), hi = lo;
+		for(const AuPoint& p : mesh.v)
+		{
+			lo = lo.Min(p);
+			hi = hi.Max(p);
+		}
+		const double longest = qMax(hi.x - lo.x, qMax(hi.y - lo.y, hi.z - lo.z));
+		const double cap = qMax(maxMove, longest * 0.01);
+		QVector<double> moves;
+		for(double m = maxMove; m < cap * 1.0001; m *= 1.5)
+			moves << qMin(m, cap);
+		if(moves.last() < cap)
+			moves << cap;
+		for(int i = 0; i < inward.size(); ++i)
+			inward[i] = qBound(0.0, inward[i], cap);
+		double used = maxMove;
+		auto checksum = [](const IndexedMesh& m) {
+			double sum = 0;
+			for(int i = 0; i < m.v.size(); ++i)
+				sum += (i % 7 + 1) * (m.v[i].x + 3 * m.v[i].y + 7 * m.v[i].z);
+			return QString("%1 v %2 f %3").arg(sum, 0, 'g', 15).arg(m.v.size()).arg(m.Faces());
+		};
+		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+			fprintf(stderr, "before decimate: %s inward %g\n", qPrintable(checksum(mesh)),
+					std::accumulate(inward.begin(), inward.end(), 0.0));
+		DecimateHull(mesh, plan.maxFaces, inward, moves, &used, 0, 0, regions);
+		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+			fprintf(stderr, "after decimate: %s\n", qPrintable(checksum(mesh)));
+		out.notes << QString("The hull had %1 faces after the flat areas were merged, more than the budget of %2; "
+							 "simplified to %3 (moving the surface at most %4 ft, and keeping %5 ft of wall round "
+							 "the rooms).").arg(merged).arg(plan.maxFaces).arg(mesh.Faces()).arg(used, 0, 'f', 1)
+							 .arg(wall, 0, 'f', 1);
+		out.thinned = true;
+	}
+
+	// Still over: merge areas that are nearly flat, a little more each time,
+	// until it fits.
+	const int simplified = mesh.Faces();
 	static const double kSteps[][2] = { { 2, 0.05 }, { 4, 0.1 }, { 7, 0.2 }, { 11, 0.3 }, { 16, 0.45 }, { 22, 0.6 }, { 30, 0.8 } };
 	double usedAngle = 0;
 	for(const auto& step : kSteps)
@@ -898,13 +2353,17 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	if(usedAngle > 0)
 	{
 		out.thinned = true;
-		out.notes << QString("The hull had %1 faces after the flat areas were merged, more than the budget of %2. "
+		out.notes << QString("The hull still had %1 faces, more than the budget of %2. "
 							 "Nearly flat areas were merged too (up to %3 degrees), which leaves %4.")
-						 .arg(merged).arg(plan.maxFaces).arg(usedAngle).arg(mesh.Faces());
+						 .arg(simplified).arg(plan.maxFaces).arg(usedAngle).arg(mesh.Faces());
 	}
 	if(mesh.Faces() > plan.maxFaces)
 		out.notes << QString("The hull still has %1 faces, more than the budget of %2. Less smoothing, a bigger cell "
 							 "or a smaller ship would bring it down.").arg(mesh.Faces()).arg(plan.maxFaces);
+	if(regions > 0)
+		for(int& p : mesh.paint)
+			p /= regions;		// The panel out of the paint index again.
+	DumpHull(mesh, "final");
 	out.tris = ToTris(mesh);
 	out.paint = mesh.paint;
 	const MeshSolidity solidity = AuditSolidity(out.tris);
@@ -954,6 +2413,55 @@ QVector<QVector<bool> > RoomableTriangles(const TriPlan& plan, const PlanHull& h
 				}
 	}
 	return out;
+}
+
+// Where a ray from 'from' along 'dir' meets triangle abc (Moller and
+// Trumbore): the distance along it, or a negative number when it misses.
+static double RayHitsTriangle(const AuPoint& from, const AuPoint& dir, const AuPoint& a, const AuPoint& b, const AuPoint& c)
+{
+	const AuPoint e1 = b - a, e2 = c - a;
+	const AuPoint p = dir.Cross(e2);
+	const double det = e1.Dot(p);
+	if(fabs(det) < 1e-12)
+		return -1;
+	const AuPoint t = from - a;
+	const double u = t.Dot(p) / det;
+	if(u < 0 || u > 1)
+		return -1;
+	const AuPoint q = t.Cross(e1);
+	const double v = dir.Dot(q) / det;
+	if(v < 0 || u + v > 1)
+		return -1;
+	return e2.Dot(q) / det;
+}
+
+// The point of triangle abc closest to p (Ericson, Real-Time Collision
+// Detection, 5.1.5).
+static AuPoint ClosestOnTriangle(const AuPoint& p, const AuPoint& a, const AuPoint& b, const AuPoint& c)
+{
+	const AuPoint ab = b - a, ac = c - a, ap = p - a;
+	const double d1 = ab.Dot(ap), d2 = ac.Dot(ap);
+	if(d1 <= 0 && d2 <= 0)
+		return a;
+	const AuPoint bp = p - b;
+	const double d3 = ab.Dot(bp), d4 = ac.Dot(bp);
+	if(d3 >= 0 && d4 <= d3)
+		return b;
+	const double vc = d1 * d4 - d3 * d2;
+	if(vc <= 0 && d1 >= 0 && d3 <= 0)
+		return a + ab * (d1 / (d1 - d3));
+	const AuPoint cp = p - c;
+	const double d5 = ab.Dot(cp), d6 = ac.Dot(cp);
+	if(d6 >= 0 && d5 <= d6)
+		return c;
+	const double vb = d5 * d2 - d1 * d6;
+	if(vb <= 0 && d2 >= 0 && d6 <= 0)
+		return a + ac * (d2 / (d2 - d6));
+	const double va = d3 * d6 - d5 * d4;
+	if(va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+		return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+	const double denom = 1.0 / (va + vb + vc);
+	return a + ab * (vb * denom) + ac * (vc * denom);
 }
 
 AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options, PlanBuildReport& report)
@@ -1714,6 +3222,69 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		delete part;
 	}
 
+	// Emitters, from a hull triangle at mid-deck height (PlanEmitter).
+	// A contrail emitter: on the hull's aftmost surface straight aft of it,
+	// facing aft. A weapon emitter: the nearest point of the hull; set on the
+	// fire control stations after the furnishing.
+	QVector<AuPoint> weaponEmitters;
+	for(const PlanEmitter& e : plan.emitters)
+	{
+		const TriRef t(e.deck, e.cx, e.cy, e.k);
+		const QPointF c = plan.TriCentre(t);
+		const AuPoint from(c.x(), c.y(), plan.DeckFloor(e.deck) + plan.deckFeet / 2);
+		if(e.weapon)
+		{
+			AuPoint best = from;
+			double bestD = 1e30;
+			for(const AuScTri& tri : hull.tris)
+			{
+				const AuPoint q = ClosestOnTriangle(from, AuPoint(tri.V0()), AuPoint(tri.V1()), AuPoint(tri.V2()));
+				const double d = (q - from).Dot(q - from);
+				if(d < bestD)
+				{
+					bestD = d;
+					best = q;
+				}
+			}
+			weaponEmitters << best;
+			continue;
+		}
+		const AuPoint aft(-1, 0, 0);
+		double farthest = -1;
+		for(const AuScTri& tri : hull.tris)
+			farthest = qMax(farthest, RayHitsTriangle(from, aft, AuPoint(tri.V0()), AuPoint(tri.V1()), AuPoint(tri.V2())));
+		if(farthest < 0)
+		{
+			report.warnings << QString("A contrail emitter on deck %1 has no hull aft of it.").arg(e.deck + 1);
+			continue;
+		}
+		// The icon is drawn in its own x-y plane, facing its +z: turned so
+		// that +z points aft (which way the turn goes is checked, not
+		// assumed), a hand's breadth behind the hull.
+		AuMatrix4x4 facing;
+		facing.RotateY(-PI / 2);
+		if(facing.Project(AuPoint(0, 0, 1)).x - facing.Project(AuPoint(0, 0, 0)).x > 0)
+		{
+			facing = AuMatrix4x4();
+			facing.RotateY(PI / 2);
+		}
+		AuMatrix4x4 at;
+		at.Translate(from + aft * (farthest + 0.2));
+		AuScPart* part = AuScPart::Create(AuScPart::Part_ContrailEmitter);
+		AuScIcon* icon = dynamic_cast<AuScIcon*>(part);
+		if(icon)
+		{
+			const double half = qMax(1.0, e.sizeFeet) / 2;
+			icon->MakeScreen(AuPoint(-half, -half), AuPoint(half, half), AuMatrix4x4());
+			icon->Transform(facing);
+			icon->Transform(at);
+			icon->SetFaceOpacity(.95f);
+			if(icon->IsValid() && design->Parts().AddPart(*icon))
+				++report.contrails;
+		}
+		delete part;
+	}
+
 	// Everything so far was laid out in plan space. Turn it to the game's
 	// axes before the furnishing, because the engine's hull volume, which
 	// the system volumes are worked out from, depends on the orientation.
@@ -1758,6 +3329,25 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		}
 		const LayoutResult furnished = FurnishRooms(*design, brief, analysis, layout, placed);
 		report.stations = furnished.stationsPlaced;
+		// The weapon emitters, turned to the game's axes like the rest, one
+		// to each fire control station and console in turn.
+		if(!weaponEmitters.isEmpty())
+		{
+			const AuMatrix4x4 turn = QuarterTurnToFore();
+			int next = 0;
+			for(AuScParts::iterator it = design->Parts().begin(); it != design->Parts().end() && next < weaponEmitters.size(); ++it)
+			{
+				AuScPart* part = it.value();
+				if(!part || (part->Type() != AuScPart::Part_StationFireControl && part->Type() != AuScPart::Part_ConsoleFireControl))
+					continue;
+				part->SetEmitLoc(turn.Project(weaponEmitters.at(next++)));
+				++report.weaponEmitters;
+			}
+			if(next < weaponEmitters.size())
+				report.warnings << QString("%1 weapon emitter(s) left over: the game keeps one on each fire control "
+										   "station, and there %2 %3.").arg(weaponEmitters.size() - next)
+										   .arg(next == 1 ? "is" : "are").arg(next);
+		}
 		report.berths = furnished.berthsPlaced;
 		report.notes << furnished.warnings;
 	}
@@ -1773,6 +3363,19 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		}
 
 	ValidateDesign(*design, report.errors, report.engineWarnings);
+	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+	{
+		QMap<AuPoint, float> contrails;
+		design->ContrailEmitters(contrails);
+		for(QMap<AuPoint, float>::const_iterator it = contrails.constBegin(); it != contrails.constEnd(); ++it)
+			fprintf(stderr, "contrail at %.1f %.1f %.1f, %.1f ft across\n", it.key().x, it.key().y, it.key().z, it.value());
+		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+			if(it.value() && it.value()->Type() == AuScPart::Part_ConsoleFireControl)
+			{
+				const AuPoint e = it.value()->WeaponEmitLoc();
+				fprintf(stderr, "weapon emitter at %.1f %.1f %.1f\n", e.x, e.y, e.z);
+			}
+	}
 	if(design->HullVolume() > 0)
 		report.hullVolumeM3 = design->HullVolume();		// The engine's own measure.
 	report.ok = report.errors.isEmpty();
@@ -1793,9 +3396,21 @@ static AuScTri TriOf(const AuPoint& a, const AuPoint& b, const AuPoint& c)
 	return AuScTri(AuScPoint(a, 0.f, 0.f, n), AuScPoint(b, 0.f, 0.f, n), AuScPoint(c, 0.f, 0.f, n));
 }
 
+int RecommendedSlicesPerDeck(double deckFeet)
+{
+	// About one every 3 ft: three in a 10 ft deck. More only smooths the
+	// judgement of a triangle; the deck itself stays one step of the hull.
+	// Always an odd number: with an even one a deck the model fills half way
+	// up has exactly half its heights inside, a tie with the default
+	// 'threshold' of one half that tips either way.
+	const int n = qMax(1, int(lround(deckFeet / 3.0)));
+	return qBound(3, n % 2 ? n : n + 1, 9);
+}
+
 bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,
 		QStringList& notes, QString& error, PlanFromModelReport* report)
 {
+	const bool slices = options.method == ModelInside::Slices;
 	auto step = [&](const QString& what, int done = 0, int total = 0) {
 		if(options.progress && !options.progress(what, done, total))
 		{
@@ -1814,80 +3429,87 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		error = QString("%1 has no triangles.").arg(modelFile);
 		return false;
 	}
-	// Tidied up first, the way the mesh tool does it (and shipgen reduce):
-	// models from the internet have triangles with no area, doubles, faces
-	// the wrong way round and holes, and an inside cannot be told without
-	// a closed surface.
-	if(!step("Repairing the model (as the mesh tool does)"))
-		return false;
-	// A repair is kept only when it leaves fewer broken edges: on some models
-	// (the Moogle, after thinning) closing the holes makes things worse.
-	auto brokenEdges = [](const AuScTriList& t) {
-		const MeshSolidity m = AuditSolidity(t);
-		return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges;
-	};
-	auto repair = [&](const QString& when) {
-		QStringList done;
-		const AuScTriList repaired = RepairMesh(tris, &done);
-		if(done.isEmpty())
-			return;
-		if(brokenEdges(repaired) <= brokenEdges(tris))
-		{
-			tris = repaired;
-			notes << when + done.join("; ") + ".";
-		}
-		else
-			notes << when + "the mesh tool's repair (" + done.join("; ") + ") left more broken edges than "
-					"before, so the model was kept as it was.";
-	};
-	repair("Repaired the model: ");
-	// A big model is thinned out next, the way shipgen reduce does it, and
-	// tidied up again after (thinning opens holes).
-	if(options.maxFaces > 0 && tris.size() > options.maxFaces)
+	// The closed-solid method needs a closed surface, so the model is repaired
+	// and thinned first. Slicing needs neither (SliceSolid).
+	if(!slices)
 	{
-		const int before = tris.size();
-		if(!step(QString("Thinning %1 faces to %2 (the longest step)").arg(before).arg(options.maxFaces)))
+		// Tidied up first, the way the mesh tool does it (and shipgen reduce):
+		// models from the internet have triangles with no area, doubles, faces
+		// the wrong way round and holes, and an inside cannot be told without
+		// a closed surface.
+		if(!step("Repairing the model (as the mesh tool does)"))
 			return false;
-		// The careful method takes a minute and a half on half a million
-		// faces; a quick clustering pass down to five times the target first
-		// leaves it little to do, and the clustering's blockiness is
-		// smoothed over by the careful pass.
-		if(tris.size() > options.maxFaces * 5)
-		{
-			const AuScTriList quick = SimplifyMesh(tris, options.maxFaces * 5, SimplifyMethod::Cluster);
-			if(quick.size() > options.maxFaces)
-				tris = quick;
-		}
-		tris = SimplifyMesh(tris, options.maxFaces, SimplifyMethod::Quadric);
-		notes << QString("The model was thinned from %1 to %2 faces.").arg(before).arg(tris.size());
-		repair("After thinning: ");
-	}
-
-	// Repair it only when it needs it, and keep the repair only when it helps:
-	// on some closed models the repair does more harm than good.
-	auto problems = [](const MeshSolidity& m) { return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges; };
-	if(!step("Checking the surface is closed"))
-		return false;
-	{
-		const AuScTriList windings = FixWindings(CleanMesh(tris));
-		if(problems(AuditSolidity(windings)) <= problems(AuditSolidity(tris)))
-			tris = windings;
-		if(!AuditSolidity(tris).Closed())
-		{
-			const AuScTriList repaired = SolidifyMesh(tris);
-			if(problems(AuditSolidity(repaired)) < problems(AuditSolidity(tris)))
+		// A repair is kept only when it leaves fewer broken edges: on some models
+		// (the Moogle, after thinning) closing the holes makes things worse.
+		auto brokenEdges = [](const AuScTriList& t) {
+			const MeshSolidity m = AuditSolidity(t);
+			return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges;
+		};
+		auto repair = [&](const QString& when) {
+			QStringList done;
+			const AuScTriList repaired = RepairMesh(tris, &done);
+			if(done.isEmpty())
+				return;
+			if(brokenEdges(repaired) <= brokenEdges(tris))
+			{
 				tris = repaired;
+				notes << when + done.join("; ") + ".";
+			}
+			else
+				notes << when + "the mesh tool's repair (" + done.join("; ") + ") left more broken edges than "
+						"before, so the model was kept as it was.";
+		};
+		repair("Repaired the model: ");
+		// A big model is thinned out next, the way shipgen reduce does it, and
+		// tidied up again after (thinning opens holes).
+		if(options.maxFaces > 0 && tris.size() > options.maxFaces)
+		{
+			const int before = tris.size();
+			if(!step(QString("Thinning %1 faces to %2 (the longest step)").arg(before).arg(options.maxFaces)))
+				return false;
+			// The careful method takes a minute and a half on half a million
+			// faces; a quick clustering pass down to five times the target first
+			// leaves it little to do, and the clustering's blockiness is
+			// smoothed over by the careful pass.
+			if(tris.size() > options.maxFaces * 5)
+			{
+				const AuScTriList quick = SimplifyMesh(tris, options.maxFaces * 5, SimplifyMethod::Cluster);
+				if(quick.size() > options.maxFaces)
+					tris = quick;
+			}
+			tris = SimplifyMesh(tris, options.maxFaces, SimplifyMethod::Quadric);
+			notes << QString("The model was thinned from %1 to %2 faces.").arg(before).arg(tris.size());
+			repair("After thinning: ");
 		}
+
+		// Repair it only when it needs it, and keep the repair only when it helps:
+		// on some closed models the repair does more harm than good.
+		auto problems = [](const MeshSolidity& m) { return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges; };
+		if(!step("Checking the surface is closed"))
+			return false;
+		{
+			const AuScTriList windings = FixWindings(CleanMesh(tris));
+			if(problems(AuditSolidity(windings)) <= problems(AuditSolidity(tris)))
+				tris = windings;
+			if(!AuditSolidity(tris).Closed())
+			{
+				const AuScTriList repaired = SolidifyMesh(tris);
+				if(problems(AuditSolidity(repaired)) < problems(AuditSolidity(tris)))
+					tris = repaired;
+			}
+		}
+		const MeshSolidity solidity = AuditSolidity(tris);
+		if(!solidity.Closed() && !solidity.ClosedButForOpenings())
+			notes << QString("The model is not closed even after repair (%1 open, %2 thick, %3 folded edges), so its "
+					"inside cannot be told everywhere: only its closed pieces count as hull. The mesh tool "
+					"(shipgen-mesh) can show where.")
+					.arg(solidity.openEdges).arg(solidity.thickEdges).arg(solidity.foldedEdges);
+		else if(!solidity.Closed())
+			notes << QString("The model is not quite closed (%1 open edges after repair); the inside is found by a "
+					"vote of rays, so look the grid over.").arg(solidity.openEdges);
 	}
-	const MeshSolidity solidity = AuditSolidity(tris);
-	if(!solidity.Closed() && !solidity.ClosedButForOpenings())
-		notes << QString("The model is not closed even after repair (%1 open, %2 thick, %3 folded edges), so its "
-				"inside cannot be told everywhere: only its closed pieces count as hull. The mesh tool "
-				"(shipgen-mesh) can show where.")
-				.arg(solidity.openEdges).arg(solidity.thickEdges).arg(solidity.foldedEdges);
-	else if(!solidity.Closed())
-		notes << QString("The model is not quite closed (%1 open edges after repair); the inside is found by a "
-				"vote of rays, so look the grid over.").arg(solidity.openEdges);
+	else if(!step(QString("Read %1 faces; slicing needs no repair or thinning").arg(tris.size())))
+		return false;
 
 	// Turn it so that the longest horizontal side is x, and scale it.
 	auto transform = [&tris](const AuMatrix4x4& m) {
@@ -1905,7 +3527,8 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	AuPoint mn, mx;
 	MeshExtents(tris, mn, mx);
 	AuMatrix4x4 m;
-	if(mx.y - mn.y > mx.x - mn.x)
+	const bool turned = mx.y - mn.y > mx.x - mn.x;
+	if(turned)
 		m.RotateZ(PI / 2);
 	if(options.flip)
 		m.RotateZ(PI);
@@ -1917,7 +3540,12 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		error = QString("%1 has no length.").arg(modelFile);
 		return false;
 	}
-	const double scale = options.lengthFeet / length;
+	// The length, or the number of decks asked for: the length that makes
+	// the model that many decks high (each deck is one slice of it).
+	double lengthFeet = options.lengthFeet;
+	if(options.decks > 0 && mx.z - mn.z > 1e-9)
+		lengthFeet = qMin(5000.0, options.decks * options.deckFeet * length / (mx.z - mn.z));
+	const double scale = lengthFeet / length;
 	const AuPoint centre((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mn.z);
 	{
 		AuScTriList placed;
@@ -1934,9 +3562,10 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	// they overlap. Each piece is tested on its own, and a point is inside
 	// the model when it is inside any of them.
 	QList<SolidMesh> pieces;
-	if(!step("Finding its pieces"))
-		return false;
+	if(!slices)
 	{
+		if(!step("Finding its pieces"))
+			return false;
 		QHash<QString, int> vertexIds;
 		auto vid = [&vertexIds](const AuPoint& p) {
 			const QString key = QString("%1,%2,%3").arg(p.x, 0, 'f', 4).arg(p.y, 0, 'f', 4).arg(p.z, 0, 'f', 4);
@@ -1970,18 +3599,63 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 			notes << QString("The model has %1 separate pieces; %2 of them are closed and count as hull.")
 					.arg(byPiece.size()).arg(pieces.size());
 	}
-	auto inModel = [&pieces](const AuPoint& p) {
+	// Slicing: the grid of the slices is an eighth of a cell (so that the
+	// recommendation below can judge cells down to a quarter of this size),
+	// coarser only for a model too big for 150 million squares.
+	std::shared_ptr<SliceSolid> solidShared = std::make_shared<SliceSolid>();
+	SliceSolid& solid = *solidShared;
+	if(slices)
+	{
+		const AuPoint size = mx - mn;
+		const double fine = SliceStep(mn, mx, options.cellFeet);
+		const int seal = qMax(0, int(ceil(options.sealFeet / fine / 2 - 1e-9)));
+		const int faces = tris.size();
+		if(!solid.Build(tris, mn, mx, fine, seal, [&](int phase, int done, int total) {
+				return step(phase == 0 ? QString("Slicing: %1 of %2 faces").arg(done).arg(total)
+						: QString("Finding the inside of the slices: %1 of %2").arg(done).arg(total), done, total);
+			}))
+			return false;
+		tris.clear();		// Not needed any more, and a big model holds a lot of memory.
+		notes << QString("Sliced %1 faces into %2 slices of %3 ft, on squares of %3 ft, closing gaps narrower "
+				"than about %4 ft (%5 squares of surface, %6 inside).")
+				.arg(faces).arg(int(ceil(size.z / fine))).arg(fine, 0, 'f', 2).arg(2 * seal * fine, 0, 'f', 1)
+				.arg(solid.SurfaceCells()).arg(solid.InsideCells());
+	}
+	const std::function<bool(const AuPoint&)> inModel = [&](const AuPoint& p) {
+		if(slices)
+			return solid.Inside(p);
 		for(const SolidMesh& piece : pieces)
 			if(piece.Contains(p))
 				return true;
 		return false;
 	};
+	// The heights in a deck at which the model is looked at: the slices of
+	// it each plan triangle is judged by.
+	const int perDeck = options.slicesPerDeck > 0 ? options.slicesPerDeck
+			: RecommendedSlicesPerDeck(options.deckFeet);
+	QVector<double> heights;
+	for(int s = 0; s < perDeck; ++s)
+		heights << (s + .5) / perDeck;
 
 	// The grid: a cell of room round the model, and enough decks.
 	plan = TriPlan();
 	plan.name = QFileInfo(modelFile).completeBaseName();
 	plan.cellFeet = options.cellFeet;
 	plan.deckFeet = options.deckFeet;
+	// Where the model came from and how it was placed, so that the hull can
+	// be the model itself (ModelHullMesh); the sliced solid is kept for it.
+	plan.model.file = QFileInfo(modelFile).absoluteFilePath();
+	plan.model.yUp = options.yUp;
+	plan.model.turn = turned;
+	plan.model.flip = options.flip;
+	plan.model.centre[0] = centre.x;
+	plan.model.centre[1] = centre.y;
+	plan.model.centre[2] = centre.z;
+	plan.model.scale = scale;
+	plan.model.sealFeet = options.sealFeet;
+	plan.model.asHull = slices && options.modelAsHull;
+	if(slices)
+		ModelSolids().insert(ModelKey(plan.model, plan.cellFeet), solidShared);
 	const int width = int(ceil((mx.x - mn.x) / options.cellFeet)) + 2;
 	int depth = int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 / options.cellFeet)) + 2;
 	depth += depth % 2;		// Even, so that the mirror line is a cell edge.
@@ -2008,7 +3682,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 						at[i + 1] = middle + (c[i] - middle) * .6;
 					int inside = 0, samples = 0;
 					for(const QPointF& q : at)
-						for(double h : { .2, .5, .8 })
+						for(double h : heights)
 						{
 							++samples;
 							if(inModel(AuPoint(q.x(), q.y(), plan.DeckFloor(d) + plan.deckFeet * h)))
@@ -2021,6 +3695,85 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 					}
 				}
 	}
+	// Tidying: pieces of hull that touch nothing else and are smaller than
+	// 'minPiece' triangles (fragments of fins, antennas and greebles, each of
+	// which costs the hull faces and holds no room) are taken away, and a
+	// single missing triangle with hull on all three sides is filled in.
+	if(options.minPiece > 0 || options.fillPinholes)
+	{
+		if(!step("Tidying the grid"))
+			return false;
+		int filled = 0;
+		if(options.fillPinholes)
+			for(int d = 0; d < plan.Decks(); ++d)
+				for(int cy = 0; cy < plan.Depth(); ++cy)
+					for(int cx = 0; cx < plan.Width(); ++cx)
+						for(int k = 0; k < 4; ++k)
+						{
+							const TriRef t(d, cx, cy, k);
+							if(plan.Hull(t))
+								continue;
+							bool closed = true;
+							for(int e = 0; e < 3 && closed; ++e)
+							{
+								const TriRef n = plan.Across(t, e);
+								closed = plan.Valid(n) && plan.Hull(n);
+							}
+							if(closed)
+							{
+								plan.SetHull(t, true);
+								++filled;
+								++hull;
+							}
+						}
+		int removedPieces = 0, removedTris = 0;
+		if(options.minPiece > 0)
+		{
+			auto key = [&plan](const TriRef& t) {
+				return ((t.deck * plan.Depth() + t.cy) * plan.Width() + t.cx) * 4 + t.k;
+			};
+			QVector<bool> seen(plan.Decks() * plan.Depth() * plan.Width() * 4, false);
+			for(int d = 0; d < plan.Decks(); ++d)
+				for(int cy = 0; cy < plan.Depth(); ++cy)
+					for(int cx = 0; cx < plan.Width(); ++cx)
+						for(int k = 0; k < 4; ++k)
+						{
+							const TriRef start(d, cx, cy, k);
+							if(!plan.Hull(start) || seen[key(start)])
+								continue;
+							QVector<TriRef> piece;
+							piece << start;
+							seen[key(start)] = true;
+							for(int q = 0; q < piece.size(); ++q)
+							{
+								const TriRef t = piece[q];
+								QVector<TriRef> next;
+								for(int e = 0; e < 3; ++e)
+									next << plan.Across(t, e);
+								next << TriRef(t.deck - 1, t.cx, t.cy, t.k) << TriRef(t.deck + 1, t.cx, t.cy, t.k);
+								for(const TriRef& n : next)
+									if(plan.Valid(n) && plan.Hull(n) && !seen[key(n)])
+									{
+										seen[key(n)] = true;
+										piece << n;
+									}
+							}
+							if(piece.size() < options.minPiece)
+							{
+								for(const TriRef& t : piece)
+									plan.SetHull(t, false);
+								++removedPieces;
+								removedTris += piece.size();
+								hull -= piece.size();
+							}
+						}
+		}
+		if(filled || removedPieces)
+			notes << QString("Tidied the grid: %1 loose piece(s) of fewer than %2 triangles taken away (%3 "
+					"triangles), %4 pinhole(s) filled.").arg(removedPieces).arg(options.minPiece).arg(removedTris)
+					.arg(filled);
+	}
+
 	if(!hull)
 	{
 		error = QString("No part of %1 is thick enough for a %2 ft cell. Make it longer, or the cells smaller.")
@@ -2064,8 +3817,15 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	notes << QString("%1 by %2 cells of %3 ft, %4 decks; %5 hull triangles, holding about %6% of the model.")
 			.arg(plan.Width()).arg(plan.Depth()).arg(options.cellFeet).arg(plan.Decks()).arg(hull)
 			.arg(qRound(kept * 100));
+	if(options.decks > 0)
+		notes << QString("%1 decks asked for: the model is %2 ft long.").arg(options.decks).arg(qRound(lengthFeet));
+	notes << QString("Each deck was judged at %1 heights (slices) through it.").arg(perDeck);
 	if(report)
+	{
 		report->keptShare = kept;
+		report->lengthFeet = lengthFeet;
+		report->decks = plan.Decks();
+	}
 
 	// When much is lost, find the length that keeps more: a longer ship with
 	// the same cells and decks is the same as smaller cells and decks on
@@ -2099,7 +3859,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 						at[i + 1] = middle + (c[i] - middle) * .6;
 					int inside = 0, tests = 0;
 					for(const QPointF& q : at)
-						for(double h : { .2, .5, .8 })
+						for(double h : heights)
 						{
 							++tests;
 							if(inModel(AuPoint(q.x(), q.y(), deck * (t.deck + h))))
@@ -2116,7 +3876,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		double bestLength = 0, bestKept = kept;
 		for(double k : { 1.5, 2.0, 3.0, 4.0 })
 		{
-			const double length = options.lengthFeet * k;
+			const double length = lengthFeet * k;
 			if(length > 2000.0)
 				break;
 			if(!step(QString("Looking for a length that keeps more of the model: %1 ft").arg(qRound(length))))
@@ -2138,7 +3898,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		}
 		if(bestLength > 0)
 		{
-			const double k = bestLength / options.lengthFeet;
+			const double k = bestLength / lengthFeet;
 			const int w = int(ceil((mx.x - mn.x) * k / options.cellFeet)) + 2;
 			int dpt = int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 * k / options.cellFeet)) + 2;
 			dpt += dpt % 2;
@@ -2147,18 +3907,19 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 					"%5 decks), against %6% at %7 ft. The cells and decks stay %8 and %9 ft, which doors and "
 					"headroom need; a longer ship makes the thin parts of the model thick enough for them.")
 					.arg(qRound(bestLength)).arg(qRound(bestKept * 100)).arg(w).arg(dpt).arg(dk)
-					.arg(qRound(kept * 100)).arg(qRound(options.lengthFeet)).arg(options.cellFeet).arg(options.deckFeet);
+					.arg(qRound(kept * 100)).arg(qRound(lengthFeet)).arg(options.cellFeet).arg(options.deckFeet);
 			if(report)
 			{
 				report->suggestedLength = bestLength;
 				report->suggestedShare = bestKept;
+				report->suggestedDecks = dk;
 			}
 		}
 	}
 	if(kept < .5)
 		notes << QString("Only a little of the model came through (about %1%): most of it is thinner than a %2 ft "
 				"cell or a %3 ft deck at %4 ft long. Make it longer, or lower 'Inside at least' (now %5).")
-				.arg(qRound(kept * 100)).arg(options.cellFeet).arg(options.deckFeet).arg(options.lengthFeet)
+				.arg(qRound(kept * 100)).arg(options.cellFeet).arg(options.deckFeet).arg(lengthFeet)
 				.arg(options.threshold);
 	return true;
 }

@@ -61,11 +61,19 @@ The steps are the tabs of the side panel:
 
 | Step | What it does |
 |---|---|
-| 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, and adding or removing decks. |
+| 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, adding or removing decks, turning one deck around or mirroring it, and turning the whole ship around (fore and aft), mirroring it (port and starboard) or turning it upside down, for a 3D model that came in the wrong way round (also in the Edit menu; `shipgen plan-flip` on the command line). Everything drawn goes with it, and so does the 3D model when it is the hull; a ladder or stairs that no longer meet after a one-deck flip are taken away, and stairs go when the ship is turned upside down (they would climb down). |
 | 2 Hull | Draw the hull. The deck below shows faintly. Skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15) and the face budget (5,000). The 3D view follows the drawing after a short pause. |
-| 3 Rooms | Add rooms (the type is one of the engine's own room types; the name has to be unique) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; click near the grid corner the spot is centred on; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
+| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; click near the grid corner the spot is centred on; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue arrow pointing aft) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
 | 4 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. |
 | 5 Build | Build the blueprint and see the engine's report; save it as `.SoH`. Stations, berths and systems, and walk paths, can be switched off. |
+
+Every control has a tooltip saying what it does; the room tools have one
+for each choice in their list.
+
+The 3D view draws the hull see-through so that the rooms show, and only
+its nearest layer (since 31 October 2026: before, the far side of the hull
+was blended over the near side wherever it happened to be drawn later, so
+the back faces seemed to be the ones shown).
 
 **File** saves and opens plans (`.json`) and exports the blueprint
 (Ctrl+E).
@@ -101,11 +109,74 @@ code is 0 when the engine accepts it, 3 when it has errors) and
    the vertices inside them onto a neighbour. Edges, bends and paint edges
    stay exactly where they are, and no merge may leave a sliver (the engine
    would drop it and open the hull).
-6. Over the face budget, nearly flat areas are merged too, with a tolerance
+6. Over the face budget, the hull is **simplified** (`DecimateHull`, since
+   31 October 2026): edges are collapsed onto one of their own ends, the
+   cheapest first by the quadric error (Garland and Heckbert), until the
+   budget is met. Unlike the general quadric method (tried before, which left
+   700 non-manifold edges) it keeps what a hull needs: an edge goes only when
+   exactly two faces share it and its ends have exactly two neighbours in
+   common (the link condition, so the surface stays closed); no face may
+   turn over or become a sliver; a vertex on a paint edge may only slide
+   along that edge, and paint edges carry extra planes so they stay straight;
+   and every vertex taken away is kept as a witness, which the new surface
+   may not move in past by more than its distance to the nearest room less a
+   wall (half the skin, at least half a foot), nor move past by more than
+   40 percent of a cell (2 ft) either way. The Cyclops frigate: 52,948 faces
+   to 5,000 in 2 s, its volume 2 percent less; the Nautilus 21,128 to 5,000;
+   an ellipsoid 300 ft long 45,528 to 5,000 with rooms filling two decks
+   right up to the hull still inside it (`test.sh`). When no collapse is
+   left within that limit, the limit grows (half as much again each time,
+   up to 1 percent of the ship's longest side) and the pass goes on: a big
+   ship has room to move further. The Truman (600 ft): 306,928 to 22,578
+   with the fixed 2 ft, 12,388 with the growing limit, 7,480 with the
+   import tidied (below). The wall round the rooms holds at every limit.
+   Thin triangles are kept out at a ratio of 0.05: at 0.01 the engine's
+   cutting of doors and windows (`JigCut`) gave a different hull from one
+   run to the next.
+7. Still over the budget, nearly flat areas are merged too, with a tolerance
    that grows in steps (2 degrees and 0.05 ft up to 30 degrees and 0.8 ft)
-   until it fits. This keeps the surface closed and the paint exact, which
-   the quadric method (tried first) did not: it left 700 non-manifold edges.
-7. Every face gets its paint: a plain colour, or an empire colour theme.
+   until it fits.
+8. Every face gets its paint: a plain colour, or an empire colour theme.
+
+**Flat panels** (experimental, *Flat panels* in the hull step, `build-plan
+--panels <n>`, 0 by default). Before the budget pass the hull is split into
+that many nearly flat regions (variational shape approximation, Cohen-Steiner
+and others, 2004: each face goes to the region whose plane suits its normal
+best, and the planes are refitted, in turns), and the vertices are drawn
+onto their regions' planes, three rounds, each followed by a simplification
+that keeps faces facing their region. It does cut faces (an ellipsoid with
+100 panels: 2,540), but the regions still come out crumpled rather than as
+clean plates, so it stays off. The proper way, meshing each region as one
+polygon from its corner points, is still to do.
+
+**The model as the hull** (*Use the 3D model as the hull* in the hull step,
+on by default for a plan from a model; `build-plan --model-hull` or
+`--grid-hull`). The plan remembers its model (`"model"` in the plan file:
+the file, how it was turned and scaled, the seal), and the hull is built
+from the sliced model itself on a grid of cubes a quarter of a cell across,
+with the rooms grown by the skin added (so a room drawn out past the model
+still has its wall). Hull triangles drawn or rubbed out do not change it;
+untick the box to go back to the drawing.
+
+The surface is smooth, not stepped (since 31 October 2026, after the
+user's Omega destroyer came out jagged): the cube grid is blurred a little
+([1 2 1] each way), and the surface of the cubes over the half level has
+its corners moved onto that level (surface nets). It is not smoothed or
+inflated again afterwards. Edges are rounded by about a cube; parts thinner
+than about two cubes (antennas, thin pipes) go. Tried and left out:
+marching tetrahedra (so many slivers that the simplifying stalled, the
+Cyclops at 16,674 faces) and drawing the points onto the model's own
+triangles (it followed every little detail and came out crumpled). Set
+`SHIPGEN_DUMP_HULL=<prefix>` to have `build-plan` write the hull at each
+stage as obj files.
+
+The Omega destroyer (150 ft): 5,000 faces, closed, 0.7 s. The Cyclops
+frigate (300 ft): 184,292 faces before simplifying, a close copy of the
+model; 5,000 after, closed, 7.9 s. The Truman (600 ft): 5,000, closed,
+120 s and 2.5 GB, most of it reading its 451 MB obj (was 9,248 stepped). A model this detailed loses a lot at
+5,000 faces: the engine copes with about 15,000, so a higher face budget
+keeps more of it. If the model cannot be read, the drawn hull is used and
+the notes say why.
 
 The result is checked with the same exact solid test `audit` uses. A place
 where two prisms only touch along an edge (an even number of faces, half each
@@ -213,6 +284,7 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "ladders": [ { "deck": 0, "x": 13, "y": 7 } ],
   "parking": [ { "deck": 0, "x": 4, "y": 8, "kind": "ground", "across": true } ],
   "stairs":  [ { "deck": 0, "x": 14, "y": 8, "side": 1 } ],
+  "emitters": [ { "deck": 0, "x": 2, "y": 8, "side": 3, "kind": "contrail", "size": 6.56 } ],
   "palette": [ { "colour": "#969ba5", "theme": -1, "name": "Hull" } ],
   "layers":  [ { "hull": "1234*0,8*1,...", "room": "...", "paint": "..." } ]
 }
@@ -225,7 +297,11 @@ room, `paint` an index into the palette. A door's `side` is the cell edge
 0 S, 1 E, 2 N, 3 W. A ladder goes up from its deck. Stairs start at cell
 (`x`, `y`) of their deck and climb towards `side`, onto the cell after the
 run on the deck above. A parking spot is
-centred on the grid corner (`x`, `y`); `kind` is `ground` or `space`. `theme` is 0, 1 or 2 for
+centred on the grid corner (`x`, `y`); `kind` is `ground` or `space`. An
+emitter stands on triangle `side` of cell (`x`, `y`); `kind` is `contrail`
+or `weapon`, `size` a contrail's width in feet. A plan made from a 3D model
+has a `"model"` object (the file, how it was placed, and `"mirror"`, three
+booleans, when it was flipped). `theme` is 0, 1 or 2 for
 the owner's three exterior colours, -1 for the plain colour.
 
 ## Units
@@ -235,6 +311,49 @@ feet, the game's unit, so switching back and forth changes nothing. The
 setting is remembered.
 
 ## Starting from a 3D model
+
+**The model is sliced** (since 31 October 2026, after 0.3.1-alpha; the
+user's idea). It is cut into thin horizontal slabs, an eighth of a cell
+thick, and in each slab every square of a grid as fine that a triangle of
+the model passes through is marked; then the outside is flooded in from the
+edge of the grid, round the marks, and what it cannot reach is inside
+(`SliceSolid`, `src/planbuild.cpp`). Gaps in the surface narrower than about
+a foot are closed first (`--seal`). Each slab is flooded on its own, so only
+a gap the outside can flow through sideways matters: a missing top or
+bottom does not. Models from the internet are mostly open panels laid
+against each other, and the older method, below, counts only the closed
+pieces; slicing needs no closed surface, no repair and no thinning, since
+every face is visited once.
+
+On the user's models (`3dmodelsraw` in their cloud folder), at the same
+length:
+
+| Model | Faces | Closed pieces only | Sliced |
+|---|---|---|---|
+| Cyclops civilian frigate, 300 ft | 95,017 | 4,535 hull triangles, 40 s | 6,607, 1.8 s |
+| Nautilus explorer, 300 ft | 17,794 | 1,855, 6.8 s | 2,331, 0.5 s |
+| Truman class (Expanse), 600 ft | 3,989,625 | **27**, 356 s, 5.5 GB | **111,503**, 72 s (66 s reading the obj), 2.5 GB |
+
+The sliced plans hold nearly every triangle of the old ones (16 fewer on
+the Cyclops) and add the parts that were open panels.
+
+**The number of slices.** The decks are the slices of the model: their
+height stays (headroom), so *Decks* in the dialog (`--decks`) sets how many
+the model is cut into, and the length follows from it; the recommended
+length below says how many decks it gives. *Slices per deck*
+(`--slices`) is how many heights in a deck each triangle is judged at;
+the recommendation is about one every 3 ft, and always odd (a deck the
+model fills half way has an even count tie with the threshold of one
+half): three in a 10 ft deck. *Inside found by* (`--method solid`) still
+offers the older method.
+
+**Tidying.** Specks the slicing leaves (pieces of fewer than 12 triangles,
+counted across edges and from deck to deck; `--min-piece`) are taken away,
+and single triangles missing inside a filled area are filled in
+(`--no-pinholes` to keep them). The Truman's hull came down from 12,388
+faces to 7,480 from this alone.
+
+The older method, *closed pieces only*:
 
 A big model is thinned first: a quick clustering pass to five times the
 face budget, then the careful (quadric) pass. Half a million faces take

@@ -1,0 +1,9 @@
+# Builds the Linux programs on Ubuntu 22.04 (glibc 2.35), so the AppImage
+# runs on that and every newer distribution: packaging/build-appimage-portable.sh
+FROM docker.io/library/ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git file ca-certificates desktop-file-utils \
+        qtbase5-dev qtbase5-dev-tools libqt5opengl5-dev libqt5sql5-sqlite \
+        qtwayland5 libqt5svg5 libopenal-dev libgl1-mesa-dev \
+    && rm -rf /var/lib/apt/lists/*

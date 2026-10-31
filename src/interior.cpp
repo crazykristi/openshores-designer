@@ -44,7 +44,7 @@ void OrientFaces(AuScFaceList& faces, bool positive)
 }
 
 // Splits a part's faces into those near a box and the rest.
-static void SplitFacesNear(const AuScPart* part, const AuPoint& mn, const AuPoint& mx, AuScFaceList& near, AuScFaceList& far)
+static void SplitFacesNear(const AuScPart* part, const AuPoint& mn, const AuPoint& mx, AuScFaceList& nearFaces, AuScFaceList& otherFaces)
 {
 	AuScFaceList faces;
 	part->Faces(faces);
@@ -57,7 +57,7 @@ static void SplitFacesNear(const AuScPart* part, const AuPoint& mn, const AuPoin
 			fmx = fmx.Max(f->Vertex(v));
 		}
 		const bool touches = fmn.x <= mx.x && fmx.x >= mn.x && fmn.y <= mx.y && fmx.y >= mn.y && fmn.z <= mx.z && fmx.z >= mn.z;
-		(touches ? near : far).AddFace(*f);
+		(touches ? nearFaces : otherFaces).AddFace(*f);
 	}
 }
 
@@ -125,12 +125,12 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 		AuScPart* part = id ? design.Parts().value(id) : 0;
 		if(!part)
 			continue;
-		AuScFaceList near, far;
-		SplitFacesNear(part, jmn, jmx, near, far);
-		if(near.isEmpty())
+		AuScFaceList nearFaces, otherFaces;
+		SplitFacesNear(part, jmn, jmx, nearFaces, otherFaces);
+		if(nearFaces.isEmpty())
 			continue;
-		part->SetFaces(near);
-		farFaces.insert(id, far);
+		part->SetFaces(nearFaces);
+		farFaces.insert(id, otherFaces);
 	}
 
 	AuScSelection sel;
@@ -435,10 +435,10 @@ static bool AddDoorPart(AuDesign& design, const AuPoint& mn, const AuPoint& mx, 
 }
 
 // A void that only exists while the door is open.
-template<class VOID>
+template<class VoidType>
 static bool AddDoorVoid(AuDesign& design, const AuPoint& mn, const AuPoint& mx, const QString& groupName, quint16 doorId)
 {
-	VOID v;
+	VoidType v;
 	v.AddFaces(BoxFaces(mn, mx));
 	v.SetGroupName(groupName);
 	v.SetAssociatedPart(doorId, AuScDoor::Open);

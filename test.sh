@@ -631,6 +631,33 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		echo "  FAIL  the example plan lost windows"
 		grep '^Windows' "$WORK/plan/build.txt"
 	fi
+	# Turned around, the example keeps all it has; turned twice, it is the
+	# same plan (TriPlan::Flip). Mirrored and upside down twice too.
+	if "$SHIPGEN" plan-flip "$WORK/plan/example.json" "$WORK/plan/turned.json" --turn > /dev/null 2>&1 &&
+			"$SHIPGEN" build-plan "$WORK/plan/turned.json" --out "$WORK/plan/turned.SoH" > "$WORK/plan/turned.txt" 2>&1 &&
+			diff <(grep -E '^(Rooms|Doors|Windows|Ladders|Stations|Errors)' "$WORK/plan/build.txt") \
+				<(grep -E '^(Rooms|Doors|Windows|Ladders|Stations|Errors)' "$WORK/plan/turned.txt") > /dev/null; then
+		pass=$((pass+1))
+		echo "  ok    the example plan turned around keeps its rooms, doors, windows, ladder and stations"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the example plan turned around lost something"
+		diff <(grep -E '^(Rooms|Doors|Windows|Ladders|Stations|Errors)' "$WORK/plan/build.txt") \
+			<(grep -E '^(Rooms|Doors|Windows|Ladders|Stations|Errors)' "$WORK/plan/turned.txt")
+	fi
+	twice=ok
+	for how in --turn --mirror --fore-aft --upside-down; do
+		"$SHIPGEN" plan-flip "$WORK/plan/example.json" "$WORK/plan/once.json" $how > /dev/null 2>&1
+		"$SHIPGEN" plan-flip "$WORK/plan/once.json" "$WORK/plan/twice.json" $how > /dev/null 2>&1
+		cmp -s "$WORK/plan/example.json" "$WORK/plan/twice.json" || twice="not the same after $how twice"
+	done
+	if [ "$twice" = ok ]; then
+		pass=$((pass+1))
+		echo "  ok    a plan turned, mirrored or turned upside down twice is the same plan"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  $twice"
+	fi
 	# What the game wants (learned from blueprints that work in it): hulls
 	# wound with a negative signed volume, rooms positive, fore along +Y,
 	# one engineer running the FTL drive.
@@ -737,6 +764,67 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		fail=$((fail+1))
 		echo "  FAIL  the importer's recommendation is wrong"
 		grep -E 'holding|Recommended' "$WORK/plan/short.txt"
+	fi
+	# Slicing: the test box made the way models from the internet are, five
+	# separate panels with gaps between them and no top, comes out as full
+	# as the closed box; the closed-pieces method keeps next to nothing.
+	"$SHIPGEN" plan-from-model "$HERE/testdata/openpanels.obj" "$WORK/plan/open.json" --length 120 > "$WORK/plan/open.txt" 2>&1
+	"$SHIPGEN" plan-from-model "$HERE/testdata/openpanels.obj" "$WORK/plan/open-solid.json" --length 120 --method solid > "$WORK/plan/open-solid.txt" 2>&1
+	opentris=$(sed -n 's/.*; \([0-9]*\) hull triangles.*/\1/p' "$WORK/plan/open.txt")
+	solidtris=$(sed -n 's/.*; \([0-9]*\) hull triangles.*/\1/p' "$WORK/plan/open-solid.txt")
+	if [ -n "$opentris" ] && [ "$opentris" -ge 2000 ] && [ "$opentris" -le 2304 ] && [ "${solidtris:-0}" -lt 500 ]; then
+		pass=$((pass+1))
+		echo "  ok    an open model is filled in slice by slice ($opentris triangles; ${solidtris:-0} from closed pieces only)"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the open model is not filled in by slicing"
+		grep -E 'hull triangles' "$WORK/plan/open.txt" "$WORK/plan/open-solid.txt"
+	fi
+	# The model as the hull: the open test box's plan remembers the model,
+	# and the hull is built from the model's sliced solid, closed.
+	"$SHIPGEN" build-plan "$WORK/plan/open.json" --out "$WORK/plan/open-model.SoH" --no-furnish > "$WORK/plan/open-model.txt" 2>&1
+	if grep -q '"asHull": true' "$WORK/plan/open.json" && grep -q 'The hull is the model openpanels.obj' "$WORK/plan/open-model.txt" &&
+			"$SHIPGEN" inspect "$WORK/plan/open-model.SoH" 2>&1 | grep -q 'closed solid'; then
+		pass=$((pass+1))
+		echo "  ok    the hull of a plan from a model is the model itself, closed"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the model is not the hull"
+		grep -E '^Hull|model' "$WORK/plan/open-model.txt" | head -5
+	fi
+	# The number of decks (slices) asked for sets the length: the box is a
+	# quarter as high as it is long, so 6 decks make it 240 ft long.
+	if "$SHIPGEN" plan-from-model "$HERE/testdata/testhull.stl" "$WORK/plan/decks.json" --decks 6 > "$WORK/plan/decks.txt" 2>&1 &&
+			grep -q ', 6 decks;' "$WORK/plan/decks.txt" && grep -q 'the model is 240 ft long' "$WORK/plan/decks.txt"; then
+		pass=$((pass+1))
+		echo "  ok    the decks asked for set the length"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the decks asked for do not set the length"
+		grep -E 'decks' "$WORK/plan/decks.txt"
+	fi
+	# The hull simplifier: an ellipsoid 300 ft long has 45,528 faces after the
+	# flat areas are merged; it comes down to the budget of 5,000, closed,
+	# and rooms filling two decks right up to the hull stay inside it.
+	if command -v python3 >/dev/null 2>&1; then
+		"$SHIPGEN" plan-from-model "$HERE/testdata/ellipsoid.obj" "$WORK/plan/ellipsoid.json" --length 300 > /dev/null 2>&1
+		python3 "$HERE/testdata/add_rooms.py" "$WORK/plan/ellipsoid.json" "$WORK/plan/ellipsoid-rooms.json" > /dev/null
+		"$SHIPGEN" build-plan "$WORK/plan/ellipsoid-rooms.json" --out "$WORK/plan/ellipsoid.SoH" --no-furnish > "$WORK/plan/ellipsoid.txt" 2>&1
+		faces=$(sed -n 's/^Hull *: \([0-9]*\) faces.*/\1/p' "$WORK/plan/ellipsoid.txt")
+		if grep -q 'simplified to' "$WORK/plan/ellipsoid.txt" && [ -n "$faces" ] && [ "$faces" -le 5000 ] &&
+				"$SHIPGEN" inspect "$WORK/plan/ellipsoid.SoH" 2>&1 | grep -q 'closed solid' &&
+				"$SHIPGEN" audit "$WORK/plan/ellipsoid.SoH" > "$WORK/plan/ellipsoid-audit.txt" 2>&1 &&
+				grep -q 'Rooms outside the hull: none' "$WORK/plan/ellipsoid-audit.txt"; then
+			pass=$((pass+1))
+			echo "  ok    a hull over the budget is simplified to $faces faces, closed, with its rooms inside"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  the hull simplifier"
+			grep -E '^Hull|simplified|still' "$WORK/plan/ellipsoid.txt"
+			grep -E 'outside' "$WORK/plan/ellipsoid-audit.txt" | head -5
+		fi
+	else
+		echo "  skip  the hull simplifier (needs python3)"
 	fi
 	# A vehicle bay: five door edges side by side on the engine room's
 	# starboard wall make one wide bay door, and a ground vehicle parking

@@ -1,6 +1,8 @@
 # Build output.
 build/
 build-windows/
+build.log
+build-windows.log
 
 # Generated test output and in-game test rounds (rebuilt from the plans).
 work/

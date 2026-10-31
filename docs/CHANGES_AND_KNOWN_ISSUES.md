@@ -1,5 +1,98 @@
 # Changes and known issues
 
+## 31 October 2026: release 0.3.2-alpha, and a Windows build
+
+* **Version 0.3.2-alpha** (`src/version.h`, `RELEASE_NOTES.md`): the
+  sliced, smooth model hull and its simplification, flips, emitters, the
+  room dialog and tooltips, all below.
+* **The AppImage is built on Ubuntu 22.04** in a container
+  (`packaging/build-appimage-portable.sh`), so it runs with glibc 2.35 and
+  newer instead of only Fedora 44's. Tried in a bare Ubuntu 22.04
+  container: the designer builds the example plan and `gui` starts.
+  `package-appimage.sh` takes `BIN` and `OUT` and finds Qt's plugins with
+  `qmake` too.
+* **A Windows build, made on Linux**: `packaging/build-windows-cross.sh`
+  (MinGW-w64 and Fedora's MinGW Qt 5 in a container; `build.sh` takes
+  `CROSS=x86_64-w64-mingw32`) makes a zip with the four programs, 23 DLLs
+  and the Qt plugins. Under Wine 11 the command line builds the example
+  plan with 0 errors (the Linux `shipgen validate` agrees) and the designer
+  opens, shapes and builds it. **Not yet run on Windows itself; the 3D view
+  under Wine was not looked at** (screenshots do not show it).
+* For the Windows compilers: `planbuild.cpp` and `interior.cpp` no longer
+  use `IN`, `OUT`, `near`, `far` or `VOID` as names (the Windows headers
+  define them as macros), and the engine's MSVC-only `operator[]` block in
+  `third_party/soh/aumath/auscface.h` is kept to MSVC.
+
+## 31 October 2026, after 0.3.1-alpha: flips, emitters and the designer's controls
+
+* **Turning and flipping** (the user: a model may come in backwards). The
+  whole ship turned around, mirrored or turned upside down, or one deck
+  turned around or mirrored (Ship page and Edit menu; `shipgen
+  plan-flip`). The model hull follows (`PlanModel` mirrors, saved in the
+  plan). `test.sh`: the example turned around keeps its rooms, doors,
+  windows, ladder and stations, and each flip done twice gives the same
+  plan.
+* **Contrail and weapon emitters** (the user missed them): two new room
+  tools. A contrail emitter (`AuScContrailEmitter`, an icon facing aft)
+  goes on the hull straight aft of the triangle clicked; a weapon emitter
+  is the emit location of a fire control station (`SetEmitLoc`, as the
+  game's designer sets it), one per station. Saved in the plan as
+  `"emitters"`.
+* **Adding a room** asks for its type and name in a dialog; before, the
+  type box both chose the new room's type and changed the room picked in
+  the list.
+* **The 3D view** draws only the nearest layer of the see-through hull
+  (its depth first): its far side showed through its near side.
+* **Tooltips** on every control, and on each room tool.
+
+## 31 October 2026, after 0.3.1-alpha: the model import slices
+
+* **The model is sliced** (the user: complex models lost a lot of
+  geometry; their idea, slices per deck). The inside of each thin slab is
+  found by flooding the outside in round the marked surface
+  (`SliceSolid`), so open panels, overlapping parts and missing tops
+  count, and no repair or thinning is needed. The cause of the loss was
+  that only closed pieces counted: the Nautilus has 47 percent of its
+  faces in closed pieces, the Cyclops 65, and the thinning of big models
+  opened more. The Truman (4 million faces): 111,503 hull triangles
+  instead of 27, in a fifth of the time. Table in `DESIGNER.md`.
+* **Decks and slices per deck** in the dialog and `--decks`, `--slices`,
+  `--method slices|solid`, `--seal` on the command line; the recommended
+  length also names its decks.
+* `test.sh`: an open model (`testdata/openpanels.obj`, the test box as
+  five panels with gaps and no top) fills like the closed box; the decks
+  asked for set the length.
+* **The hull is simplified to the face budget** (the user: much less
+  complex geometry). `DecimateHull`: quadric-ordered edge collapses that
+  keep the hull closed, the paint edges, and a wall round every room
+  (`DESIGNER.md`, step 6). The Cyclops 52,948 faces to 5,000, the Nautilus
+  21,128 to 5,000, both closed. `test.sh`: an ellipsoid (`testdata/
+  ellipsoid.obj`) with rooms right up to its hull (`testdata/add_rooms.py`)
+  comes down to 5,000 faces with every room inside.
+* **The move limit grows with the ship**: when nothing is left to collapse
+  within 2 ft, the limit grows up to 1 percent of the longest side. The
+  Truman: 22,578 faces to 12,388.
+* **The import is tidied**: specks under 12 triangles go, pinholes are
+  filled (`--min-piece`, `--no-pinholes`). The Truman: 7,480 faces.
+* **The model as the hull** (default for a new import; `--model-hull`,
+  `--grid-hull`): the plan remembers its model and the hull follows the
+  model's own slopes instead of deck steps. `test.sh` checks the open test
+  box's hull is closed and built from the model.
+* **The model hull is smooth** (the user: the Omega destroyer came out
+  jagged). The cube grid is blurred and its surface's corners moved onto
+  the half level (surface nets) instead of stepping; only the rooms (grown
+  by the skin) are added to the model, not every drawn triangle, whose
+  zigzag edges stood out as teeth. The Cyclops now reaches the budget
+  (5,000 faces, was 7,908), in 7.9 s instead of 11.5.
+* **Flat panels** (experimental, off): `--panels <n>` and *Flat panels*.
+  Crumpled rather than clean plates for now; see `DESIGNER.md`.
+* **Found:** triangles thinner than 0.05 make the engine's door and window
+  cutting give a different hull from run to run; the limit stays at 0.05.
+* **Known:** a detailed model loses much of its detail at 5,000 faces (a
+  higher face budget keeps more), and the model is read again for each
+  build in a new process (the designer keeps it).
+* **Known:** reading a big obj is slow (66 s for the Truman's 451 MB).
+
 ## 31 October 2026, after 0.3.1-alpha: repair and length recommendation
 
 * **The model import repairs like the mesh tool** (the user): `RepairMesh`

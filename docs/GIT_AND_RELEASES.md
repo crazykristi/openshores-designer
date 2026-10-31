@@ -66,6 +66,7 @@ releases. The releases so far:
 |---|---|---|
 | [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha) | 31 October 2026 | The first on GitHub, a pre-release. (The designer test builds before it were called alpha1 and alpha2.) |
 | [0.3.1-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.1-alpha) | 31 October 2026 | A pre-release with bug fixes: the model import kept no plan; clear feedback on why an import went wrong. |
+| [0.3.2-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.2-alpha) | 31 October 2026 | A pre-release: 3D models sliced and made the smooth hull, simplified to the face budget; turn and flip; contrail and weapon emitters; tooltips. The AppImage is built on Ubuntu 22.04. |
 
 1. **Set the version** in `src/version.h` (`SHIPGEN_VERSION`). The
    designer's window title, `--version` of all three programs and the
@@ -77,8 +78,12 @@ releases. The releases so far:
    "... 0 with errors."
    For a bug-fix release, put a *Bug fixes* section first, naming what was
    wrong in the version before and what changed (as 0.3.1-alpha does).
-4. **Package:** `./package-appimage.sh` makes
-   `build/shipgen-designer-<version>-x86_64.AppImage`. Try it:
+4. **Package:** `packaging/build-appimage-portable.sh` makes
+   `build/shipgen-designer-<version>-x86_64.AppImage` on Ubuntu 22.04 in a
+   container (`./package-appimage.sh` makes it from this machine's own
+   build, for this machine's glibc and newer), and
+   `packaging/build-windows-cross.sh` makes
+   `build/shipgen-designer-<version>-windows-x86_64.zip`. Try it:
    `build/shipgen-designer-<version>-x86_64.AppImage`, then
    `... gui` and `... shipgen --version`.
 5. **Commit and tag:**
@@ -90,10 +95,11 @@ releases. The releases so far:
    ```
 6. **Publish on GitHub:** *Releases > Draft a new release*, choose the tag,
    title it "Shipgen Designer 0.3.0-alpha", paste `RELEASE_NOTES.md`,
-   attach the AppImage, tick *Set as a pre-release* for an alpha or beta,
+   attach the AppImage and the Windows zip, tick *Set as a pre-release* for an alpha or beta,
    and *Publish*. With the GitHub CLI instead:
    ```bash
    gh release create v0.3.0-alpha build/shipgen-designer-0.3.0-alpha-x86_64.AppImage \
+       build/shipgen-designer-0.3.0-alpha-windows-x86_64.zip \
        --title "Shipgen Designer 0.3.0-alpha" --notes-file RELEASE_NOTES.md --prerelease
    ```
 
@@ -103,8 +109,29 @@ It bundles Qt 5 and its X11 and Wayland plugins, OpenAL and the other
 libraries; the C library, the OpenGL drivers, X11 and the font libraries
 come from the system it runs on. It therefore runs only where the C library
 is at least as new as on the machine that built it (Fedora 44 for
-0.3.0-alpha). Building it on an older distribution (for example in a
-container) would let it run on more systems; that is not set up yet.
+0.3.0-alpha and 0.3.1-alpha). Since 0.3.2-alpha the release AppImage is
+built on Ubuntu 22.04 in a container, `packaging/build-appimage-portable.sh`
+(podman or docker; the image is `packaging/containers/Containerfile.linux`),
+so it runs with glibc 2.35 and newer. It was tried in a bare Ubuntu 22.04
+container with only the desktop's usual libraries added.
+
+### The Windows zip
+
+`packaging/build-windows-cross.sh` builds the Windows programs on Linux,
+with the MinGW-w64 cross compiler and Qt 5 from Fedora's packages in a
+container (`packaging/containers/Containerfile.windows`), and packs them
+with their DLLs and Qt plugins into
+`build/shipgen-designer-<version>-windows-x86_64.zip`. No Windows machine
+is needed to make it; Wine (which Proton is built on) is enough to try it:
+
+```bash
+wine build/windows-dist/shipgen-designer-<version>/shipgen-designer.exe
+wine build/windows-dist/shipgen-designer-<version>/shipgen.exe --version
+```
+
+0.3.2-alpha's zip was tried under Wine 11: the command line builds the
+example plan with no engine errors, and the designer opens, shapes and
+builds it. It has not been run on Windows itself yet.
 
 The licence notice of the engine source (`third_party/soh/LICENSE`) is
 packed into the AppImage (`usr/share/doc/shipgen/`), as the licence asks.

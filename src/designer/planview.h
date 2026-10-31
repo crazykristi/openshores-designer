@@ -5,7 +5,8 @@
 // depends on the mode: hull triangles, the triangles of the chosen room, a
 // door on the cell edge under the mouse (the triangle under the mouse stands
 // on that edge), a ladder up from the cell, a window, a vehicle parking spot
-// (on the grid corner nearest the mouse), or paint. The wheel zooms, the
+// (on the grid corner nearest the mouse), a contrail or weapon emitter (on
+// the hull triangle clicked), or paint. The wheel zooms, the
 // middle button pans. With the mirror on, everything drawn on one side of
 // the ship is drawn on the other side as well.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -24,7 +25,8 @@ class PlanView : public QWidget
 	Q_OBJECT
 
 public:
-	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, StairMode };
+	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, StairMode,
+			ContrailMode, WeaponMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
 
 	explicit PlanView(QWidget* parent = 0);
@@ -38,6 +40,7 @@ public:
 	void	SetMirror(bool mirror) { m_mirror = mirror; update(); }
 	void	SetRoom(int room) { m_room = room; }
 	void	SetPaintIndex(int paint) { m_paintIndex = paint; }
+	void	SetEmitterSize(double feet) { m_emitterFeet = feet; }		// For contrail emitters placed from now on.
 
 	// The triangles a room fits in, from the last time the hull was shaped.
 	// The ones that do not are marked.
@@ -77,6 +80,7 @@ private:
 	bool		m_mirror = true;
 	int			m_room = 0;
 	int			m_paintIndex = 0;
+	double		m_emitterFeet = 6.5616798;
 
 	QVector<QVector<bool> >	m_roomable;
 

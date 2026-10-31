@@ -1285,7 +1285,7 @@ public:	// Methods
 	}
 };
 
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) && defined(_MSC_VER)	// shipgen: MSVC only (MinGW g++ rejects it; Linux never had it)
 inline const AuScTriRender QMultiMap<SURFACE_EFFECT, AuScTriRender>::operator[](const SURFACE_EFFECT& e) const
 {
 	const_iterator ti = find(e);

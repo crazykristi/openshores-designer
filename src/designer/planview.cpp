@@ -320,6 +320,33 @@ void PlanView::paintEvent(QPaintEvent*)
 			}
 		}
 
+		// Emitters: a contrail as an arrow pointing aft, a weapon emitter as
+		// a ring with a cross.
+		for(const PlanEmitter& e : m_plan->emitters)
+		{
+			if(e.deck != m_deck)
+				continue;
+			const QPointF c = ToScreen(m_plan->TriCentre(TriRef(e.deck, e.cx, e.cy, e.k)));
+			const double r = qMax(6.0, cellPixels * .35);
+			p.setBrush(Qt::NoBrush);
+			if(e.weapon)
+			{
+				p.setPen(QPen(QColor(255, 80, 80), qMax(1.5, cellPixels / 14)));
+				p.drawEllipse(c, r, r);
+				p.drawLine(c - QPointF(r * 1.4, 0), c + QPointF(r * 1.4, 0));
+				p.drawLine(c - QPointF(0, r * 1.4), c + QPointF(0, r * 1.4));
+			}
+			else
+			{
+				// Aft is to the left on the screen.
+				p.setPen(QPen(QColor(120, 200, 255), qMax(2.0, cellPixels / 10)));
+				const QPointF tip = c - QPointF(r * 1.6, 0);
+				p.drawLine(c + QPointF(r * 0.8, 0), tip);
+				p.drawLine(tip, tip + QPointF(r * .7, -r * .6));
+				p.drawLine(tip, tip + QPointF(r * .7, r * .6));
+			}
+		}
+
 		// Room names in the middle of each room.
 		QHash<int, QPointF> sum;
 		QHash<int, int> count;
@@ -624,6 +651,42 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			const int mside = t.k == TRI_N ? TRI_S : t.k == TRI_S ? TRI_N : t.k;
 			if(my != t.cy && (m_plan->StairAt(t.deck, t.cx, my) >= 0) == had)
 				toggle(t.deck, t.cx, my, mside, 0);
+		}
+		emit PlanChanged(false);
+		update();
+		return;
+	}
+	if(m_mode == ContrailMode || m_mode == WeaponMode)
+	{
+		emit AboutToChange();
+		const bool weapon = m_mode == WeaponMode;
+		auto toggle = [this, weapon](const TriRef& at) -> bool {
+			const int existing = m_plan->EmitterAt(at, weapon);
+			if(existing >= 0)
+			{
+				m_plan->emitters.removeAt(existing);
+				return true;
+			}
+			if(!m_plan->Hull(at))
+				return false;
+			PlanEmitter e;
+			e.deck = at.deck;
+			e.cx = at.cx;
+			e.cy = at.cy;
+			e.k = at.k;
+			e.weapon = weapon;
+			e.sizeFeet = m_emitterFeet;
+			m_plan->emitters << e;
+			return true;
+		};
+		const bool had = m_plan->EmitterAt(t, weapon) >= 0;
+		if(!toggle(t))
+			Notice(t, "An emitter goes on a hull triangle.");
+		else if(m_mirror)
+		{
+			const TriRef m = m_plan->Mirror(t);
+			if(!(m == t) && (m_plan->EmitterAt(m, weapon) >= 0) == had)
+				toggle(m);
 		}
 		emit PlanChanged(false);
 		update();

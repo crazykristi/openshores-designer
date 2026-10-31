@@ -78,6 +78,8 @@ struct PlanBuildReport
 	int				ladders = 0;
 	int				stairs = 0;
 	int				parking = 0;			// Vehicle parking spots.
+	int				contrails = 0;			// Contrail emitters.
+	int				weaponEmitters = 0;		// Fire control stations given a weapon emitter.
 	int				ramps = 0;				// Hull doors with a ramp down to the ground.
 	int				stations = 0;
 	int				berths = 0;
@@ -92,16 +94,45 @@ struct PlanBuildReport
 AuScDesign*	BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options, PlanBuildReport& report);
 
 // A plan whose hull triangles are filled in from a 3D model (stl, 3ds or
-// obj), as a start to draw rooms, doors and paint on. The model is repaired,
-// turned so that its longest horizontal side is the plan's x (fore, to the
-// right), scaled to 'lengthFeet' long, and stood on deck 0. A triangle of a
-// deck is hull when at least 'threshold' (0 to 1) of the points sampled in
-// it, at three heights in the deck, are inside the model: lower for a fuller
-// hull, higher for a slimmer one. Parts thinner than about half a cell are
-// lost, and slopes come out stepped by the deck height (the shaping smooths
-// them).
+// obj), as a start to draw rooms, doors and paint on. The model is turned so
+// that its longest horizontal side is the plan's x (fore, to the right),
+// scaled to 'lengthFeet' long (or to 'decks' decks high), and stood on deck
+// 0. Its inside is found slice by slice (ModelInside::Slices), or from its
+// closed pieces after a repair (ModelInside::Solid). A triangle of a deck is
+// hull when at least 'threshold' (0 to 1) of the points sampled in it, at
+// 'slicesPerDeck' heights in the deck, are inside the model: lower for a
+// fuller hull, higher for a slimmer one. Parts thinner than about half a cell
+// are lost, and slopes come out stepped by the deck height (the shaping
+// smooths them).
+
+// How the inside of a model is found.
+enum class ModelInside
+{
+	Slices,		// Slice by slice, flooding the outside in (works on open models; SliceSolid).
+	Solid		// Only the closed pieces count, tested by rays (repaired and thinned first).
+};
+
+// The heights each deck is judged at when slicesPerDeck is 0.
+int		RecommendedSlicesPerDeck(double deckFeet);
+
 struct PlanFromModelOptions
 {
+	ModelInside	method = ModelInside::Slices;
+	// The number of decks (slices of the model) wanted: the length is then
+	// whatever makes the model this many decks high. 0: use lengthFeet.
+	int		decks = 0;
+	// The heights each deck is judged at (0: RecommendedSlicesPerDeck).
+	int		slicesPerDeck = 0;
+	// Slicing: gaps in the model's surface narrower than this are closed.
+	double	sealFeet = 1.0;
+	// Pieces of hull smaller than this many triangles that touch nothing
+	// else are taken away (0: kept); single missing triangles with hull on
+	// all three sides are filled in.
+	int		minPiece = 12;
+	bool	fillPinholes = true;
+	// The hull is the model itself, smooth (with a wall round the rooms), not
+	// the drawn triangles (TriPlan::model). Slicing only.
+	bool	modelAsHull = true;
 	double	lengthFeet = 150.0;
 	double	threshold = .5;
 	double	cellFeet = 5.0;
@@ -119,6 +150,9 @@ struct PlanFromModelOptions
 struct PlanFromModelReport
 {
 	double	keptShare = 0;			// The share of the model (points through its inside) on hull triangles.
+	double	lengthFeet = 0;			// The length it was made at (from the decks, when they were asked for).
+	int		decks = 0;
+	int		suggestedDecks = 0;		// The decks at suggestedLength.
 	// When much is lost (under 85 percent), the shortest length tried that
 	// keeps 85 percent (or the best one tried), and what it keeps; 0 when
 	// no longer length is needed or none keeps at least ten points more. The cells and decks stay

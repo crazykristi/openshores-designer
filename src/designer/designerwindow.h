@@ -98,6 +98,8 @@ private:
 	void		RefreshDecks();
 	void		RefreshTitle();
 	void		ApplyDrawMode();
+	// Flips the plan (TriPlan::Flip), or with 'deckOnly' the deck shown.
+	void		Flip(bool foreAft, bool portStarboard, bool upsideDown, bool deckOnly);
 
 	TriPlan			m_plan;
 	QString			m_planFile;
@@ -142,6 +144,8 @@ private:
 	QDoubleSpinBox*	m_skin = 0;
 	QSlider*		m_smoothing = 0;
 	QSpinBox*		m_maxFaces = 0;
+	QSpinBox*		m_panels = 0;
+	QCheckBox*		m_modelHull = 0;
 	QDoubleSpinBox*	m_windowSill = 0;
 	QDoubleSpinBox*	m_windowTop = 0;
 	QCheckBox*		m_joinWindows = 0;
@@ -156,6 +160,8 @@ private:
 	QComboBox*		m_roomType = 0;
 	QLineEdit*		m_roomLabel = 0;
 	QComboBox*		m_roomTool = 0;
+	QWidget*		m_emitterRow = 0;		// Shown with the contrail tool.
+	QDoubleSpinBox*	m_emitterSize = 0;
 
 	// The paint page.
 	QListWidget*	m_palette = 0;

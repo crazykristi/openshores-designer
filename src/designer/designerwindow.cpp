@@ -16,6 +16,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -137,6 +138,11 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	m_steps->addTab(Scrolled(MakeRoomPage()), "3 Rooms");
 	m_steps->addTab(Scrolled(MakePaintPage()), "4 Paint");
 	m_steps->addTab(Scrolled(MakeBuildPage()), "5 Build");
+	m_steps->setTabToolTip(StepShip, "The ship's name, kind, grid and decks; turning or flipping it round.");
+	m_steps->setTabToolTip(StepHull, "Drawing the outside of the ship, and how the hull is shaped.");
+	m_steps->setTabToolTip(StepRooms, "Rooms, doors, windows, ladders, stairs, parking and emitters.");
+	m_steps->setTabToolTip(StepPaint, "The colours of the hull.");
+	m_steps->setTabToolTip(StepBuild, "Turning the plan into a blueprint the game can use, and saving it.");
 	sideLayout->addWidget(m_steps, 1);
 	side->setMinimumWidth(320);
 	side->setMaximumWidth(420);
@@ -165,6 +171,12 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	QMenu* edit = menuBar()->addMenu("&Edit");
 	edit->addAction("&Undo", this, SLOT(OnUndo()), QKeySequence::Undo);
 	edit->addAction("&Redo", this, SLOT(OnRedo()), QKeySequence::Redo);
+	edit->addSeparator();
+	edit->addAction("&Turn the ship around (fore and aft)", this, [this]() { Flip(true, true, false, false); });
+	edit->addAction("&Mirror the ship (port and starboard)", this, [this]() { Flip(false, true, false, false); });
+	edit->addAction("Turn the ship &upside down", this, [this]() { Flip(false, false, true, false); });
+	edit->addAction("Turn this &deck around", this, [this]() { Flip(true, true, false, true); });
+	edit->addAction("M&irror this deck", this, [this]() { Flip(false, true, false, true); });
 	QMenu* view = menuBar()->addMenu("&View");
 	QAction* metric = view->addAction("&Metric units");
 	metric->setCheckable(true);
@@ -207,6 +219,7 @@ QWidget* DesignerWindow::MakeShipPage()
 						   "triangles; a deck is one floor of the ship."));
 	QFormLayout* form = new QFormLayout;
 	m_name = new QLineEdit;
+	m_name->setToolTip("The ship's design name, as the game shows it in the blueprint list.");
 	form->addRow("Name", m_name);
 	m_template = new QComboBox;
 	for(const ShipTemplate& t : AllTemplates())
@@ -256,22 +269,58 @@ QWidget* DesignerWindow::MakeShipPage()
 	m_depth->setToolTip("Cells from starboard to port.");
 	gridForm->addRow("Beam (cells)", m_depth);
 	QPushButton* resizeButton = new QPushButton("Change the grid size");
+	resizeButton->setToolTip("Makes the grid this many cells long and wide. What is drawn stays in the middle; "
+							 "whatever falls off the edge of a smaller grid is lost (Undo brings it back).");
 	gridForm->addRow(resizeButton);
 	connect(resizeButton, &QPushButton::clicked, this, &DesignerWindow::OnResize);
 	layout->addWidget(grid);
 
 	QGroupBox* decks = new QGroupBox("Decks");
-	QHBoxLayout* deckButtons = new QHBoxLayout(decks);
+	QGridLayout* deckButtons = new QGridLayout(decks);
 	QPushButton* above = new QPushButton("Add above");
+	above->setToolTip("A new, empty deck on top of the ship.");
 	QPushButton* below = new QPushButton("Add below");
+	below->setToolTip("A new, empty deck under the ship. The decks above it move up one.");
 	QPushButton* remove = new QPushButton("Remove this deck");
-	deckButtons->addWidget(above);
-	deckButtons->addWidget(below);
-	deckButtons->addWidget(remove);
+	remove->setToolTip("Takes away the deck shown, with its rooms, doors, ladders and stairs.");
+	QPushButton* turnDeck = new QPushButton("Turn this deck around");
+	turnDeck->setToolTip("Swaps fore and aft on the deck shown only (and port and starboard, as a real half "
+						 "turn does). Ladders and stairs to the decks next to it go when they no longer meet. "
+						 "A hull that is the 3D model itself does not change: untick that on the hull page to "
+						 "see it.");
+	QPushButton* mirrorDeck = new QPushButton("Mirror this deck");
+	mirrorDeck->setToolTip("Swaps port and starboard on the deck shown only.");
+	deckButtons->addWidget(above, 0, 0);
+	deckButtons->addWidget(below, 0, 1);
+	deckButtons->addWidget(remove, 0, 2);
+	deckButtons->addWidget(turnDeck, 1, 0, 1, 2);
+	deckButtons->addWidget(mirrorDeck, 1, 2);
 	connect(above, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckAbove);
 	connect(below, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckBelow);
 	connect(remove, &QPushButton::clicked, this, &DesignerWindow::OnRemoveDeck);
+	connect(turnDeck, &QPushButton::clicked, this, [this]() { Flip(true, true, false, true); });
+	connect(mirrorDeck, &QPushButton::clicked, this, [this]() { Flip(false, true, false, true); });
 	layout->addWidget(decks);
+
+	// The whole design: for a model that came in the wrong way round.
+	QGroupBox* flips = new QGroupBox("Turn and flip the whole ship");
+	QGridLayout* flipButtons = new QGridLayout(flips);
+	QPushButton* turn = new QPushButton("Turn around (fore and aft)");
+	turn->setToolTip("A half turn: the bow becomes the stern. For a 3D model that came in backwards. Every "
+					 "deck, room, door, window, ladder, stairs, parking spot, emitter and the paint go with "
+					 "it, and so does the model itself when it is the hull.");
+	QPushButton* mirror = new QPushButton("Mirror port and starboard");
+	mirror->setToolTip("Swaps the left and right sides of the ship, like a mirror image.");
+	QPushButton* upside = new QPushButton("Turn upside down");
+	upside->setToolTip("The top deck becomes the bottom one. For a 3D model that came in upside down. Stairs "
+					   "would climb down, so they are taken away; draw them again.");
+	flipButtons->addWidget(turn, 0, 0);
+	flipButtons->addWidget(mirror, 0, 1);
+	flipButtons->addWidget(upside, 1, 0);
+	connect(turn, &QPushButton::clicked, this, [this]() { Flip(true, true, false, false); });
+	connect(mirror, &QPushButton::clicked, this, [this]() { Flip(false, true, false, false); });
+	connect(upside, &QPushButton::clicked, this, [this]() { Flip(false, false, true, false); });
+	layout->addWidget(flips);
 	layout->addStretch(1);
 
 	connect(m_name, &QLineEdit::editingFinished, this, &DesignerWindow::OnSettingsChanged);
@@ -307,6 +356,22 @@ QWidget* DesignerWindow::MakeHullPage()
 	m_maxFaces->setSingleStep(500);
 	m_maxFaces->setToolTip("The game copes with about 15,000 faces, is comfortable with 5,000 and happy with 2,000.");
 	form->addRow("Face budget", m_maxFaces);
+	m_panels = new QSpinBox;
+	m_panels->setRange(0, 2000);
+	m_panels->setSingleStep(25);
+	m_panels->setSpecialValueText("Smooth");
+	m_panels->setToolTip("Experimental. A hull of about this many flat panels, like armour plating: fewer "
+						 "faces and a low-poly look, though the panels still come out a little crumpled. The "
+						 "panels keep the paint edges and a wall round every room. Smooth (0) keeps the "
+						 "rounded hull, and is the better choice for now.");
+	form->addRow("Flat panels", m_panels);
+	m_modelHull = new QCheckBox("Use the 3D model as the hull");
+	m_modelHull->setToolTip("For a plan made from a 3D model: the hull is the model itself, smoothed, with a wall "
+							"round every room (a room drawn out past the model still gets its hull). Truer to the "
+							"model than the triangles. Hull triangles drawn or rubbed out do not change it: untick "
+							"this to go back to the drawn hull. Thin parts of the model (antennas) go, and a "
+							"detailed model loses detail at a low face budget.");
+	form->addRow(m_modelHull);
 	m_slopedDecks = new QCheckBox("Slope the hull between decks");
 	m_slopedDecks->setToolTip("Where a deck is narrower than the one below, the hull slopes up to it instead of "
 							  "stepping in (and under a wider deck it slopes down). The drawn triangles stay the "
@@ -314,6 +379,7 @@ QWidget* DesignerWindow::MakeHullPage()
 	form->addRow(m_slopedDecks);
 	layout->addLayout(form);
 	QPushButton* shape = new QPushButton("Shape the hull now");
+	shape->setToolTip("The hull is shaped by itself a moment after each change; this does it at once.");
 	layout->addWidget(shape);
 	m_hullInfo = new QLabel;
 	m_hullInfo->setWordWrap(true);
@@ -324,6 +390,8 @@ QWidget* DesignerWindow::MakeHullPage()
 	connect(m_skin, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_smoothing, &QSlider::valueChanged, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_maxFaces, &QSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_panels, &QSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_modelHull, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_slopedDecks, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	return page;
 }
@@ -332,7 +400,8 @@ QWidget* DesignerWindow::MakeRoomPage()
 {
 	QWidget* page = new QWidget;
 	QVBoxLayout* layout = new QVBoxLayout(page);
-	layout->addWidget(Help("Pick a room and draw it on the hull triangles. Red hatching marks triangles that are "
+	layout->addWidget(Help("Pick a room and draw it on the hull triangles; pick a tool for the rest (hover over a "
+						   "control for what it does). Red hatching marks triangles that are "
 						   "outside the shaped hull, where a room cannot go. Doors go on the edge between two "
 						   "rooms, or between a room and the outside for a hull door: click the triangle that "
 						   "stands on that edge. A ladder goes up from a cell into the room above it. Windows go on the "
@@ -343,41 +412,87 @@ QWidget* DesignerWindow::MakeRoomPage()
 						   "triangle of the first cell on the side they climb towards. On the deck above, the cells "
 						   "over them and the cell they come out on have to be in one room."));
 	m_roomTool = new QComboBox;
-	m_roomTool->addItem("Draw rooms");
-	m_roomTool->addItem("Place doors");
-	m_roomTool->addItem("Place ladders");
-	m_roomTool->addItem("Place windows");
-	m_roomTool->addItem("Place ground vehicle parking");
-	m_roomTool->addItem("Place space vehicle parking");
-	m_roomTool->addItem("Place stairs");
+	const QList<QPair<QString, QString> > tools = {
+		{ "Draw rooms", "The left button paints the triangles of the room picked in the list below; the right "
+						"button takes them out of it." },
+		{ "Place doors", "Click the triangle that stands on the cell edge the door goes on: between two rooms, "
+						 "or between a room and the outside for a hull door. Click again to take it away." },
+		{ "Place ladders", "Click a cell of a room; the ladder goes up into the room above it." },
+		{ "Place windows", "Click the triangle on the edge between a room and the outside." },
+		{ "Place ground vehicle parking", "A 6 by 12 m spot on the floor of a room, centred on the grid corner "
+										  "nearest the click. The room needs a bay door to get vehicles out." },
+		{ "Place space vehicle parking", "A 12 by 17 m spot for a shuttle or fighter, centred on the grid "
+										 "corner nearest the click." },
+		{ "Place stairs", "Click the triangle of the first cell on the side the stairs climb towards." },
+		{ "Place contrail emitters", "Click a hull triangle: a contrail emitter goes on the hull straight aft of "
+									 "it at mid-deck height, where the engine trail comes out (an arrow on the "
+									 "plan). Click again to take it away." },
+		{ "Place weapon emitters", "Click a hull triangle: the ship's guns fire from the nearest point of the "
+								   "hull (a ring with a cross). The game keeps one on each fire control station, "
+								   "so the first goes to the first station; a ship without fire control (see the "
+								   "Ship page) has nowhere to put one." },
+	};
+	for(const auto& tool : tools)
+	{
+		m_roomTool->addItem(tool.first);
+		m_roomTool->setItemData(m_roomTool->count() - 1, tool.second, Qt::ToolTipRole);
+	}
+	m_roomTool->setToolTip("What the mouse puts on the plan. Hover over a choice in the list for how it works.");
 	layout->addWidget(m_roomTool);
+	m_emitterRow = new QWidget;
+	{
+		QFormLayout* emitterForm = new QFormLayout(m_emitterRow);
+		emitterForm->setContentsMargins(0, 0, 0, 0);
+		m_emitterSize = new QDoubleSpinBox;
+		m_emitterSize->setRange(1, 200);
+		m_emitterSize->setDecimals(1);
+		m_emitterSize->setValue(6.6);
+		m_emitterSize->setSuffix(" ft");
+		m_emitterSize->setToolTip("How wide the contrail is, for the emitters placed from now on. The game's own "
+								  "is 2 m (6.6 ft); match it to the engine nozzle.");
+		emitterForm->addRow("Contrail width", m_emitterSize);
+		connect(m_emitterSize, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+			m_view->SetEmitterSize(m_metric ? v / 0.3048 : v);
+		});
+	}
+	m_emitterRow->setVisible(false);
+	layout->addWidget(m_emitterRow);
 	m_rooms = new QListWidget;
 	m_rooms->setMinimumHeight(180);
+	m_rooms->setToolTip("The rooms of the ship. Pick one to draw it, or to change its type and name below.");
 	layout->addWidget(m_rooms);
-	QFormLayout* form = new QFormLayout;
-	m_roomType = new QComboBox;
-	m_roomType->addItems(SpacecraftRoomTypes());
-	m_roomType->setToolTip("The engine's own room types. The stations of the ship go into rooms of the right type.");
-	form->addRow("Type", m_roomType);
-	m_roomLabel = new QLineEdit;
-	m_roomLabel->setToolTip("The room's name in the blueprint. Every room needs its own.");
-	form->addRow("Name", m_roomLabel);
-	m_windowSill = new QDoubleSpinBox;
-	m_windowSill->setToolTip("How high above the floor the windows start. Lower suits short characters.");
-	form->addRow("Window sill", m_windowSill);
-	m_windowTop = new QDoubleSpinBox;
-	m_windowTop->setToolTip("How high above the floor the windows end (less in a low room).");
-	form->addRow("Window top", m_windowTop);
-	m_joinWindows = new QCheckBox("Join windows side by side");
-	m_joinWindows->setToolTip("Windows next to each other on one straight wall of a room become one long window.");
-	form->addRow(m_joinWindows);
-	layout->addLayout(form);
 	QHBoxLayout* buttons = new QHBoxLayout;
-	QPushButton* add = new QPushButton("Add a room");
+	QPushButton* add = new QPushButton("Add a room...");
+	add->setToolTip("Asks for the new room's type and name, then picks it for drawing.");
 	QPushButton* remove = new QPushButton("Remove it");
+	remove->setToolTip("Takes away the room picked in the list, and its doors, ladders and parking.");
 	buttons->addWidget(add);
 	buttons->addWidget(remove);
 	layout->addLayout(buttons);
+	QGroupBox* selected = new QGroupBox("The room picked");
+	QFormLayout* form = new QFormLayout(selected);
+	m_roomType = new QComboBox;
+	m_roomType->addItems(SpacecraftRoomTypes());
+	m_roomType->setToolTip("The type of the room picked in the list (the engine's own room types). Changing it "
+						   "changes that room. The stations of the ship go into rooms of the right type.");
+	form->addRow("Type", m_roomType);
+	m_roomLabel = new QLineEdit;
+	m_roomLabel->setToolTip("The name of the room picked in the list, as the blueprint has it. Every room needs "
+							"its own.");
+	form->addRow("Name", m_roomLabel);
+	layout->addWidget(selected);
+	QGroupBox* windowBox = new QGroupBox("Windows (all rooms)");
+	QFormLayout* windowForm = new QFormLayout(windowBox);
+	m_windowSill = new QDoubleSpinBox;
+	m_windowSill->setToolTip("How high above the floor the windows start. Lower suits short characters.");
+	windowForm->addRow("Window sill", m_windowSill);
+	m_windowTop = new QDoubleSpinBox;
+	m_windowTop->setToolTip("How high above the floor the windows end (less in a low room).");
+	windowForm->addRow("Window top", m_windowTop);
+	m_joinWindows = new QCheckBox("Join windows side by side");
+	m_joinWindows->setToolTip("Windows next to each other on one straight wall of a room become one long window.");
+	windowForm->addRow(m_joinWindows);
+	layout->addWidget(windowBox);
 	layout->addStretch(1);
 
 	connect(m_roomTool, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { ApplyDrawMode(); });
@@ -401,11 +516,17 @@ QWidget* DesignerWindow::MakePaintPage()
 						   "the owner's own colour in the game."));
 	m_palette = new QListWidget;
 	m_palette->setMinimumHeight(160);
+	m_palette->setToolTip("Pick a colour to paint with. Double-click a plain colour to change it.");
 	layout->addWidget(m_palette);
 	QHBoxLayout* buttons = new QHBoxLayout;
 	QPushButton* add = new QPushButton("Add a colour...");
+	add->setToolTip("A plain colour, picked from the colour chooser.");
 	QPushButton* empire = new QPushButton("Add an empire colour");
+	empire->setToolTip("One of the owner's empire colours (up to three): the ship takes the colours of whoever "
+					   "builds it.");
 	QPushButton* remove = new QPushButton("Remove it");
+	remove->setToolTip("Takes away the colour picked; what was painted with it goes back to the base coat. The "
+					   "base coat itself stays.");
 	buttons->addWidget(add);
 	buttons->addWidget(empire);
 	buttons->addWidget(remove);
@@ -439,18 +560,29 @@ QWidget* DesignerWindow::MakeBuildPage()
 						   "first page. The engine's own report says whether the game will take it."));
 	m_furnish = new QCheckBox("Put in stations, berths and systems");
 	m_furnish->setChecked(true);
+	m_furnish->setToolTip("Puts in what the kind of ship needs (Ship page): stations such as the helm, berths "
+						  "for the crew, and volume for the power plant, drives and so on. Off: only the hull, "
+						  "rooms, doors and the rest drawn.");
 	layout->addWidget(m_furnish);
 	m_walkPaths = new QCheckBox("Walk paths through the doors");
 	m_walkPaths->setChecked(true);
+	m_walkPaths->setToolTip("Paths the crew and passengers walk along through the doors, ladders and stairs. "
+							"Without them people in the game cannot find their way round the ship.");
 	layout->addWidget(m_walkPaths);
 	QHBoxLayout* buttons = new QHBoxLayout;
 	QPushButton* build = new QPushButton("Build the blueprint");
+	build->setToolTip("Makes the blueprint and asks the game's own engine whether it would take it. The report "
+					  "appears below, and the 3D view shows the result.");
 	QPushButton* save = new QPushButton("Save it as .SoH...");
+	save->setToolTip("Saves the blueprint as a .SoH file, which the game's design studio can open (File, "
+					 "Export blueprint does the same).");
 	buttons->addWidget(build);
 	buttons->addWidget(save);
 	layout->addLayout(buttons);
 	m_reportText = new QPlainTextEdit;
 	m_reportText->setReadOnly(true);
+	m_reportText->setToolTip("What was built, and the engine's own errors and warnings. Errors have to be put "
+							 "right before the game takes the blueprint.");
 	m_reportText->setMinimumHeight(300);
 	layout->addWidget(m_reportText, 1);
 	connect(build, &QPushButton::clicked, this, &DesignerWindow::OnBuild);
@@ -510,6 +642,11 @@ void DesignerWindow::RefreshAll()
 	m_skin->setValue(Shown(m_plan.skinFeet));
 	m_smoothing->setValue(m_plan.smoothing);
 	m_maxFaces->setValue(m_plan.maxFaces);
+	m_panels->setValue(m_plan.panels);
+	m_modelHull->setChecked(m_plan.model.asHull);
+	m_modelHull->setVisible(m_plan.model.IsSet());
+	if(m_plan.model.IsSet())
+		m_modelHull->setText(QString("Use the 3D model as the hull (%1)").arg(QFileInfo(m_plan.model.file).fileName()));
 	m_slopedDecks->setChecked(m_plan.slopedDecks);
 	m_windowSill->setValue(Shown(m_plan.windowSillFeet));
 	m_windowTop->setValue(Shown(m_plan.windowTopFeet));
@@ -578,7 +715,10 @@ void DesignerWindow::ApplyDrawMode()
 				m_roomTool->currentIndex() == 3 ? PlanView::WindowMode :
 				m_roomTool->currentIndex() == 4 ? PlanView::GroundParkingMode :
 				m_roomTool->currentIndex() == 5 ? PlanView::SpaceParkingMode :
-				m_roomTool->currentIndex() == 6 ? PlanView::StairMode : PlanView::RoomMode);
+				m_roomTool->currentIndex() == 6 ? PlanView::StairMode :
+				m_roomTool->currentIndex() == 7 ? PlanView::ContrailMode :
+				m_roomTool->currentIndex() == 8 ? PlanView::WeaponMode : PlanView::RoomMode);
+		m_emitterRow->setVisible(m_roomTool->currentIndex() == 7);
 		break;
 	case StepPaint:
 		m_view->SetMode(PlanView::PaintMode);
@@ -697,10 +837,12 @@ void DesignerWindow::ApplyUnits()
 	struct Box { QDoubleSpinBox* box; double lo, hi, step; };
 	const Box boxes[] = {
 		{ m_cellFeet, 2, 20, .5 }, { m_deckFeet, 8, 40, 1 }, { m_floorFeet, .5, 4, .5 }, { m_skin, .5, 10, .5 },
-		{ m_windowSill, 0, 6, .5 }, { m_windowTop, 3, 20, .5 },
+		{ m_windowSill, 0, 6, .5 }, { m_windowTop, 3, 20, .5 }, { m_emitterSize, 1, 200, .5 },
 	};
 	const bool wasUpdating = m_updating;
 	m_updating = true;
+	// The emitter width is the view's own setting, not the plan's: kept in feet across the change.
+	const double emitterFeet = m_emitterSize->suffix() == " m" ? m_emitterSize->value() / 0.3048 : m_emitterSize->value();
 	for(const Box& b : boxes)
 	{
 		b.box->setDecimals(m_metric ? 2 : 1);
@@ -708,6 +850,7 @@ void DesignerWindow::ApplyUnits()
 		b.box->setSingleStep(m_metric ? .1 : b.step);
 		b.box->setSuffix(m_metric ? " m" : " ft");
 	}
+	m_emitterSize->setValue(Shown(emitterFeet));
 	m_updating = wasUpdating;
 }
 
@@ -720,16 +863,36 @@ void DesignerWindow::OnNewFromModel()
 	QDialog dialog(this);
 	dialog.setWindowTitle("New plan from a 3D model");
 	QFormLayout* form = new QFormLayout(&dialog);
-	form->addRow(Help("The hull triangles are filled in where the model is. Parts thinner than about half a cell "
-					  "are lost, and slopes come out in steps of a deck, which the shaping smooths. Touch the "
-					  "grid up by hand afterwards."));
+	form->addRow(Help("The model is cut into slices, one per deck, and the hull triangles of each deck are filled "
+					  "in where the model is. Parts thinner than about half a cell are lost, and slopes come out "
+					  "in steps of a deck, which the shaping smooths. Touch the grid up by hand afterwards."));
 	PlanFromModelOptions options;
 	QDoubleSpinBox* length = new QDoubleSpinBox;
 	length->setRange(Shown(10), Shown(2000));
 	length->setSuffix(m_metric ? " m" : " ft");
 	length->setValue(Shown(options.lengthFeet));
 	form->addRow("Length", length);
-	QDoubleSpinBox* threshold = new QDoubleSpinBox;
+	QSpinBox* decks = new QSpinBox;
+	decks->setRange(0, 60);
+	decks->setSpecialValueText("From the length");
+	decks->setToolTip("How many decks (slices) the model is cut into. The decks stay their height, so more decks "
+					  "make a longer ship, which keeps more of a detailed model. The import recommends a length "
+					  "when much of the model is lost.");
+	form->addRow("Decks", decks);
+	connect(decks, QOverload<int>::of(&QSpinBox::valueChanged), length, [length](int n) { length->setEnabled(n == 0); });
+	QSpinBox* perDeck = new QSpinBox;
+	perDeck->setRange(0, 9);
+	perDeck->setSpecialValueText(QString("Recommended (%1)").arg(RecommendedSlicesPerDeck(m_plan.deckFeet)));
+	perDeck->setToolTip("How many heights in each deck a triangle is judged at. More follow the model's shape "
+						"within a deck more evenly; the deck itself stays one step of the hull.");
+	form->addRow("Slices per deck", perDeck);
+	QComboBox* method = new QComboBox;
+	method->addItem("Slices (works on open models)");
+	method->addItem("Closed pieces only (the old way)");
+	method->setToolTip("Slices: each slice of the model is flooded from outside, so models made of open panels "
+					   "(most models from the internet) keep all their parts, and big models need no thinning. "
+					   "Closed pieces: only the parts of the model that are closed solids count.");
+	form->addRow("Inside found by", method);	QDoubleSpinBox* threshold = new QDoubleSpinBox;
 	threshold->setRange(.05, 1);
 	threshold->setSingleStep(.05);
 	threshold->setValue(options.threshold);
@@ -747,6 +910,9 @@ void DesignerWindow::OnNewFromModel()
 	if(dialog.exec() != QDialog::Accepted)
 		return;
 	options.lengthFeet = Feet(length->value());
+	options.decks = decks->value();
+	options.slicesPerDeck = perDeck->value();
+	options.method = method->currentIndex() == 0 ? ModelInside::Slices : ModelInside::Solid;
 	options.threshold = threshold->value();
 	options.flip = flip->isChecked();
 	options.yUp = yUp->isChecked();
@@ -846,11 +1012,14 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 		if(report.suggestedLength > 0)
 			again = box.addButton(QString("Make it %1 long").arg(m_metric
 					? QString("%1 m").arg(Shown(report.suggestedLength), 0, 'f', 0)
-					: QString("%1 ft").arg(qRound(report.suggestedLength))), QMessageBox::AcceptRole);
+					: QString("%1 ft").arg(qRound(report.suggestedLength)))
+					+ (report.suggestedDecks > 0 ? QString(" (%1 decks)").arg(report.suggestedDecks) : QString()),
+					QMessageBox::AcceptRole);
 		box.exec();
 		if(again && box.clickedButton() == again)
 		{
 			options.lengthFeet = report.suggestedLength;
+			options.decks = 0;
 			return ImportModel(modelFile, options, tell);
 		}
 	}
@@ -952,6 +1121,28 @@ void DesignerWindow::OnRemoveDeck()
 	OnPlanChanged(true);
 }
 
+void DesignerWindow::Flip(bool foreAft, bool portStarboard, bool upsideDown, bool deckOnly)
+{
+	OnAboutToChange();
+	const int deck = m_view->Deck();
+	const int lost = m_plan.Flip(foreAft, portStarboard, upsideDown, deckOnly ? deck : -1);
+	if(upsideDown && !deckOnly)
+		m_view->SetDeck(m_plan.Decks() - 1 - deck);
+	RefreshDecks();
+	RefreshRooms();
+	m_view->update();
+	QString what = foreAft && portStarboard ? "Turned around" : foreAft ? "Fore and aft swapped"
+			: portStarboard ? "Mirrored" : "Turned upside down";
+	QString text = deckOnly ? QString("%1: deck %2.").arg(what).arg(deck + 1) : what + ".";
+	if(lost > 0)
+		text += QString(" %1 ladder(s), stairs or parking spot(s) no longer fitted and were taken away (Undo brings "
+						"them back).").arg(lost);
+	if(deckOnly && m_plan.model.asHull)
+		text += " The hull is the 3D model itself, which does not change with one deck.";
+	m_status->setText(text);
+	OnPlanChanged(true);
+}
+
 void DesignerWindow::OnResize()
 {
 	OnAboutToChange();
@@ -987,6 +1178,8 @@ void DesignerWindow::OnSettingsChanged()
 	read(m_skin, m_plan.skinFeet);
 	m_plan.smoothing = m_smoothing->value();
 	m_plan.maxFaces = m_maxFaces->value();
+	m_plan.panels = m_panels->value();
+	m_plan.model.asHull = m_plan.model.IsSet() && m_modelHull->isChecked();
 	m_plan.slopedDecks = m_slopedDecks->isChecked();
 	read(m_windowSill, m_plan.windowSillFeet);
 	read(m_windowTop, m_plan.windowTopFeet);
@@ -1000,17 +1193,60 @@ void DesignerWindow::OnSettingsChanged()
 
 void DesignerWindow::OnAddRoom()
 {
-	const QString type = m_roomType->currentText();
-	int n = 1;
+	// A dialog of its own, so that choosing the new room's type does not
+	// change the room picked in the list (the type box there edits it).
 	QStringList labels;
 	for(const PlanRoom& r : m_plan.rooms)
 		labels << r.label;
-	while(labels.contains(QString("%1 %2").arg(type).arg(n)))
-		++n;
+	auto freeName = [&labels](const QString& type) {
+		int n = 1;
+		while(labels.contains(QString("%1 %2").arg(type).arg(n)))
+			++n;
+		return QString("%1 %2").arg(type).arg(n);
+	};
+	QDialog dialog(this);
+	dialog.setWindowTitle("Add a room");
+	QFormLayout* form = new QFormLayout(&dialog);
+	QComboBox* typeBox = new QComboBox;
+	typeBox->addItems(SpacecraftRoomTypes());
+	typeBox->setToolTip("The engine's own room types. The stations of the ship go into rooms of the right type: "
+						"the helm on the bridge, the engineer in engineering, and so on.");
+	static QString lastType;
+	if(!lastType.isEmpty())
+		typeBox->setCurrentText(lastType);
+	form->addRow("Type", typeBox);
+	QLineEdit* nameEdit = new QLineEdit(freeName(typeBox->currentText()));
+	nameEdit->setToolTip("The room's name in the blueprint. Every room needs its own.");
+	form->addRow("Name", nameEdit);
+	// The name follows the type until it is typed in.
+	bool typed = false;
+	connect(nameEdit, &QLineEdit::textEdited, &dialog, [&typed]() { typed = true; });
+	connect(typeBox, &QComboBox::currentTextChanged, &dialog, [&](const QString& type) {
+		if(!typed)
+			nameEdit->setText(freeName(type));
+	});
+	QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	box->button(QDialogButtonBox::Ok)->setText("Add");
+	form->addRow(box);
+	connect(box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	QString label;
+	while(true)
+	{
+		if(dialog.exec() != QDialog::Accepted)
+			return;
+		label = nameEdit->text().trimmed();
+		if(!label.isEmpty() && !labels.contains(label))
+			break;
+		QMessageBox::information(this, "Add a room", label.isEmpty() ? "The room needs a name."
+				: "Another room already has that name; every room needs its own.");
+	}
+	const QString type = typeBox->currentText();
+	lastType = type;
 	OnAboutToChange();
 	PlanRoom room;
 	room.type = type;
-	room.label = QString("%1 %2").arg(type).arg(n);
+	room.label = label;
 	room.colour = RoomColour(m_plan.rooms.size());
 	m_plan.rooms << room;
 	RefreshRooms();
@@ -1197,7 +1433,8 @@ bool DesignerWindow::BuildNow()
 	lines << QString("Hull: %1 faces, about %2 cubic meters").arg(m_report.hullFaces).arg(qRound(m_report.hullVolumeM3));
 	lines << QString("Rooms: %1   Doors: %2   Windows: %3   Ladders: %4   Parking: %5   Ramps: %6   Stairs: %7").arg(m_report.rooms).arg(m_report.doors)
 			.arg(m_report.windows).arg(m_report.ladders).arg(m_report.parking).arg(m_report.ramps).arg(m_report.stairs);
-	lines << QString("Stations: %1   Berths: %2").arg(m_report.stations).arg(m_report.berths);
+	lines << QString("Stations: %1   Berths: %2   Contrail emitters: %3   Weapon emitters: %4").arg(m_report.stations)
+			.arg(m_report.berths).arg(m_report.contrails).arg(m_report.weaponEmitters);
 	lines << "";
 	for(const QString& w : m_report.warnings)
 		lines << "Warning: " + w;

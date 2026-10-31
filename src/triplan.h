@@ -116,6 +116,25 @@ struct PlanParking
 	bool	across = false;
 };
 
+// An emitter on the hull, put in from a hull triangle of a deck (seen from
+// above, it stands at mid-deck height over the triangle's middle):
+//
+//  * a contrail emitter, the trail the ship leaves behind it in the game: on
+//    the hull straight aft of the triangle, facing aft; 'sizeFeet' is the
+//    trail's width (the game's own is 2 m);
+//  * a weapon emitter, where the ship's guns fire from: on the hull nearest
+//    the triangle. The game keeps one on each fire control station, so the
+//    first goes to the first station, and so on (planbuild.cpp).
+struct PlanEmitter
+{
+	int		deck = 0;
+	int		cx = 0;
+	int		cy = 0;
+	int		k = 0;				// TriSide.
+	bool	weapon = false;		// A weapon emitter; a contrail emitter otherwise.
+	double	sizeFeet = 6.5616798;	// 2 m.
+};
+
 // A colour in the paint palette: a plain colour, or one of the owner's
 // empire colours (AuScFace::THEME_ExteriorPrimary and the two after it).
 struct PlanPaint
@@ -123,6 +142,31 @@ struct PlanPaint
 	QColor	colour = QColor(150, 155, 165);
 	int		theme = -1;		// 0, 1 or 2 for an empire colour; -1 for the plain colour.
 	QString	name;
+};
+
+// The 3D model a plan was made from, and how it was placed: turned (y up
+// to z up, a quarter turn about z, a half turn), moved so that 'centre' is
+// at the origin, and scaled. With 'asHull' the hull is the model itself
+// (with the drawn hull triangles added), not the triangles alone
+// (planbuild.cpp, ModelHullMesh).
+struct PlanModel
+{
+	QString	file;				// Absolute path.
+	bool	yUp = false;
+	bool	turn = false;		// A quarter turn about z (the model was longer in y).
+	bool	flip = false;		// A half turn about z.
+	double	centre[3] = { 0, 0, 0 };
+	double	scale = 1;
+	double	sealFeet = 1;
+	bool	asHull = false;
+	// Flipped with the plan after it was placed (TriPlan::Flip): x, y or z
+	// mirrored about the grid's centre (z about half of 'height').
+	bool	mirrorX = false;
+	bool	mirrorY = false;
+	bool	mirrorZ = false;
+	double	height = 0;			// The decks' height when it was turned upside down.
+
+	bool	IsSet() const { return !file.isEmpty(); }
 };
 
 class TriPlan
@@ -143,6 +187,8 @@ public:
 	double	floorFeet = 1.0;			// The structure between a room and the deck above or below it.
 	double	skinFeet = 2.0;			// How far the hull surface stands out from the drawn triangles.
 	int		smoothing = 6;			// How much the hull edges are rounded, 0 for none.
+	int		panels = 0;				// A hull of about this many flat panels (planbuild.cpp, PanelPartition); 0: smooth.
+	PlanModel	model;				// The 3D model it was made from, if any.
 	int		maxFaces = 5000;		// The face budget of the hull.
 	// The hull between decks: false, it steps from one deck's outline to the
 	// next; true, it slopes (the ledge rises to the top of the narrower deck
@@ -159,6 +205,7 @@ public:
 	QList<PlanLadder>	ladders;
 	QList<PlanStair>	stairs;
 	QList<PlanParking>	parking;
+	QList<PlanEmitter>	emitters;
 	QList<PlanPaint>	palette;		// Entry 0 is the base coat.
 
 	int		Width() const { return m_width; }		// Cells along x.
@@ -170,6 +217,14 @@ public:
 	// Adds a deck on top, or below with 'below'.
 	void	AddDeck(bool below = false);
 	void	RemoveDeck(int deck);
+	// Flips the plan, or only one deck of it (deck >= 0): fore and aft
+	// swapped (x mirrored), port and starboard (y mirrored), and, for the
+	// whole plan only, upside down (the decks in the opposite order). Both x
+	// and y together is turning it round. The rooms, doors, windows, ladders,
+	// stairs, parking and paint go with it, and the 3D model a plan was made
+	// from too; what no longer fits is taken away (Tidy). Returns how many
+	// ladders, stairs and parking spots were taken away.
+	int		Flip(bool foreAft, bool portStarboard, bool upsideDown = false, int deck = -1);
 
 	bool	Valid(const TriRef& t) const;
 	bool	Hull(const TriRef& t) const;
@@ -206,6 +261,7 @@ public:
 	void	EdgeEnds(const TriRef& t, int edge, QPointF& a, QPointF& b) const;
 	int		LadderAt(int deck, int cx, int cy) const;			// Index in ladders, -1 if none.
 	int		ParkingAt(int deck, int cx, int cy) const;			// Index in parking, -1 if none.
+	int		EmitterAt(const TriRef& t, bool weapon) const;		// Index in emitters, -1 if none.
 	// How many cells a flight of stairs runs over, for a slope of about 34
 	// degrees (like the stairs in the user's aircraft factory).
 	int		StairCells() const;

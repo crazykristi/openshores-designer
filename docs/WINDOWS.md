@@ -10,6 +10,20 @@ same script and can be copied with them.
 > platform detail or two the first time. The error messages below are the
 > places to start.
 
+**No Windows machine?** `packaging/build-windows-cross.sh` builds the
+same programs on Linux with the MinGW-w64 cross compiler and Fedora's
+MinGW Qt 5 in a container (podman or docker), and packs them with their
+DLLs and Qt plugins into `build/shipgen-designer-<version>-windows-x86_64.zip`.
+It sets `CROSS=x86_64-w64-mingw32` for `build.sh`, which then uses
+`x86_64-w64-mingw32-g++`, `-qmake-qt5`, `-pkg-config` and `-ar`, and Qt's
+moc and rcc for the build machine. Wine tries the result:
+`wine build/windows-dist/shipgen-designer-<version>/shipgen-designer.exe`.
+(Proton is Wine with extras for games; plain Wine is the simpler choice
+here.) The cross build found three things the MSYS2 path would have hit
+too: the Windows headers define `IN`, `OUT`, `near`, `far` and `VOID` as
+macros, so the sources no longer use them as names, and an MSVC-only
+block in the engine's `auscface.h` is now kept to MSVC (`_MSC_VER`).
+
 The Linux build is unchanged: `./build.sh` still writes to `build/`. In an
 MSYS2 shell the same script detects Windows and writes to `build-windows/`
 with `.exe` suffixes.

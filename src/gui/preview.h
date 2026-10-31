@@ -81,6 +81,11 @@ private:
 		int		count = 0;
 		int		texture = 0;
 		bool	blend = false;
+		// The see-through hull: only its nearest layer is drawn (its depth
+		// first, then its colour where it is nearest), or its far side
+		// showed through its near side wherever it happened to be drawn
+		// later.
+		bool	nearestOnly = false;
 	};
 
 	void	RebuildGeometry();

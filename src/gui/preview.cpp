@@ -255,6 +255,7 @@ void DesignPreview::RebuildGeometry()
 	// dozen draw calls without needing a texture array.
 	QMap<int, QVector<Vertex> > opaque;
 	QMap<int, QVector<Vertex> > blend;
+	QMap<int, QVector<Vertex> > seeThroughHull;		// Blended, nearest layer only.
 
 	auto addVertex = [](QVector<Vertex>& list, const AuScPoint& p, const QColor& colour,
 			float alpha, int slot)
@@ -353,7 +354,7 @@ void DesignPreview::RebuildGeometry()
 				// A painted face is drawn in its paint.
 				const QColor faceColour = t.Paint().alpha() > 0 ? t.Paint() : colour;
 				for(int i = 0; i < 3; ++i)
-					addVertex(seeThrough ? blend[slot] : opaque[slot], *v[i], faceColour,
+					addVertex(seeThrough ? seeThroughHull[slot] : opaque[slot], *v[i], faceColour,
 							seeThrough ? m_hullOpacity : 1.f, slot);
 			}
 			// Transparent parts of the model, such as windows, have their own
@@ -383,17 +384,22 @@ void DesignPreview::RebuildGeometry()
 		m_ranges << range;
 	}
 	m_solidCount = m_vertices.size();
-	for(QMap<int, QVector<Vertex> >::const_iterator it = blend.constBegin(); it != blend.constEnd(); ++it)
+	for(int pass = 0; pass < 2; ++pass)
 	{
-		if(it.value().isEmpty())
-			continue;
-		DrawRange range;
-		range.start = m_vertices.size();
-		range.count = it.value().size();
-		range.texture = it.key();
-		range.blend = true;
-		m_vertices += it.value();
-		m_ranges << range;
+		const QMap<int, QVector<Vertex> >& lists = pass == 0 ? seeThroughHull : blend;
+		for(QMap<int, QVector<Vertex> >::const_iterator it = lists.constBegin(); it != lists.constEnd(); ++it)
+		{
+			if(it.value().isEmpty())
+				continue;
+			DrawRange range;
+			range.start = m_vertices.size();
+			range.count = it.value().size();
+			range.texture = it.key();
+			range.blend = true;
+			range.nearestOnly = pass == 0;
+			m_vertices += it.value();
+			m_ranges << range;
+		}
 	}
 
 	m_needsUpload = true;
@@ -549,8 +555,22 @@ void DesignPreview::paintGL()
 
 	// Each run of vertices shares one texture. The solid parts come first
 	// and then the see-through ones, which is the order they are in.
+	bool hullDepth = false;
 	for(const DrawRange& range : m_ranges)
 	{
+		// After the solid parts, the see-through hull's depth, before any of
+		// it is coloured in: then only its nearest layer passes the depth
+		// test (GL_LEQUAL), and what is solid inside it still shows.
+		if(range.blend && !hullDepth)
+		{
+			hullDepth = true;
+			functions->glColorMask(false, false, false, false);
+			for(const DrawRange& r : m_ranges)
+				if(r.nearestOnly)
+					functions->glDrawArrays(GL_TRIANGLES, r.start, r.count);
+			functions->glColorMask(true, true, true, true);
+			functions->glDepthFunc(GL_LEQUAL);
+		}
 		if(!m_texturesBySlot.contains(range.texture))
 			TextureForSlot(range.texture);
 		QOpenGLTexture* texture = m_texturesBySlot.value(range.texture, 0);
@@ -572,6 +592,7 @@ void DesignPreview::paintGL()
 		if(texture)
 			texture->release();
 	}
+	functions->glDepthFunc(GL_LESS);
 	m_vbo.release();
 	m_vao.release();
 	m_program->release();

@@ -129,6 +129,11 @@ void TriPlan::Resize(int width, int depth)
 		stair.cx += ox;
 		stair.cy += oy;
 	}
+	for(PlanEmitter& e : emitters)
+	{
+		e.cx += ox;
+		e.cy += oy;
+	}
 	Tidy();
 }
 
@@ -152,6 +157,8 @@ void TriPlan::AddDeck(bool below)
 			++spot.deck;
 		for(PlanStair& stair : stairs)
 			++stair.deck;
+		for(PlanEmitter& e : emitters)
+			++e.deck;
 	}
 	else
 	{
@@ -223,6 +230,17 @@ void TriPlan::RemoveDeck(int deck)
 		keptStairs << stair;
 	}
 	stairs = keptStairs;
+
+	QList<PlanEmitter> keptEmitters;
+	for(PlanEmitter e : emitters)
+	{
+		if(e.deck == deck)
+			continue;
+		if(e.deck > deck)
+			--e.deck;
+		keptEmitters << e;
+	}
+	emitters = keptEmitters;
 }
 
 bool TriPlan::Valid(const TriRef& t) const
@@ -374,6 +392,17 @@ int TriPlan::ParkingAt(int deck, int cx, int cy) const
 	return -1;
 }
 
+int TriPlan::EmitterAt(const TriRef& t, bool weapon) const
+{
+	for(int i = 0; i < emitters.size(); ++i)
+	{
+		const PlanEmitter& e = emitters.at(i);
+		if(e.weapon == weapon && e.deck == t.deck && e.cx == t.cx && e.cy == t.cy && e.k == t.k)
+			return i;
+	}
+	return -1;
+}
+
 QPointF TriPlan::ParkingSize(const PlanParking& p) const
 {
 	// AuScGroundVehicleParkingSpot / AuScSpaceVehicleParkingSpot::Icon*.
@@ -410,6 +439,115 @@ int TriPlan::LadderAt(int deck, int cx, int cy) const
 		if(ladders.at(i).deck == deck && ladders.at(i).cx == cx && ladders.at(i).cy == cy)
 			return i;
 	return -1;
+}
+
+int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
+{
+	if(deck >= 0)
+		upsideDown = false;
+	if(!foreAft && !portStarboard && !upsideDown)
+		return 0;
+	const int before = ladders.size() + stairs.size() + parking.size();
+	// Upside down is a half turn about x: y is mirrored as well as z.
+	const bool my = portStarboard != upsideDown;
+	auto flipped = [&](int d) { return deck < 0 || d == deck; };
+	auto newDeck = [&](int d) { return upsideDown ? m_decks - 1 - d : d; };
+	auto side = [&](int k) {
+		if(foreAft && (k == TRI_E || k == TRI_W))
+			return k == TRI_E ? int(TRI_W) : int(TRI_E);
+		if(my && (k == TRI_N || k == TRI_S))
+			return k == TRI_N ? int(TRI_S) : int(TRI_N);
+		return k;
+	};
+	auto cellX = [&](int cx) { return foreAft ? m_width - 1 - cx : cx; };
+	auto cellY = [&](int cy) { return my ? m_depth - 1 - cy : cy; };
+	// One mirror turns the corners of a triangle the other way round: its two
+	// diagonals (edges 1 and 2) swap.
+	const bool reversed = (foreAft ? 1 : 0) + (my ? 1 : 0) == 1;
+
+	QVector<QVector<quint8> > hull = m_hull, paint = m_paint;
+	QVector<QVector<qint16> > room = m_room;
+	for(int d = 0; d < m_decks; ++d)
+	{
+		if(!flipped(d))
+			continue;
+		const int nd = newDeck(d);
+		for(int cy = 0; cy < m_depth; ++cy)
+			for(int cx = 0; cx < m_width; ++cx)
+				for(int k = 0; k < 4; ++k)
+				{
+					const int from = Index(cx, cy, k), to = Index(cellX(cx), cellY(cy), side(k));
+					hull[nd][to] = m_hull[d][from];
+					paint[nd][to] = m_paint[d][from];
+					room[nd][to] = m_room[d][from];
+				}
+	}
+	m_hull = hull;
+	m_paint = paint;
+	m_room = room;
+	for(QList<PlanDoor>* list : { &doors, &windows })
+		for(PlanDoor& door : *list)
+			if(flipped(door.deck))
+			{
+				door.deck = newDeck(door.deck);
+				door.cx = cellX(door.cx);
+				door.cy = cellY(door.cy);
+				door.side = side(door.side);
+				if(reversed && door.edge != 0)
+					door.edge = 3 - door.edge;
+			}
+	for(PlanEmitter& e : emitters)
+		if(flipped(e.deck))
+		{
+			e.deck = newDeck(e.deck);
+			e.cx = cellX(e.cx);
+			e.cy = cellY(e.cy);
+			e.k = side(e.k);
+		}
+	for(PlanParking& spot : parking)
+		if(flipped(spot.deck))
+		{
+			// Centred on the corner at the cell's low x and y.
+			spot.deck = newDeck(spot.deck);
+			if(foreAft)
+				spot.cx = m_width - spot.cx;
+			if(my)
+				spot.cy = m_depth - spot.cy;
+		}
+	// A ladder or a flight joins a deck and the one above it: flipped with a
+	// whole plan; with one deck it no longer meets the other, and goes unless
+	// it happens to fit (Tidy).
+	if(deck < 0)
+	{
+		for(PlanLadder& ladder : ladders)
+		{
+			ladder.deck = upsideDown ? m_decks - 2 - ladder.deck : ladder.deck;
+			ladder.cx = cellX(ladder.cx);
+			ladder.cy = cellY(ladder.cy);
+		}
+		if(upsideDown)
+			stairs.clear();		// They would climb down; drawn again by hand.
+		for(PlanStair& stair : stairs)
+		{
+			stair.cx = cellX(stair.cx);
+			stair.cy = cellY(stair.cy);
+			stair.side = side(stair.side);
+		}
+		if(model.IsSet())
+		{
+			if(foreAft)
+				model.mirrorX = !model.mirrorX;
+			if(my)
+				model.mirrorY = !model.mirrorY;
+			if(upsideDown)
+			{
+				model.mirrorZ = !model.mirrorZ;
+				model.height = m_decks * deckFeet;
+			}
+		}
+	}
+	Tidy();
+	return before - (ladders.size() + stairs.size() + parking.size());
 }
 
 int TriPlan::StairCells() const
@@ -549,6 +687,12 @@ void TriPlan::Tidy()
 		if(StairFits(stair))
 			keptStairs << stair;
 	stairs = keptStairs;
+
+	QList<PlanEmitter> keptEmitters;
+	for(const PlanEmitter& e : emitters)
+		if(Hull(TriRef(e.deck, e.cx, e.cy, e.k)))
+			keptEmitters << e;
+	emitters = keptEmitters;
 }
 
 bool TriPlan::Save(const QString& fileName, QString& error) const
@@ -565,6 +709,25 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["floorFeet"] = floorFeet;
 	root["skinFeet"] = skinFeet;
 	root["smoothing"] = smoothing;
+	root["panels"] = panels;
+	if(model.IsSet())
+	{
+		QJsonObject m;
+		m["file"] = model.file;
+		m["yUp"] = model.yUp;
+		m["turn"] = model.turn;
+		m["flip"] = model.flip;
+		m["centre"] = QJsonArray({ model.centre[0], model.centre[1], model.centre[2] });
+		m["scale"] = model.scale;
+		m["seal"] = model.sealFeet;
+		m["asHull"] = model.asHull;
+		if(model.mirrorX || model.mirrorY || model.mirrorZ)
+		{
+			m["mirror"] = QJsonArray({ model.mirrorX, model.mirrorY, model.mirrorZ });
+			m["height"] = model.height;
+		}
+		root["model"] = m;
+	}
 	root["maxFaces"] = maxFaces;
 	root["windowSill"] = windowSillFeet;
 	root["windowTop"] = windowTopFeet;
@@ -647,6 +810,21 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	}
 	root["stairs"] = stairArray;
 
+	QJsonArray emitterArray;
+	for(const PlanEmitter& e : emitters)
+	{
+		QJsonObject o;
+		o["deck"] = e.deck;
+		o["x"] = e.cx;
+		o["y"] = e.cy;
+		o["side"] = e.k;
+		o["kind"] = e.weapon ? "weapon" : "contrail";
+		o["size"] = e.sizeFeet;
+		emitterArray.append(o);
+	}
+	if(!emitterArray.isEmpty())
+		root["emitters"] = emitterArray;
+
 	QJsonArray paintArray;
 	for(const PlanPaint& p : palette)
 	{
@@ -713,6 +891,26 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.floorFeet = root["floorFeet"].toDouble(plan.floorFeet);
 	plan.skinFeet = root["skinFeet"].toDouble(plan.skinFeet);
 	plan.smoothing = root["smoothing"].toInt(plan.smoothing);
+	plan.panels = root["panels"].toInt(plan.panels);
+	if(root["model"].isObject())
+	{
+		const QJsonObject m = root["model"].toObject();
+		plan.model.file = m["file"].toString();
+		plan.model.yUp = m["yUp"].toBool();
+		plan.model.turn = m["turn"].toBool();
+		plan.model.flip = m["flip"].toBool();
+		const QJsonArray c = m["centre"].toArray();
+		for(int i = 0; i < 3 && i < c.size(); ++i)
+			plan.model.centre[i] = c.at(i).toDouble();
+		plan.model.scale = m["scale"].toDouble(1);
+		plan.model.sealFeet = m["seal"].toDouble(1);
+		plan.model.asHull = m["asHull"].toBool();
+		const QJsonArray mirror = m["mirror"].toArray();
+		plan.model.mirrorX = mirror.size() > 0 && mirror.at(0).toBool();
+		plan.model.mirrorY = mirror.size() > 1 && mirror.at(1).toBool();
+		plan.model.mirrorZ = mirror.size() > 2 && mirror.at(2).toBool();
+		plan.model.height = m["height"].toDouble(0);
+	}
 	plan.maxFaces = root["maxFaces"].toInt(plan.maxFaces);
 	plan.windowSillFeet = root["windowSill"].toDouble(plan.windowSillFeet);
 	plan.windowTopFeet = root["windowTop"].toDouble(plan.windowTopFeet);
@@ -787,6 +985,19 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		st.cy = o["y"].toInt();
 		st.side = qBound(0, o["side"].toInt(), 3);
 		plan.stairs << st;
+	}
+	plan.emitters.clear();
+	for(const QJsonValue& v : root["emitters"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanEmitter e;
+		e.deck = o["deck"].toInt();
+		e.cx = o["x"].toInt();
+		e.cy = o["y"].toInt();
+		e.k = qBound(0, o["side"].toInt(), 3);
+		e.weapon = o["kind"].toString() == "weapon";
+		e.sizeFeet = o["size"].toDouble(e.sizeFeet);
+		plan.emitters << e;
 	}
 	const QJsonArray paints = root["palette"].toArray();
 	if(!paints.isEmpty())

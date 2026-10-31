@@ -464,11 +464,63 @@ int cmdPlanExample(const QStringList& args)
 	return 0;
 }
 
+int cmdPlanFlip(const QStringList& args)
+{
+	QStringList files;
+	bool foreAft = false, portStarboard = false, upsideDown = false;
+	int deck = -1;
+	for(int i = 0; i < args.size(); ++i)
+	{
+		const QString& a = args.at(i);
+		if(a == "--turn")
+			foreAft = portStarboard = true;
+		else if(a == "--fore-aft")
+			foreAft = true;
+		else if(a == "--mirror")
+			portStarboard = !portStarboard;
+		else if(a == "--upside-down")
+			upsideDown = true;
+		else if(a == "--deck" && i + 1 < args.size())
+			deck = args.at(++i).toInt() - 1;
+		else
+			files << a;
+	}
+	if(files.size() != 2 || (!foreAft && !portStarboard && !upsideDown))
+	{
+		err() << "usage: shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down] "
+				 "[--deck <n>]\n";
+		return 2;
+	}
+	TriPlan plan;
+	QString error;
+	if(!plan.Load(files.at(0), error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	if(deck >= plan.Decks())
+	{
+		err() << "the plan has " << plan.Decks() << " decks\n";
+		return 2;
+	}
+	const int lost = plan.Flip(foreAft, portStarboard, upsideDown, deck);
+	if(!plan.Save(files.at(1), error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	out() << "wrote " << files.at(1);
+	if(lost > 0)
+		out() << " (" << lost << " ladder(s), stairs or parking spot(s) no longer fitted)";
+	out() << "\n";
+	return 0;
+}
+
 int cmdPlanFromModel(const QStringList& args)
 {
 	QString modelFile, planFile;
 	PlanFromModelOptions options;
-	double faces = options.maxFaces;
+	double faces = options.maxFaces, decks = 0, slices = 0, minPiece = options.minPiece;
 	for(int i = 0; i < args.size(); ++i)
 	{
 		const QString& a = args.at(i);
@@ -482,13 +534,40 @@ int cmdPlanFromModel(const QStringList& args)
 				a == "--threshold" ? !number(options.threshold) :
 				a == "--cell" ? !number(options.cellFeet) :
 				a == "--deck" ? !number(options.deckFeet) :
-				a == "--faces" ? !number(faces) : false)
+				a == "--faces" ? !number(faces) :
+				a == "--decks" ? !number(decks) :
+				a == "--slices" ? !number(slices) :
+				a == "--seal" ? !number(options.sealFeet) :
+				a == "--min-piece" ? !number(minPiece) : false)
 		{
 			err() << a << " needs a number\n";
 			return 2;
 		}
-		else if(a == "--length" || a == "--threshold" || a == "--cell" || a == "--deck")
+		else if(a == "--length" || a == "--threshold" || a == "--cell" || a == "--deck" || a == "--seal")
 			continue;
+		else if(a == "--decks")
+			options.decks = int(decks);
+		else if(a == "--min-piece")
+			options.minPiece = int(minPiece);
+		else if(a == "--no-pinholes")
+			options.fillPinholes = false;
+		else if(a == "--grid-hull")
+			options.modelAsHull = false;
+		else if(a == "--slices")
+			options.slicesPerDeck = int(slices);
+		else if(a == "--method" && i + 1 < args.size())
+		{
+			const QString m = args.at(++i);
+			if(m == "slices")
+				options.method = ModelInside::Slices;
+			else if(m == "solid")
+				options.method = ModelInside::Solid;
+			else
+			{
+				err() << "--method is slices or solid\n";
+				return 2;
+			}
+		}
 		else if(a == "--faces")
 			options.maxFaces = int(faces);
 		else if(a == "--flip")
@@ -508,6 +587,8 @@ int cmdPlanFromModel(const QStringList& args)
 	if(modelFile.isEmpty() || planFile.isEmpty())
 	{
 		err() << "usage: shipgen plan-from-model <model.stl|3ds|obj> <plan.json> [--length <ft>] [--threshold <0..1>]\n"
+				 "         [--decks <n>] [--slices <per deck>] [--method slices|solid] [--seal <ft>]\n"
+				 "         [--min-piece <triangles>] [--no-pinholes] [--grid-hull]\n"
 				 "         [--cell <ft>] [--deck <ft>] [--faces <n>] [--flip] [--y-up]\n";
 		return 2;
 	}
@@ -536,6 +617,7 @@ int cmdPlanFromModel(const QStringList& args)
 int cmdBuildPlan(const QStringList& args)
 {
 	QString planFile, outFile;
+	int panels = -1, faces = -1, gridHull = -1;
 	PlanBuildOptions options;
 	for(int i = 0; i < args.size(); ++i)
 	{
@@ -544,6 +626,10 @@ int cmdBuildPlan(const QStringList& args)
 		else if(a == "--no-furnish")			options.furnish = false;
 		else if(a == "--no-paths")				options.walkPaths = false;
 		else if(a == "--no-ramps")				options.ramps = false;
+		else if(a == "--panels" && i + 1 < args.size())	panels = args.at(++i).toInt();
+		else if(a == "--grid-hull")				gridHull = 1;
+		else if(a == "--model-hull")			gridHull = 0;
+		else if(a == "--faces" && i + 1 < args.size())	faces = args.at(++i).toInt();
 		else if(planFile.isEmpty() && !a.startsWith("--"))	planFile = a;
 		else
 		{
@@ -553,7 +639,8 @@ int cmdBuildPlan(const QStringList& args)
 	}
 	if(planFile.isEmpty())
 	{
-		err() << "usage: shipgen build-plan <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n";
+		err() << "usage: shipgen build-plan <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n"
+				 "         [--panels <n>] [--faces <budget>] [--grid-hull|--model-hull]\n";
 		return 2;
 	}
 	TriPlan plan;
@@ -563,6 +650,12 @@ int cmdBuildPlan(const QStringList& args)
 		err() << error << "\n";
 		return 1;
 	}
+	if(panels >= 0)
+		plan.panels = panels;
+	if(gridHull >= 0)
+		plan.model.asHull = plan.model.IsSet() && gridHull == 0;
+	if(faces > 0)
+		plan.maxFaces = faces;
 	if(outFile.isEmpty())
 		outFile = QFileInfo(planFile).dir().filePath(SanitiseName(plan.name) + ".SoH");
 
@@ -579,6 +672,8 @@ int cmdBuildPlan(const QStringList& args)
 	out() << "Parking      : " << report.parking << "\n";
 	out() << "Ramps        : " << report.ramps << "\n";
 	out() << "Stairs       : " << report.stairs << "\n";
+	out() << "Contrails    : " << report.contrails << "\n";
+	out() << "Weapon emit  : " << report.weaponEmitters << "\n";
 	out() << "Stations     : " << report.stations << "\n";
 	out() << "Berths       : " << report.berths << "\n";
 	for(const QString& n : report.notes)
@@ -1731,6 +1826,8 @@ void usage()
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
 	out() << "  shipgen resave    <in.SoH> <out.SoH>  read and write back, keeping parts this build cannot read\n";
 	out() << "  shipgen plan-example <plan.json>     write a small triangle plan to start from\n";
+	out() << "  shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down] [--deck <n>]\n"
+			 "                                       turn a plan around, mirror it or turn it upside down\n";
 	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up]\n";
 	out() << "                     a triangle plan with its hull filled in from a 3D model\n";
 	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n";
@@ -2079,6 +2176,7 @@ int main(int argc, char* argv[])
 	if(command == "faces")				return cmdFaces(rest);
 	if(command == "kit")				return cmdKit(rest);
 	if(command == "plan-example")		return cmdPlanExample(rest);
+	if(command == "plan-flip")			return cmdPlanFlip(rest);
 	if(command == "plan-from-model")	return cmdPlanFromModel(rest);
 	if(command == "build-plan")			return cmdBuildPlan(rest);
 	if(command == "validate")			return cmdValidate(rest);

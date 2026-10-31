@@ -2875,14 +2875,14 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 			if(d + 1 >= decks || !hasHull[d + 1])
 				continue;
 			const double gu = G(d + 1, p.x, p.y);
-			const double near = qMax(gd, gu) - reach;
+			const double withinReach = qMax(gd, gu) - reach;
 			// The underside of the deck above, falling over the deck below's
 			// height, and the ledge of the deck below, rising over the deck
 			// above's.
 			const double t0 = qBound(0.0, (p.z - d * deckH) / deckH, 1.0);
-			best = qMin(best, qMax(qMax((1 - t0) * gd + t0 * sample(pairDown[d], p.x, p.y) - skin, band(d, p.z)), near));
+			best = qMin(best, qMax(qMax((1 - t0) * gd + t0 * sample(pairDown[d], p.x, p.y) - skin, band(d, p.z)), withinReach));
 			const double t1 = qBound(0.0, (p.z - (d + 1) * deckH) / deckH, 1.0);
-			best = qMin(best, qMax(qMax((1 - t1) * sample(pairUp[d], p.x, p.y) + t1 * gu - skin, band(d + 1, p.z)), near));
+			best = qMin(best, qMax(qMax((1 - t1) * sample(pairUp[d], p.x, p.y) + t1 * gu - skin, band(d + 1, p.z)), withinReach));
 		}
 		return best;
 	};

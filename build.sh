@@ -171,6 +171,27 @@ if [ "$ON_WINDOWS" = 1 ]; then
 		# Keep a console window instead of failing the build.
 		echo "warning: Qt's qtmain library was not found; the GUI programs will keep a console window" >&2
 	fi
+elif [ "$HOST" = Darwin ]; then
+	CXX="${CXX:-clang++}"
+	QMAKE="${QMAKE:-$(brew --prefix qt@5)/bin/qmake}"
+	case "$("$QMAKE" -query QT_VERSION)" in
+		5.*) ;;
+		*) die "macOS requires Qt 5" ;;
+	esac
+	QT_INC="$("$QMAKE" -query QT_INSTALL_HEADERS)"
+	QT_LIBS="$("$QMAKE" -query QT_INSTALL_LIBS)"
+	QT_BINS="$("$QMAKE" -query QT_INSTALL_BINS)"
+	MOC="$QT_BINS/moc"
+	RCC="$QT_BINS/rcc"
+	# Match GCC's acceptance of the engine/tool integer-to-double initializers.
+	CXXFLAGS="-std=c++11 -fPIC -O2 -w -pthread -Wno-c++11-narrowing"
+	CXXFLAGS_TOOL="$CXXFLAGS -g"
+	INCS="-I$QT_INC -F$QT_LIBS"
+	QLIBS="-F$QT_LIBS -Wl,-rpath,$QT_LIBS -framework OpenGL -framework OpenAL"
+	for module in Core Gui Widgets Network Sql OpenGL; do
+		INCS="$INCS -I$QT_LIBS/Qt$module.framework/Headers"
+		QLIBS="$QLIBS -framework Qt$module"
+	done
 else
 	TOOLCHAIN="${TOOLCHAIN:-$HOME/.local/hazeron-toolchain}"
 	QTDIR="$TOOLCHAIN/usr"
@@ -297,7 +318,7 @@ if [ "${1:-}" = "clean" ]; then
 	exit 0
 fi
 
-if [ "$ON_WINDOWS" = 1 ]; then
+if [ "$ON_WINDOWS" = 1 ] || [ "$HOST" = Darwin ]; then
 	need_file "$QT_INC/QtCore/qglobal.h"
 	need_file "$MOC"
 	need_file "$RCC"

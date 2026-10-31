@@ -21,7 +21,7 @@ int main(int argc, char* argv[])
 	// tool; see logging.h. Everything else is reported as usual.
 	InstallShipgenMessageHandler();
 
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 	// Ask for the desktop OpenGL 3.3 context that the preview shaders need.
 	// Qt's default Windows context can be older, and ANGLE would only give
 	// OpenGL ES. The rest of the tool still works if this cannot be made.

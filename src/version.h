@@ -6,6 +6,6 @@
 #ifndef SHIPGEN_VERSION_H
 #define SHIPGEN_VERSION_H
 
-#define SHIPGEN_VERSION "0.3.2-alpha"
+#define SHIPGEN_VERSION "0.3.3-alpha"
 
 #endif

@@ -62,8 +62,8 @@ The steps are the tabs of the side panel:
 | Step | What it does |
 |---|---|
 | 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, adding or removing decks, turning one deck around or mirroring it, and turning the whole ship around (fore and aft), mirroring it (port and starboard) or turning it upside down, for a 3D model that came in the wrong way round (also in the Edit menu; `shipgen plan-flip` on the command line). Everything drawn goes with it, and so does the 3D model when it is the hull; a ladder or stairs that no longer meet after a one-deck flip are taken away, and stairs go when the ship is turned upside down (they would climb down). |
-| 2 Hull | Draw the hull. The deck below shows faintly. Skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15) and the face budget (5,000). The 3D view follows the drawing after a short pause. |
-| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; click near the grid corner the spot is centred on; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue arrow pointing aft) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
+| 2 Hull | Draw the hull. The deck below shows faintly. Hull style (smooth, angular or classic, below), skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15, smooth style only) and the face budget (5,000). For a plan from a 3D model: whether the model is the hull, and whether that hull is sharp or smooth. The 3D view follows the drawing after a short pause. |
+| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; click near the grid corner the spot is centred on; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue arrow pointing aft) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
 | 4 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. |
 | 5 Build | Build the blueprint and see the engine's report; save it as `.SoH`. Stations, berths and systems, and walk paths, can be switched off. |
 
@@ -151,14 +151,24 @@ polygon from its corner points, is still to do.
 
 **The model as the hull** (*Use the 3D model as the hull* in the hull step,
 on by default for a plan from a model; `build-plan --model-hull` or
-`--grid-hull`). The plan remembers its model (`"model"` in the plan file:
+`--grid-hull`). *Model hull* says how: **sharp** (`"sharp": true` in the
+plan's `"model"`, the default for new plans since 0.3.3-alpha) or
+**smooth** (plans saved before). The hull style does not apply to it. The plan remembers its model (`"model"` in the plan file:
 the file, how it was turned and scaled, the seal), and the hull is built
 from the sliced model itself on a grid of cubes a quarter of a cell across,
 with the rooms grown by the skin added (so a room drawn out past the model
 still has its wall). Hull triangles drawn or rubbed out do not change it;
 untick the box to go back to the drawing.
 
-The surface is smooth, not stepped (since 31 October 2026, after the
+**Sharp** (since 0.3.3-alpha): the cube grid is not blurred, and each
+corner of the cubes' surface is put where the planes round it meet (dual
+contouring): the model's own triangles where the solid ends at the model
+(found by casting the edges between cube centres through it), a room's wall
+where it ends there. Edges stay sharp and flat faces flat, then the flat
+areas are merged; details smaller than a cube go. The Lantean Daedalus
+comes out at 4,178 faces, recognisably the model.
+
+**Smooth**: the surface is smooth, not stepped (since 31 October 2026, after the
 user's Omega destroyer came out jagged): the cube grid is blurred a little
 ([1 2 1] each way), and the surface of the cubes over the half level has
 its corners moved onto that level (surface nets). It is not smoothed or
@@ -207,7 +217,12 @@ walked on (a level landing over the threshold, then a slope of about 34
 degrees, 1.5 ft out for each foot down), a mesh that shows it, a hull void
 over it and a walk path down it. Higher doors, or every door with
 `--no-ramps`, get a ladder path down to 2.5 ft below the hull instead,
-standing just outside the hull inside the doorway's voids. Put a hull door on a room cell at the edge of
+standing just outside the hull inside the doorway's voids. *Hull doors* on
+the Rooms page (`hullDoorExit`) chooses: `auto` (a ramp where it fits, else
+a ladder), `ladder` (always a ladder) or `none` (a docking door: no way
+down). The hull void outside the door ends at the hull's real surface
+(found by sight lines out through it at three heights), and the clear space
+below the door reaches only as low as the way down needs. Put a hull door on a room cell at the edge of
 the hull: the build warns when the way out is a tunnel through more than a
 cell and a half of hull. A window is cut the same way with a window jig, a
 cell wide less a foot, from the plan's window sill to its window top above
@@ -247,6 +262,29 @@ may be (the user: the drawn bounds are the minimum, so that rooms never
 clip). The slopes are flat, so the face merging takes them down well: the
 example Wedge needs 10,252 faces before thinning instead of 11,794.
 
+**Hull styles** (*Hull style* on the Hull page, `hullStyle`, since
+0.3.3-alpha):
+
+* **Smooth** (`smooth`, the default): the hull is pushed out round the
+  drawn triangles by the skin and its edges rounded (*Smoothing*); with
+  *Slope the hull between decks*, sloped as above first.
+* **Angular** (`angular`, experimental): the hull slopes from deck to deck
+  in straight, flat panels and keeps sharp edges. Each deck's outline gets
+  a distance field (in the octagon norm, so corners are cut off at 45
+  degrees, not rounded), and between two decks that both have hull the
+  outline is blended from one to the other over each deck's height, with
+  the same rule as the slopes above; the surface is taken from a grid of
+  cubes with each corner put where the planes round it meet, and flat areas
+  are merged. A slope that does not change is one flat face. Decks slope
+  into each other only where their edges are within a cell and a half;
+  further apart the hull steps. An empty deck between two others stays a
+  gap. The smoothing and *Slope the hull between decks* are not used. The
+  style follows the drawing exactly: an outline drawn as a staircase comes
+  out fluted, so draw slanted walls with the diagonals.
+* **Classic** (`classic`): the old Shores of Hazeron designer's look,
+  straight walls up from each deck's outline and flat tops and bottoms,
+  grown by the skin with mitred (sharp) corners; not sloped or smoothed.
+
 **How the inside looks.** Room floors are metal tiles, ceilings light
 plates, and walls metal panels in a light shade of the room's colour in the
 plan. Hull doors are painted yellow and interior doors blue, so that they
@@ -276,6 +314,7 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "cellFeet": 5, "deckFeet": 10, "floorFeet": 1, "skinFeet": 2,
   "smoothing": 6, "maxFaces": 5000,
   "windowSill": 3, "windowTop": 7.5, "joinWindows": false, "slopedDecks": false,
+  "hullStyle": "angular", "hullDoorExit": "ladder",
   "width": 36, "depth": 16, "decks": 2,
   "rooms":   [ { "type": "Bridge", "label": "Bridge 1", "colour": "#5a8cdc" } ],
   "ftl": "wormhole-p",
@@ -300,8 +339,11 @@ run on the deck above. A parking spot is
 centred on the grid corner (`x`, `y`); `kind` is `ground` or `space`. An
 emitter stands on triangle `side` of cell (`x`, `y`); `kind` is `contrail`
 or `weapon`, `size` a contrail's width in feet. A plan made from a 3D model
-has a `"model"` object (the file, how it was placed, and `"mirror"`, three
-booleans, when it was flipped). `theme` is 0, 1 or 2 for
+has a `"model"` object (the file, how it was placed, `"asHull"`,
+`"sharp"` when the model hull is sharp, and `"mirror"`, three booleans,
+when it was flipped). `hullStyle` is `smooth` (the default, then left out),
+`angular` or `classic`; `hullDoorExit` is `auto` (the default, left out),
+`ladder` or `none`. `theme` is 0, 1 or 2 for
 the owner's three exterior colours, -1 for the plain colour.
 
 ## Units

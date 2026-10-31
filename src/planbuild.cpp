@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QHash>
+#include <QLineF>
 #include <QMap>
 #include <QQueue>
 #include <QSet>
@@ -133,6 +134,173 @@ IndexedMesh BuildPrisms(const TriPlan& plan, const std::function<bool(const TriR
 					}
 				}
 	return mesh;
+}
+
+// The drawn hull triangles, with the gaps filled where two parts of the
+// hull would touch only along an edge: round a point of a deck, the filled
+// triangles must make one wedge, not two or more (a checkerboard corner);
+// and a triangle may not meet the triangle across its edge on the deck
+// above (or below) when neither the one above it nor the one across on its
+// own deck is filled. Such an edge would have four faces, which the engine's
+// door and window cutting tears open (the Omega: 76 edges, then 751 open
+// ones, and the game hung loading it). Only fills, so every drawn triangle
+// stays inside; 'added' counts the triangles filled in.
+QVector<bool> ManifoldHull(const TriPlan& plan, int& added)
+{
+	const int W = plan.Width(), D = plan.Depth(), decks = plan.Decks();
+	auto id = [W, D](const TriRef& t) { return ((t.deck * D + t.cy) * W + t.cx) * 4 + t.k; };
+	QVector<bool> filled(decks * D * W * 4, false);
+	for(int d = 0; d < decks; ++d)
+		for(int cy = 0; cy < D; ++cy)
+			for(int cx = 0; cx < W; ++cx)
+				for(int k = 0; k < 4; ++k)
+					filled[id(TriRef(d, cx, cy, k))] = plan.Hull(TriRef(d, cx, cy, k));
+	auto isFilled = [&](const TriRef& t) { return plan.Valid(t) && filled[id(t)]; };
+	added = 0;
+
+	for(int pass = 0; pass < 20; ++pass)
+	{
+		int changed = 0;
+		for(int d = 0; d < decks; ++d)
+		{
+			// Round each point of the deck: its triangles by angle, with a
+			// gap that may not be filled where the fan leaves the grid.
+			for(int hy = 0; hy <= 2 * D; ++hy)
+				for(int hx = 0; hx <= 2 * W; ++hx)
+				{
+					const bool middle = (hx % 2) && (hy % 2);
+					if((hx % 2) != (hy % 2))
+						continue;
+					struct Item { double angle; TriRef t; };
+					QVector<Item> fan;
+					for(int cy = (hy - 1) / 2; cy <= hy / 2; ++cy)
+						for(int cx = (hx - 1) / 2; cx <= hx / 2; ++cx)
+						{
+							if(cx < 0 || cy < 0 || cx >= W || cy >= D)
+								continue;
+							for(int k = 0; k < 4; ++k)
+							{
+								const TriRef t(d, cx, cy, k);
+								int tx[3], ty[3];
+								HalfCellCorners(t, tx, ty);
+								bool touches = false;
+								for(int i = 0; i < 3; ++i)
+									touches = touches || (tx[i] == hx && ty[i] == hy);
+								if(!touches)
+									continue;
+								const double mx = (tx[0] + tx[1] + tx[2]) / 3.0 - hx, my = (ty[0] + ty[1] + ty[2]) / 3.0 - hy;
+								fan << Item{ atan2(my, mx), t };
+							}
+						}
+					const int full = middle ? 4 : 8;
+					if(fan.size() < 2)
+						continue;
+					std::sort(fan.begin(), fan.end(), [](const Item& a, const Item& b) { return a.angle < b.angle; });
+					// A fan cut by the grid's edge: the gap is where the angle jumps.
+					int start = 0;
+					if(fan.size() < full)
+					{
+						double widest = -1;
+						for(int i = 0; i < fan.size(); ++i)
+						{
+							const double next = i + 1 < fan.size() ? fan[i + 1].angle : fan[0].angle + 2 * M_PI;
+							if(next - fan[i].angle > widest)
+							{
+								widest = next - fan[i].angle;
+								start = (i + 1) % fan.size();
+							}
+						}
+					}
+					// The empty gaps between filled wedges.
+					const int n = fan.size();
+					QVector<QPair<int, int> > gaps;	// first index (from start), length
+					int filledCount = 0;
+					for(int i = 0; i < n; ++i)
+						filledCount += isFilled(fan[(start + i) % n].t) ? 1 : 0;
+					if(filledCount == 0 || filledCount == n)
+						continue;
+					const bool closed = fan.size() == full;
+					for(int i = 0; i < n; )
+					{
+						if(isFilled(fan[(start + i) % n].t)) { ++i; continue; }
+						int j = i;
+						while(j < n && !isFilled(fan[(start + j) % n].t))
+							++j;
+						gaps << qMakePair(i, j - i);
+						i = j;
+					}
+					// In a closed fan the first and last gap may be one.
+					if(closed && gaps.size() > 1 && gaps.first().first == 0 && gaps.last().first + gaps.last().second == n)
+					{
+						gaps.first().first = gaps.last().first;
+						gaps.first().second += gaps.last().second;
+						gaps.removeLast();
+					}
+					// Runs of filled triangles: as many as gaps in a closed fan;
+					// in an open one, a gap at either end does not part two runs.
+					int inner = 0;
+					for(const QPair<int, int>& g : gaps)
+						if(closed || (g.first > 0 && g.first + g.second < n))
+							++inner;
+					const int runs = closed ? gaps.size() : inner + 1;
+					if(runs < 2)
+						continue;
+					// Keep the widest gap (or the grid's edge) and fill the rest.
+					int keep = -1;
+					if(closed)
+					{
+						for(int g = 0; g < gaps.size(); ++g)
+							if(keep < 0 || gaps[g].second > gaps[keep].second)
+								keep = g;
+					}
+					for(int g = 0; g < gaps.size(); ++g)
+					{
+						if(g == keep)
+							continue;
+						if(!closed && (gaps[g].first == 0 || gaps[g].first + gaps[g].second == n))
+							continue;
+						for(int i = 0; i < gaps[g].second; ++i)
+						{
+							const TriRef& t = fan[(start + gaps[g].first + i) % n].t;
+							filled[id(t)] = true;
+							++changed;
+						}
+					}
+				}
+
+			// Between this deck and the one above: no two triangles meeting
+			// only along an edge.
+			if(d + 1 >= decks)
+				continue;
+			for(int cy = 0; cy < D; ++cy)
+				for(int cx = 0; cx < W; ++cx)
+					for(int k = 0; k < 4; ++k)
+					{
+						const TriRef t(d, cx, cy, k), up(d + 1, cx, cy, k);
+						for(int e = 0; e < 3; ++e)
+						{
+							const TriRef across = plan.Across(t, e);
+							if(!plan.Valid(across))
+								continue;
+							const TriRef acrossUp(d + 1, across.cx, across.cy, across.k);
+							if(isFilled(t) && isFilled(acrossUp) && !isFilled(up) && !isFilled(across))
+							{
+								filled[id(up)] = true;
+								++changed;
+							}
+							else if(!isFilled(t) && !isFilled(acrossUp) && isFilled(up) && isFilled(across))
+							{
+								filled[id(t)] = true;
+								++changed;
+							}
+						}
+					}
+		}
+		added += changed;
+		if(changed == 0)
+			break;
+	}
+	return filled;
 }
 
 // The plan distance from a point to a triangle of the plan (0 inside it).
@@ -1212,6 +1380,94 @@ void Subdivide(IndexedMesh& mesh)
 	mesh.paint = paint;
 }
 
+// Pushes the surface out by the skin with mitred corners (the angular hull
+// style): every face moves out by exactly the skin, and every vertex goes
+// to where the planes of its faces meet again (least squares over its
+// distinct face planes, pulled gently towards the plain push for the
+// directions they leave free). A flat area stays flat and an edge stays a
+// sharp edge. A vertex moves no more than three skins.
+void OffsetMitred(IndexedMesh& mesh, double skin)
+{
+	const int nv = mesh.v.size();
+	QVector<QVector<AuPoint> > normals(nv);
+	for(int fi = 0; fi < mesh.Faces(); ++fi)
+	{
+		const AuPoint n = mesh.Normal(fi);
+		if(n.Length() < 0.5)
+			continue;
+		for(int j = 0; j < 3; ++j)
+		{
+			QVector<AuPoint>& list = normals[mesh.f[fi*3 + j]];
+			bool seen = false;
+			for(const AuPoint& m : list)
+				if(m.Dot(n) > 0.9999)
+				{
+					seen = true;
+					break;
+				}
+			if(!seen)
+				list << n;
+		}
+	}
+	auto det3 = [](const double m[3][3]) {
+		return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+			+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+	};
+	QVector<AuPoint> out(nv);
+	for(int i = 0; i < nv; ++i)
+	{
+		const AuPoint v = mesh.v[i];
+		AuPoint avg(0, 0, 0);
+		for(const AuPoint& m : normals[i])
+			avg = avg + m;
+		if(avg.Length() < 1e-9)
+		{
+			out[i] = v;
+			continue;
+		}
+		avg = avg / avg.Length();
+		double minDot = 1.0;
+		for(const AuPoint& m : normals[i])
+			minDot = qMin(minDot, avg.Dot(m));
+		const AuPoint guess = v + avg * (skin / qMax(0.4, minDot));
+		// Normal equations of: sum (n.x - (n.v + skin))^2 + w |x - guess|^2.
+		const double w = 1e-4;
+		double A[3][3] = { { w, 0, 0 }, { 0, w, 0 }, { 0, 0, w } };
+		double b[3] = { w * guess.x, w * guess.y, w * guess.z };
+		for(const AuPoint& m : normals[i])
+		{
+			const double nn[3] = { m.x, m.y, m.z };
+			const double d = m.Dot(v) + skin;
+			for(int r = 0; r < 3; ++r)
+			{
+				for(int c = 0; c < 3; ++c)
+					A[r][c] += nn[r] * nn[c];
+				b[r] += nn[r] * d;
+			}
+		}
+		const double det = det3(A);
+		AuPoint x = guess;
+		if(fabs(det) > 1e-12)
+		{
+			double r[3];
+			for(int c = 0; c < 3; ++c)
+			{
+				double M[3][3];
+				for(int rr = 0; rr < 3; ++rr)
+					for(int cc = 0; cc < 3; ++cc)
+						M[rr][cc] = cc == c ? b[rr] : A[rr][cc];
+				r[c] = det3(M) / det;
+			}
+			x = AuPoint(r[0], r[1], r[2]);
+		}
+		const AuPoint move = x - v;
+		if(move.Length() > 3 * skin)
+			x = v + move * (3 * skin / move.Length());
+		out[i] = x;
+	}
+	mesh.v = out;
+}
+
 // Rounds the hull: the surface is pushed out by the skin and then smoothed
 // (Taubin's lambda/mu, which does not shrink the way plain averaging does).
 // A vertex may not move further in than 'allowance' says, measured along its
@@ -1528,6 +1784,42 @@ void TurnBox(AuPoint& mn, AuPoint& mx)
 	const AuPoint a = t.Project(mn), b = t.Project(mx);
 	mn = a.Min(b);
 	mx = a.Max(b);
+}
+
+// How far the design has to move so that its origin lies within the hull's
+// extents on every axis: the engine reports "CG outside design extents"
+// otherwise (auscreport.cpp), and the game hung loading such a design (the
+// Omega, whose lowest decks were empty, so its hull began 17 ft above the
+// origin). Onto the nearest side, with a little room (a tenth of the size,
+// at most two feet), so the origin is inside, not on the skin.
+AuPoint OriginShift(const AuScDesign& design)
+{
+	AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || !part->IsHullMesh())
+			continue;
+		QSet<quint32> ids;
+		part->VertexIds(ids);
+		for(QSet<quint32>::const_iterator v = ids.constBegin(); v != ids.constEnd(); ++v)
+		{
+			const AuPoint p = part->VertexLoc(*v);
+			mn = mn.Min(p);
+			mx = mx.Max(p);
+		}
+	}
+	if(mn.x > mx.x)
+		return AuPoint(0, 0, 0);
+	auto shiftFor = [](double lo, double hi) {
+		const double margin = qMin(2.0, (hi - lo) * 0.1);
+		if(lo > 0)
+			return -(lo + margin);
+		if(hi < 0)
+			return -(hi - margin);
+		return 0.0;
+	};
+	return AuPoint(shiftFor(mn.x, mx.x), shiftFor(mn.y, mx.y), shiftFor(mn.z, mx.z));
 }
 
 AuScDesign* NewPlanDesign(const TriPlan& plan)
@@ -1921,6 +2213,13 @@ static void DumpHull(const IndexedMesh& mesh, const char* stage)
 }
 
 // The sliced solid of a plan's model: from the cache, or read and sliced.
+// The model's triangles where the plan puts them, by the same key.
+static QHash<QString, std::shared_ptr<AuScTriList> >& ModelTris()
+{
+	static QHash<QString, std::shared_ptr<AuScTriList> > tris;
+	return tris;
+}
+
 static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& error)
 {
 	const QString key = ModelKey(plan.model, plan.cellFeet);
@@ -1936,7 +2235,25 @@ static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& e
 	std::shared_ptr<SliceSolid> solid = std::make_shared<SliceSolid>();
 	solid->Build(tris, mn, mx, fine, qMax(0, int(ceil(plan.model.sealFeet / fine / 2 - 1e-9))), 0);
 	ModelSolids().insert(key, solid);
+	ModelTris().insert(key, std::make_shared<AuScTriList>(tris));
 	return solid;
+}
+
+// The model's triangles where the plan puts them (loaded again when only the
+// solid was kept, as PlanFromModel keeps it).
+static std::shared_ptr<AuScTriList> ModelTrisFor(const TriPlan& plan)
+{
+	const QString key = ModelKey(plan.model, plan.cellFeet);
+	if(ModelTris().contains(key))
+		return ModelTris().value(key);
+	AuScTriList tris;
+	QString error;
+	if(!LoadMeshFile(plan.model.file, tris, error))
+		return std::shared_ptr<AuScTriList>();
+	PlaceModel(tris, plan.model);
+	std::shared_ptr<AuScTriList> shared = std::make_shared<AuScTriList>(tris);
+	ModelTris().insert(key, shared);
+	return shared;
 }
 
 // The hull of a plan made from a model (since 31 October 2026, smooth): the
@@ -1960,7 +2277,65 @@ static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& e
 // model's own triangles. Point by point it followed every little detail of
 // the model, smaller than the cubes, and the hull came out crumpled; with the
 // moves averaged over the neighbours it was still noisier than without.
-static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
+// The point nearest to all the planes (point, normal) round a corner of the
+// cubes, a little drawn to their middle for the directions the planes leave
+// free, and kept within 'lim' of the corner on each axis (dual contouring).
+static AuPoint CornerOnPlanes(const QVector<AuPoint>& pts, const QVector<AuPoint>& normals, const AuPoint& corner, double lim)
+{
+	double A[3][3] = { { 0 } }, b[3] = { 0, 0, 0 };
+	AuPoint mass(0, 0, 0);
+	for(int i = 0; i < pts.size(); ++i)
+	{
+		const AuPoint& n = normals[i];
+		const double nv[3] = { n.x, n.y, n.z };
+		const double np = n.Dot(pts[i]);
+		for(int r = 0; r < 3; ++r)
+		{
+			for(int q = 0; q < 3; ++q)
+				A[r][q] += nv[r] * nv[q];
+			b[r] += nv[r] * np;
+		}
+		mass = mass + pts[i];
+	}
+	if(pts.isEmpty())
+		return corner;
+	mass = mass / pts.size();
+	const double lambda = 0.05, mv[3] = { mass.x, mass.y, mass.z };
+	for(int r = 0; r < 3; ++r)
+	{
+		A[r][r] += lambda;
+		b[r] += lambda * mv[r];
+	}
+	auto det3 = [](const double m[3][3]) {
+		return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+				+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+	};
+	const double det = det3(A);
+	AuPoint x = mass;
+	if(fabs(det) > 1e-12)
+	{
+		double sol[3];
+		for(int col = 0; col < 3; ++col)
+		{
+			double m[3][3];
+			for(int r = 0; r < 3; ++r)
+				for(int q = 0; q < 3; ++q)
+					m[r][q] = q == col ? b[r] : A[r][q];
+			sol[col] = det3(m) / det;
+		}
+		x = AuPoint(sol[0], sol[1], sol[2]);
+	}
+	return AuPoint(qBound(corner.x - lim, x.x, corner.x + lim), qBound(corner.y - lim, x.y, corner.y + lim),
+				   qBound(corner.z - lim, x.z, corner.z + lim));
+}
+
+// With 'tris' (the model's own triangles, where the plan puts them) the hull
+// keeps the model's edges sharp and its flat faces flat: the grid is not
+// blurred, and every corner is put where the planes round it meet, the
+// model's own planes where the surface is the model's, the rooms' walls
+// where it is theirs (dual contouring, as AngularHullMesh). Without, as
+// below (smooth).
+static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, const AuScTriList* tris = 0)
 {
 	const double h = plan.cellFeet / 4;
 	AuPoint lo, hi;
@@ -2011,7 +2386,7 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
 		return false;
 	};
 
-	// The grid, then blurred.
+	// The grid, then blurred (not when sharp).
 	QVector<float> field(count, 0.f);
 	for(int k = 2; k < nz - 2; ++k)
 		for(int j = 2; j < ny - 2; ++j)
@@ -2021,6 +2396,7 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
 				if(solid.Inside(p) || drawnWithSkin(p))
 					field[index(i, j, k)] = 1.f;
 			}
+	if(!tris)
 	{
 		QVector<float> blurred(count, 0.f);
 		const qint64 strides[3] = { 1, nx, qint64(nx) * ny };
@@ -2097,6 +2473,119 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
 			return 0.f;
 		return field[index(i, j, k)];
 	};
+	if(tris)
+	{
+		// The model's triangles in buckets of four cubes, for finding where an
+		// edge between two cube centres goes through the model.
+		const double bs = 4 * h;
+		const int bx = nx / 4 + 2, by = ny / 4 + 2, bz = nz / 4 + 2;
+		QVector<QVector<int> > bucket(qint64(bx) * by * bz);
+		auto bucketOf = [&](const AuPoint& p, int& i, int& j, int& k) {
+			i = qBound(0, int(floor((p.x - origin.x) / bs)), bx - 1);
+			j = qBound(0, int(floor((p.y - origin.y) / bs)), by - 1);
+			k = qBound(0, int(floor((p.z - origin.z) / bs)), bz - 1);
+		};
+		for(int t = 0; t < tris->size(); ++t)
+		{
+			const AuScTri& tri = tris->at(t);
+			const AuPoint a(tri.V0()), b(tri.V1()), c(tri.V2());
+			int i0, j0, k0, i1, j1, k1;
+			bucketOf(a.Min(b).Min(c), i0, j0, k0);
+			bucketOf(a.Max(b).Max(c), i1, j1, k1);
+			for(int k = k0; k <= k1; ++k)
+				for(int j = j0; j <= j1; ++j)
+					for(int i = i0; i <= i1; ++i)
+						bucket[(qint64(k) * by + j) * bx + i] << t;
+		}
+		// Where the segment from 'in' to 'out' first leaves through the model,
+		// and the model's normal there (out of the solid, toward 'out').
+		// The sliced solid is not exactly the model (its own grid, the
+		// sealing), so the model is looked for a cube and a half either way.
+		const double reachOut = 1.5;
+		auto hitModel = [&](const AuPoint& in, const AuPoint& out, AuPoint& at, AuPoint& normal) {
+			const AuPoint dir = out - in;
+			int i0, j0, k0, i1, j1, k1;
+			bucketOf((in - dir * reachOut).Min(out + dir * reachOut), i0, j0, k0);
+			bucketOf((in - dir * reachOut).Max(out + dir * reachOut), i1, j1, k1);
+			double best = 1e9;
+			for(int k = k0; k <= k1; ++k)
+				for(int j = j0; j <= j1; ++j)
+					for(int i = i0; i <= i1; ++i)
+						for(int t : bucket[(qint64(k) * by + j) * bx + i])
+						{
+							const AuScTri& tri = tris->at(t);
+							const AuPoint a(tri.V0()), b(tri.V1()), c(tri.V2());
+							const AuPoint e1 = b - a, e2 = c - a, pv = dir.Cross(e2);
+							const double det = e1.Dot(pv);
+							if(fabs(det) < 1e-12)
+								continue;
+							const AuPoint tv = in - a;
+							const double u = tv.Dot(pv) / det;
+							if(u < -1e-6 || u > 1 + 1e-6)
+								continue;
+							const AuPoint qv = tv.Cross(e1);
+							const double v = dir.Dot(qv) / det;
+							if(v < -1e-6 || u + v > 1 + 1e-6)
+								continue;
+							const double s = e2.Dot(qv) / det;
+							if(s < -reachOut || s > 1 + reachOut || fabs(s - 0.5) >= fabs(best - 0.5))
+								continue;
+							best = s;
+							AuPoint n = e1.Cross(e2);
+							n = n / qMax(n.Length(), 1e-12);
+							normal = n.Dot(dir) < 0 ? n * -1.0 : n;
+							at = in + dir * s;
+						}
+			return best < 1e8;
+		};
+		int fromModel = 0, fromGrid = 0;
+		auto inside = [&](const AuPoint& p) { return solid.Inside(p) || drawnWithSkin(p); };
+		static const AuPoint kAxis[3] = { AuPoint(1, 0, 0), AuPoint(0, 1, 0), AuPoint(0, 0, 1) };
+		for(int vi = 0; vi < mesh.v.size(); ++vi)
+		{
+			const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
+			QVector<AuPoint> pts, normals;
+			for(int c = 0; c < 8; ++c)
+				for(int axis = 0; axis < 3; ++axis)
+				{
+					const int o = c | (1 << axis);
+					if(o == c)
+						continue;
+					const int ic = ci - 1 + (c & 1), jc = cj - 1 + ((c >> 1) & 1), kc = ck - 1 + ((c >> 2) & 1);
+					const int io = ci - 1 + (o & 1), jo = cj - 1 + ((o >> 1) & 1), ko = ck - 1 + ((o >> 2) & 1);
+					const bool inC = at(ic, jc, kc), inO = at(io, jo, ko);
+					if(inC == inO)
+						continue;
+					AuPoint pin = centreOf(ic, jc, kc), pout = centreOf(io, jo, ko);
+					if(!inC)
+						std::swap(pin, pout);
+					AuPoint p, n;
+					// The model's own surface when the solid ends there; else the
+					// edge of the room's wall (along the grid), found by halving.
+					if(!(solid.Inside(pin) && !drawnWithSkin(pin) && hitModel(pin, pout, p, n)))
+					{
+						AuPoint a = pin, b = pout;
+						for(int it = 0; it < 10; ++it)
+						{
+							const AuPoint m = (a + b) * 0.5;
+							if(inside(m)) a = m; else b = m;
+						}
+						p = (a + b) * 0.5;
+						n = kAxis[axis] * ((pout - pin).Dot(kAxis[axis]) > 0 ? 1.0 : -1.0);
+						++fromGrid;
+					}
+					else
+						++fromModel;
+					pts << p;
+					normals << n;
+				}
+			if(!pts.isEmpty())
+				mesh.v[vi] = CornerOnPlanes(pts, normals, origin + AuPoint(ci, cj, ck) * h, h * 1.5);
+		}
+		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+			fprintf(stderr, "model hull crossings: %d on the model, %d on the grid\n", fromModel, fromGrid);
+		return mesh;
+	}
 	for(int vi = 0; vi < mesh.v.size(); ++vi)
 	{
 		const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
@@ -2125,6 +2614,437 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid)
 	return mesh;
 }
 
+// The angular hull (TriPlan::hullStyle "angular"), made from a field rather
+// than from the prisms of the triangles, so that a slope that does not change
+// comes out as one flat panel instead of a sawtooth.
+//
+// Each deck that has hull gets the signed distance to its drawn outline in
+// the plan (negative inside). The hull is everything within the skin of:
+//   - each deck's outline, straight up from its floor to its ceiling (the
+//     drawn hull is the least the hull may be), and
+//   - between two decks next to each other that both have hull, the outline
+//     blended from one deck's to the other's over the height of each of the
+//     two decks: where the deck above is narrower the ledge rises from the
+//     lower deck's edge to the top of the deck above, where it is wider its
+//     underside falls to the bottom of the deck below (as SlopeBetweenDecks).
+// An empty deck between two others is left a gap (the user: such gaps are
+// meant). Two straight edges, one above the other, blend into a plane.
+//
+// The surface is taken from a grid of cubes, the faces between the cubes in
+// and out of the hull, and every corner of those faces is put where the
+// planes of the surface round it meet (dual contouring), so that the edges
+// and corners stay sharp and the flat panels flat; then the flat areas are
+// merged (DecimateHull with a small limit, in BuildPlanHull).
+static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hullTris)
+{
+	const int W = plan.Width(), D = plan.Depth(), decks = plan.Decks();
+	const double cell = plan.cellFeet, deckH = plan.deckFeet;
+	// The skin: the field less the skin. The plan distance is in the octagon
+	// norm, so the corners grown by it are cut off at 45 degrees, not round;
+	// above and below it is the band, so flat. (Grown afterwards instead
+	// (OffsetMitred), the many nearly flat faces of the grid's surface
+	// crumpled it.)
+	const double skin = qMax(0.0, plan.skinFeet);
+	// How far apart two edges, one on each deck, may be for the hull to
+	// slope from one to the other: further apart, it steps. Without a limit
+	// every part of a deck blended with every part of the next, which made
+	// curved fillets between parts (a wing and the body beside it).
+	const double reach = cell * 1.5;
+	const double h = cell / 4;
+	auto isHull = [&](const TriRef& t) {
+		return plan.Valid(t) && hullTris[((t.deck * D + t.cy) * W + t.cx) * 4 + t.k];
+	};
+
+	// The plan's distance fields, one per deck, on a grid of half the cube.
+	const QPointF c0 = plan.Corner(0, 0), c1 = plan.Corner(W, D);
+	const double s = h / 2, margin = skin + 4 * h;
+	const double gx0 = qMin(c0.x(), c1.x()) - margin, gy0 = qMin(c0.y(), c1.y()) - margin;
+	const int gnx = int(ceil((fabs(c1.x() - c0.x()) + 2 * margin) / s)) + 1;
+	const int gny = int(ceil((fabs(c1.y() - c0.y()) + 2 * margin) / s)) + 1;
+	QVector<bool> hasHull(decks, false);
+	for(int d = 0; d < decks; ++d)
+		for(int i = 0; i < W * D * 4 && !hasHull[d]; ++i)
+			hasHull[d] = hullTris[d * W * D * 4 + i];
+	// Whether a point of the plan is in the hull of decks d0..d1.
+	auto inDecks = [&](int d0, int d1, const QPointF& q) {
+		const int cx = int(floor((q.x() - c0.x()) / cell)), cy = int(floor((q.y() - c0.y()) / cell));
+		if(cx < 0 || cy < 0 || cx >= W || cy >= D)
+			return false;
+		const QPointF c = plan.CellCentre(cx, cy);
+		const double dx = q.x() - c.x(), dy = q.y() - c.y();
+		const int k = fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S);
+		for(int d = d0; d <= d1; ++d)
+			if(isHull(TriRef(d, cx, cy, k)))
+				return true;
+		return false;
+	};
+	// The outline of the hull of decks d0..d1 (one deck, or two seen from
+	// above as one): the triangle edges with no hull across them, each with
+	// the hull on its left; in buckets a cell wide, searched in rings outward.
+	struct Outline
+	{
+		QVector<QLineF> edges;
+		QVector<QVector<int> > bucket;
+		int bnx = 0, bny = 0;
+	};
+	const int bnx = int(ceil(gnx * s / cell)) + 1, bny = int(ceil(gny * s / cell)) + 1;
+	auto outline = [&](int d0, int d1) {
+		auto inRegion = [&](const TriRef& t) {
+			if(!plan.Valid(t))
+				return false;
+			for(int d = d0; d <= d1; ++d)
+				if(isHull(TriRef(d, t.cx, t.cy, t.k)))
+					return true;
+			return false;
+		};
+		Outline o;
+		for(int cy = 0; cy < D; ++cy)
+			for(int cx = 0; cx < W; ++cx)
+				for(int k = 0; k < 4; ++k)
+				{
+					const TriRef t(d0, cx, cy, k);
+					if(!inRegion(t))
+						continue;
+					QPointF c[3];
+					plan.TriCorners(t, c);
+					for(int e = 0; e < 3; ++e)
+						if(!inRegion(plan.Across(t, e)))
+							o.edges << QLineF(c[e], c[(e + 1) % 3]);
+				}
+		o.bnx = bnx;
+		o.bny = bny;
+		o.bucket.resize(bnx * bny);
+		for(int e = 0; e < o.edges.size(); ++e)
+		{
+			const QLineF& l = o.edges[e];
+			const int i0 = int(floor((qMin(l.x1(), l.x2()) - gx0) / cell)), i1 = int(floor((qMax(l.x1(), l.x2()) - gx0) / cell));
+			const int j0 = int(floor((qMin(l.y1(), l.y2()) - gy0) / cell)), j1 = int(floor((qMax(l.y1(), l.y2()) - gy0) / cell));
+			for(int j = qMax(0, j0); j <= qMin(bny - 1, j1); ++j)
+				for(int i = qMax(0, i0); i <= qMin(bnx - 1, i1); ++i)
+					o.bucket[j * bnx + i] << e;
+		}
+		return o;
+	};
+	// The edges near a point, ring by ring, until 'done' says the rest are
+	// further than the ring.
+	auto nearEdges = [&](const Outline& o, const QPointF& q, const std::function<void(const QLineF&)>& visit,
+						 const std::function<double()>& best) {
+		const int bi = int(floor((q.x() - gx0) / cell)), bj = int(floor((q.y() - gy0) / cell));
+		for(int r = 0; r < qMax(o.bnx, o.bny); ++r)
+		{
+			for(int y = bj - r; y <= bj + r; ++y)
+				for(int x = bi - r; x <= bi + r; ++x)
+				{
+					if(qMax(abs(x - bi), abs(y - bj)) != r || x < 0 || y < 0 || x >= o.bnx || y >= o.bny)
+						continue;
+					for(int e : o.bucket[y * o.bnx + x])
+						visit(o.edges[e]);
+				}
+			if(best() <= r * cell)
+				break;
+		}
+	};
+	// The distance in the octagon norm, not the round one: the plan's edges
+	// go only along the grid and its diagonals, so in this norm the distance
+	// is flat in pieces everywhere, round corners too (they come out cut off
+	// at 45 degrees), and so is every blend of two decks; with round
+	// distances the corners of a slope twisted.
+	auto norm = [](double x, double y) {
+		x = fabs(x); y = fabs(y);
+		return qMax(qMax(x, y), (x + y) * M_SQRT1_2);
+	};
+	auto segDist = [&norm](const QPointF& q, const QLineF& l) {
+		// Convex and flat in pieces along the segment: smallest at an end or
+		// where a part of the norm changes over.
+		const QPointF a = l.p1(), ab = l.p2() - l.p1(), aq = q - a;
+		double best = qMin(norm(aq.x(), aq.y()), norm(q.x() - l.x2(), q.y() - l.y2()));
+		const double us[4] = { ab.x() != 0 ? aq.x() / ab.x() : -1, ab.y() != 0 ? aq.y() / ab.y() : -1,
+							   ab.x() + ab.y() != 0 ? (aq.x() + aq.y()) / (ab.x() + ab.y()) : -1,
+							   ab.x() - ab.y() != 0 ? (aq.x() - aq.y()) / (ab.x() - ab.y()) : -1 };
+		for(double u : us)
+			if(u > 0 && u < 1)
+				best = qMin(best, norm(aq.x() - ab.x() * u, aq.y() - ab.y() * u));
+		return best;
+	};
+	// The signed distance to the outline of decks d0..d1 (negative inside).
+	//
+	// With 'away' a deck: in the part of the outline that is not that deck,
+	// the distance is measured straight away from that deck instead, to
+	// where the outline ends. That is how wide the slope between the two is
+	// there: the nearest edge may be another one (beside the end of a bar
+	// that moves over each deck, it was the bar's end, and the slope came
+	// out as stairs there).
+	auto planField = [&](int d0, int d1, int away) {
+		const Outline o = outline(d0, d1);
+		Outline from;
+		if(away >= 0)
+			from = outline(away, away);
+		QVector<float> field(gnx * gny);
+		for(int j = 0; j < gny; ++j)
+			for(int i = 0; i < gnx; ++i)
+			{
+				const QPointF q(gx0 + i * s, gy0 + j * s);
+				const bool inside = inDecks(d0, d1, q);
+				if(inside && away >= 0 && !inDecks(away, away, q))
+				{
+					// The way away from the deck: from the nearest point of its
+					// outline (round distance), or out across the nearest edge
+					// where the point is on it.
+					double bestD = 1e30;
+					QPointF dir(0, 0);
+					nearEdges(from, q, [&](const QLineF& l) {
+						const QPointF a = l.p1(), ab = l.p2() - l.p1();
+						const double len2 = QPointF::dotProduct(ab, ab);
+						const double u = len2 > 0 ? qBound(0.0, QPointF::dotProduct(q - a, ab) / len2, 1.0) : 0.0;
+						const QPointF dd = q - (a + ab * u);
+						const double dist = sqrt(QPointF::dotProduct(dd, dd));
+						if(dist < bestD - 1e-9)
+						{
+							bestD = dist;
+							const double len = sqrt(len2);
+							// Out of the hull: the right of the edge.
+							dir = dist > 1e-6 && (u <= 0 || u >= 1) ? dd / dist : QPointF(ab.y(), -ab.x()) / qMax(len, 1e-12);
+						}
+					}, [&]() { return bestD; });
+					if(bestD < 1e29)
+					{
+						double run = 0;
+						const double step = s / 4;
+						while(run < 4 * reach && inDecks(d0, d1, q + dir * (run + step)))
+							run += step;
+						field[j * gnx + i] = float(-(run + step * 0.5));
+						continue;
+					}
+				}
+				double best = 1e30;
+				nearEdges(o, q, [&](const QLineF& l) { best = qMin(best, segDist(q, l)); }, [&]() { return best; });
+				field[j * gnx + i] = float(inside ? -best : best);
+			}
+		return field;
+	};
+	// Each deck's own outline (g), and each deck's together with the one
+	// above, seen from each of the two (pairDown: in the part that is the
+	// deck above only, measured away from the deck below; pairUp the other
+	// way round). The slopes blend a deck's outline with the pair's, not with
+	// the other deck's: a point of the deck above that is not over the deck
+	// below is then measured to the edge the slope runs to, not to the
+	// nearest edge of its own deck, which may be the one over the deck
+	// below's edge (a strut that moves over by its own width each deck: the
+	// two decks' distances were equal and opposite, and the slope crumpled).
+	QVector<QVector<float> > g(decks), pairDown(decks), pairUp(decks);
+	for(int d = 0; d < decks; ++d)
+	{
+		if(hasHull[d])
+			g[d] = planField(d, d, -1);
+		if(hasHull[d] && d + 1 < decks && hasHull[d + 1])
+		{
+			pairDown[d] = planField(d, d + 1, d);
+			pairUp[d] = planField(d, d + 1, d + 1);
+		}
+	}
+	auto sample = [&](const QVector<float>& field, double x, double y) -> double {
+		const double fx = (x - gx0) / s, fy = (y - gy0) / s;
+		if(fx < 0 || fy < 0 || fx >= gnx - 1 || fy >= gny - 1)
+			return 1e4;
+		const int i = int(fx), j = int(fy);
+		const double u = fx - i, v = fy - j;
+		const float* f = field.constData() + j * gnx + i;
+		return (f[0] * (1 - u) + f[1] * u) * (1 - v) + (f[gnx] * (1 - u) + f[gnx + 1] * u) * v;
+	};
+	auto G = [&](int d, double x, double y) { return sample(g[d], x, y); };
+	// How far z is outside deck d's height (negative inside).
+	auto band = [&](int d, double z) { return qMax(d * deckH - z, z - (d + 1) * deckH); };
+	// The skin: on the plan distances, and above and below a deck where no
+	// slope goes on from it (the slope's own skin covers it there: a deck's
+	// box grown up by the skin stood out of the slope as a step at every
+	// deck).
+	auto sloping = [&](int d, int other, double x, double y) {
+		return other >= 0 && other < decks && hasHull[other] && G(other, x, y) <= reach && G(d, x, y) <= reach;
+	};
+	auto F = [&](const AuPoint& p) -> double {
+		const int dlo = qMax(0, int(floor((p.z - skin - 2 * h) / deckH)) - 1);
+		const int dhi = qMin(decks - 1, int(floor((p.z + skin + 2 * h) / deckH)) + 1);
+		double best = 1e4;
+		for(int d = dlo; d <= dhi; ++d)
+		{
+			if(!hasHull[d])
+				continue;
+			const double gd = G(d, p.x, p.y);
+			const double below = sloping(d, d - 1, p.x, p.y) ? 0 : skin, above = sloping(d, d + 1, p.x, p.y) ? 0 : skin;
+			best = qMin(best, qMax(gd - skin, qMax(d * deckH - below - p.z, p.z - (d + 1) * deckH - above)));
+			if(d + 1 >= decks || !hasHull[d + 1])
+				continue;
+			const double gu = G(d + 1, p.x, p.y);
+			const double near = qMax(gd, gu) - reach;
+			// The underside of the deck above, falling over the deck below's
+			// height, and the ledge of the deck below, rising over the deck
+			// above's.
+			const double t0 = qBound(0.0, (p.z - d * deckH) / deckH, 1.0);
+			best = qMin(best, qMax(qMax((1 - t0) * gd + t0 * sample(pairDown[d], p.x, p.y) - skin, band(d, p.z)), near));
+			const double t1 = qBound(0.0, (p.z - (d + 1) * deckH) / deckH, 1.0);
+			best = qMin(best, qMax(qMax((1 - t1) * sample(pairUp[d], p.x, p.y) + t1 * gu - skin, band(d + 1, p.z)), near));
+		}
+		return best;
+	};
+
+	// The cubes.
+	const double zTop = decks * deckH;
+	const AuPoint origin(gx0 + 2 * h, gy0 + 2 * h, -skin - 3 * h);
+	const int nx = int(ceil((gnx - 1) * s / h)) - 4, ny = int(ceil((gny - 1) * s / h)) - 4,
+			nz = int(ceil((zTop + 2 * skin + 6 * h) / h));
+	if(nx <= 0 || ny <= 0 || nz <= 0)
+		return IndexedMesh();
+	auto index = [nx, ny](int i, int j, int k) { return (qint64(k) * ny + j) * nx + i; };
+	auto centreOf = [&](int i, int j, int k) { return origin + AuPoint(i + .5, j + .5, k + .5) * h; };
+	QVector<float> value(qint64(nx) * ny * nz);
+	for(int k = 0; k < nz; ++k)
+		for(int j = 0; j < ny; ++j)
+			for(int i = 0; i < nx; ++i)
+			{
+				const bool border = i == 0 || j == 0 || k == 0 || i == nx - 1 || j == ny - 1 || k == nz - 1;
+				value[index(i, j, k)] = border ? 1.f : float(F(centreOf(i, j, k)));
+			}
+	auto in = [&](int i, int j, int k) {
+		return i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz && value[index(i, j, k)] < 0;
+	};
+
+	IndexedMesh mesh;
+	QHash<qint64, int> cornerId;
+	QVector<std::array<int, 3> > cornerAt;
+	auto vertex = [&](int i, int j, int k) {
+		const qint64 key = (qint64(k) * (ny + 1) + j) * (nx + 1) + i;
+		QHash<qint64, int>::const_iterator it = cornerId.constFind(key);
+		if(it != cornerId.constEnd())
+			return it.value();
+		const int id = mesh.v.size();
+		mesh.v << origin + AuPoint(i, j, k) * h;
+		cornerAt << std::array<int, 3>{ { i, j, k } };
+		cornerId.insert(key, id);
+		return id;
+	};
+	auto paintAt = [&](const AuPoint& p) {
+		const int cx = qBound(0, int(floor((p.x - c0.x()) / cell)), W - 1), cy = qBound(0, int(floor((p.y - c0.y()) / cell)), D - 1);
+		const int d = qBound(0, int(floor(p.z / deckH)), decks - 1);
+		const QPointF c = plan.CellCentre(cx, cy);
+		const double dx = p.x - c.x(), dy = p.y - c.y();
+		const TriRef t(d, cx, cy, fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S));
+		return plan.Paint(t);
+	};
+	auto quad = [&](int a, int b, int c, int dd, int paint) {
+		mesh.f << a << b << c << a << c << dd;
+		mesh.paint << paint << paint;
+	};
+	for(int k = 0; k < nz; ++k)
+		for(int j = 0; j < ny; ++j)
+			for(int i = 0; i < nx; ++i)
+			{
+				if(!in(i, j, k))
+					continue;
+				const int paint = paintAt(centreOf(i, j, k));
+				if(!in(i + 1, j, k)) quad(vertex(i+1, j, k), vertex(i+1, j+1, k), vertex(i+1, j+1, k+1), vertex(i+1, j, k+1), paint);
+				if(!in(i - 1, j, k)) quad(vertex(i, j, k), vertex(i, j, k+1), vertex(i, j+1, k+1), vertex(i, j+1, k), paint);
+				if(!in(i, j + 1, k)) quad(vertex(i, j+1, k), vertex(i, j+1, k+1), vertex(i+1, j+1, k+1), vertex(i+1, j+1, k), paint);
+				if(!in(i, j - 1, k)) quad(vertex(i, j, k), vertex(i+1, j, k), vertex(i+1, j, k+1), vertex(i, j, k+1), paint);
+				if(!in(i, j, k + 1)) quad(vertex(i, j, k+1), vertex(i+1, j, k+1), vertex(i+1, j+1, k+1), vertex(i, j+1, k+1), paint);
+				if(!in(i, j, k - 1)) quad(vertex(i, j, k), vertex(i, j+1, k), vertex(i+1, j+1, k), vertex(i+1, j, k), paint);
+			}
+
+	// Every corner where the planes round it meet: the points where the
+	// surface crosses the edges between the eight cube centres round the
+	// corner, each with the surface's normal there; the point nearest to all
+	// their planes (a little drawn to their middle, for the directions the
+	// planes leave free), kept within the eight centres.
+	const double eps = h * 0.05;
+	auto normalAt = [&](const AuPoint& p) {
+		AuPoint n(F(p + AuPoint(eps, 0, 0)) - F(p - AuPoint(eps, 0, 0)),
+				  F(p + AuPoint(0, eps, 0)) - F(p - AuPoint(0, eps, 0)),
+				  F(p + AuPoint(0, 0, eps)) - F(p - AuPoint(0, 0, eps)));
+		const double len = n.Length();
+		return len > 1e-12 ? n / len : AuPoint(0, 0, 0);
+	};
+	for(int vi = 0; vi < mesh.v.size(); ++vi)
+	{
+		const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
+		AuPoint cp[8];
+		float f[8];
+		for(int c = 0; c < 8; ++c)
+		{
+			const int i = ci - 1 + (c & 1), j = cj - 1 + ((c >> 1) & 1), k = ck - 1 + ((c >> 2) & 1);
+			cp[c] = centreOf(i, j, k);
+			f[c] = (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) ? 1.f : value[index(i, j, k)];
+		}
+		double A[3][3] = { { 0 } }, b[3] = { 0, 0, 0 };
+		AuPoint mass(0, 0, 0);
+		int crossings = 0;
+		for(int c = 0; c < 8; ++c)
+			for(int axis = 0; axis < 3; ++axis)
+			{
+				const int o = c | (1 << axis);
+				if(o == c || (f[c] < 0) == (f[o] < 0))
+					continue;
+				// The crossing, found on the field itself (a few steps of the
+				// false position method).
+				AuPoint a = cp[c], e = cp[o];
+				double fa = f[c], fe = f[o];
+				AuPoint p = a + (e - a) * (fa / (fa - fe));
+				for(int it = 0; it < 4; ++it)
+				{
+					const double fp = F(p);
+					if(fabs(fp) < 1e-5)
+						break;
+					if((fp < 0) == (fa < 0)) { a = p; fa = fp; } else { e = p; fe = fp; }
+					p = a + (e - a) * (fa / (fa - fe));
+				}
+				const AuPoint n = normalAt(p);
+				const double nv[3] = { n.x, n.y, n.z };
+				const double np = n.Dot(p);
+				for(int r = 0; r < 3; ++r)
+				{
+					for(int q = 0; q < 3; ++q)
+						A[r][q] += nv[r] * nv[q];
+					b[r] += nv[r] * np;
+				}
+				mass = mass + p;
+				++crossings;
+			}
+		if(crossings == 0)
+			continue;
+		mass = mass / crossings;
+		const double lambda = 0.05;
+		const double mv[3] = { mass.x, mass.y, mass.z };
+		for(int r = 0; r < 3; ++r)
+		{
+			A[r][r] += lambda;
+			b[r] += lambda * mv[r];
+		}
+		auto det3 = [](const double m[3][3]) {
+			return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+					+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+		};
+		const double det = det3(A);
+		AuPoint x = mass;
+		if(fabs(det) > 1e-12)
+		{
+			double sol[3];
+			for(int col = 0; col < 3; ++col)
+			{
+				double m[3][3];
+				for(int r = 0; r < 3; ++r)
+					for(int q = 0; q < 3; ++q)
+						m[r][q] = q == col ? b[r] : A[r][q];
+				sol[col] = det3(m) / det;
+			}
+			x = AuPoint(sol[0], sol[1], sol[2]);
+		}
+		const AuPoint corner = origin + AuPoint(ci, cj, ck) * h;
+		const double lim = h * 0.5;
+		x = AuPoint(qBound(corner.x - lim, x.x, corner.x + lim), qBound(corner.y - lim, x.y, corner.y + lim),
+					qBound(corner.z - lim, x.z, corner.z + lim));
+		mesh.v[vi] = x;
+	}
+	return mesh;
+}
+
 PlanHull BuildPlanHull(const TriPlan& plan)
 {
 	PlanHull out;
@@ -2143,10 +3063,26 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	}
 	IndexedMesh mesh;
 	if(modelSolid)
-		mesh = ModelHullMesh(plan, *modelSolid);
+	{
+		// Sharp or smoothed, as the user chose (PlanModel::sharp).
+		const std::shared_ptr<AuScTriList> tris = plan.model.sharp
+				? ModelTrisFor(plan) : std::shared_ptr<AuScTriList>();
+		mesh = ModelHullMesh(plan, *modelSolid, tris.get());
+	}
 	else
-		mesh = BuildPrisms(plan, [&plan](const TriRef& t) { return plan.Hull(t); }, zOf, rows, true, false,
-				[&plan](const TriRef& t) { return plan.Paint(t); });
+	{
+		int added = 0;
+		const QVector<bool> hullTris = ManifoldHull(plan, added);
+		const int W = plan.Width(), D = plan.Depth();
+		if(plan.hullStyle == "angular")
+			mesh = AngularHullMesh(plan, hullTris);
+		else
+			mesh = BuildPrisms(plan, [&](const TriRef& t) { return hullTris[((t.deck * D + t.cy) * W + t.cx) * 4 + t.k]; },
+					zOf, rows, true, false, [&plan](const TriRef& t) { return plan.Paint(t); });
+		if(added > 0)
+			out.notes << QString("%1 triangle(s) were added to the hull where parts of it met only along an edge "
+								 "(the hull has to be one closed surface for the game).").arg(added);
+	}
 	if(mesh.Faces() == 0)
 	{
 		out.notes << "There is no hull yet: draw some triangles first.";
@@ -2157,10 +3093,12 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 				.arg(QFileInfo(plan.model.file).fileName()).arg(mesh.Faces());
 	else
 	{
-		if(plan.slopedDecks && plan.Decks() > 1 && !SlopeBetweenDecks(plan, mesh, zOf, rows))
+		const bool angular = plan.hullStyle == "angular";
+		const bool classic = plan.hullStyle == "classic";
+		if(plan.slopedDecks && !classic && !angular && plan.Decks() > 1 && !SlopeBetweenDecks(plan, mesh, zOf, rows))
 			out.notes << "The hull could not be sloped between the decks (it would not be a closed surface), so it "
 						 "steps from deck to deck.";
-		if(plan.smoothing > 0)
+		if(plan.smoothing > 0 && !angular && !classic)
 			Subdivide(mesh);
 	}
 
@@ -2189,12 +3127,13 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	// drawn part by the skin): not inflated or smoothed again, only its
 	// slivers taken away (marching tetrahedra leave many; nothing may move
 	// more than a twentieth of a cube for it).
-	if(modelSolid)
+	const bool angularField = !modelSolid && plan.hullStyle == "angular";
+	if(modelSolid || angularField)
 	{
 		DumpHull(mesh, "raw");
 		DecimateHull(mesh, 0, QVector<double>(mesh.v.size(), 1e9), QVector<double>() << plan.cellFeet / 80);
 	}
-	QVector<double> allowance(modelSolid ? 0 : mesh.v.size(), base + maxExtra);
+	QVector<double> allowance(modelSolid || angularField ? 0 : mesh.v.size(), base + maxExtra);
 	for(int i = 0; i < allowance.size(); ++i)
 	{
 		const AuPoint& p = mesh.v[i];
@@ -2210,10 +3149,13 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 			allowance[i] = base + qBound(0.0, best - 0.5, maxExtra);
 	}
 
-	if(!modelSolid)
+	if(!modelSolid && !angularField)
 	{
 		DumpHull(mesh, "raw");
-		InflateAndSmooth(mesh, plan.skinFeet, plan.smoothing, allowance);
+		if(plan.hullStyle == "classic")
+			OffsetMitred(mesh, plan.skinFeet);
+		else
+			InflateAndSmooth(mesh, plan.skinFeet, plan.smoothing, allowance);
 	}
 	DumpHull(mesh, "smoothed");
 	out.rawTriangles = mesh.Faces();
@@ -2745,8 +3687,33 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				t = plan.AcrossCellEdge(t.deck, t.cx, t.cy, outSide);
 			}
 		}
-		const double surface = boundary + sgn * plan.skinFeet;
-		const double slab = boundary + sgn * plan.skinFeet * 0.5;
+		// Where the hull surface really is: looked for from the room wall
+		// outwards at the door's foot, middle and top, the furthest of them
+		// (a smoothed or model hull is not where the drawn cells and the
+		// skin would put it; the guess is only kept if nothing is hit).
+		AuScFaceList hullFaces;
+		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+			if(it.value() && it.value()->IsHullMesh() && it.value()->GroupName() != "Frame")
+			{
+				AuScFaceList partFaces;
+				it.value()->Faces(partFaces);
+				hullFaces.AddFaces(partFaces);
+			}
+		double surface = boundary + sgn * plan.skinFeet;
+		{
+			double furthest = -1;
+			for(double h : { z0 + 1.0, (z0 + doorTop) / 2, doorTop - .5 })
+			{
+				const AuPoint eye(xWall ? roomWall + sgn * .3 : mid.x(), xWall ? mid.y() : roomWall + sgn * .3, h);
+				AuPoint hit = eye + outward * 80.0;
+				if(hullFaces.Sight(eye, hit))
+					furthest = qMax(furthest, xWall ? fabs(hit.x - roomWall) : fabs(hit.y - roomWall));
+			}
+			if(furthest > 0)
+				surface = roomWall + sgn * furthest;
+		}
+		// The door itself sits half a skin inside the surface, as before.
+		const double slab = surface - sgn * plan.skinFeet * 0.5;
 		AuPoint mn, mx;
 		if(xWall)
 		{
@@ -2758,8 +3725,26 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			mn = AuPoint(mid.x() - width/2, slab - .5, z0);
 			mx = AuPoint(mid.x() + width/2, slab + .5, doorTop);
 		}
+		// The way down: a ramp where one fits (and is wanted), else a ladder,
+		// or none at all for a docking door. Only where the hull is in the way
+		// of the ladder does the clearing in front of the door reach down:
+		// looked for straight below the ladder, from under the hull upwards.
+		const bool wayDown = plan.hullDoorExit != "none";
+		const double rampRise = z0 - (hullBottom - SHIPGEN_RAMP_BELOW_HULL);
+		const bool rampExpected = wayDown && plan.hullDoorExit == "auto" && options.ramps
+				&& rampRise >= .5 && rampRise <= SHIPGEN_RAMP_MAX_RISE;
+		double clearBelow = 1e30;
+		if(wayDown && !rampExpected)
+		{
+			const double lineX = xWall ? surface + sgn * SHIPGEN_LADDER_OUTSIDE : mid.x();
+			const double lineY = xWall ? mid.y() : surface + sgn * SHIPGEN_LADDER_OUTSIDE;
+			const AuPoint low(lineX, lineY, hullBottom - SHIPGEN_LADDER_BELOW_HULL - 1.0);
+			AuPoint hit(lineX, lineY, z0);
+			if(hullFaces.Sight(low, hit))
+				clearBelow = qMin(hit.z - 1.0, z0);
+		}
 		quint16 doorId = 0;
-		if(!AddHullDoor(*design, mn, mx, outward, roomWall, surface, room->group, doorId, room->meshId, hullBottom))
+		if(!AddHullDoor(*design, mn, mx, outward, roomWall, surface, room->group, doorId, room->meshId, clearBelow))
 		{
 			report.warnings << QString("The engine did not accept the hull door of '%1'.").arg(room->group);
 			continue;
@@ -2768,7 +3753,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		// A ramp down to the ground where the door is low enough, as at the
 		// user's aircraft factory; otherwise a ladder (below).
 		AuPoint rampTop, rampFoot;
-		const bool ramp = options.ramps && AddDoorRamp(*design, mn, mx, outward, surface,
+		const bool ramp = rampExpected && AddDoorRamp(*design, mn, mx, outward, surface,
 				hullBottom - SHIPGEN_RAMP_BELOW_HULL, rampTop, rampFoot);
 		if(ramp)
 			++report.ramps;
@@ -2799,7 +3784,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			// straight down from outside the door to a little below the
 			// bottom of the hull.
 			const double foot = hullBottom - SHIPGEN_LADDER_BELOW_HULL;
-			if(!ramp && pz - foot > .5)
+			if(wayDown && !ramp && pz - foot > .5)
 				AddLadderPath(*design, AuPoint(to.x, to.y, foot), to, outward * -1.0);
 			const double depth = fabs(surface - roomWall) - plan.skinFeet;
 			if(depth > s * 1.5)
@@ -3289,6 +4274,25 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 	// axes before the furnishing, because the engine's hull volume, which
 	// the system volumes are worked out from, depends on the orientation.
 	TurnToGameAxes(*design);
+	// Moved, where needed, so that the origin is inside the hull. This comes
+	// before the hull is measured: the engine measures its volume on a grid
+	// from the origin (the Omega: 17,817 cubic meters, 18,320 moved), and the
+	// FTL drive and the capacitor are sized by it. What is still in plan
+	// space (the room boxes and the weapon emitters) gets the same move.
+	const AuPoint originShift = OriginShift(*design);
+	const bool shifted = originShift.x != 0 || originShift.y != 0 || originShift.z != 0;
+	if(shifted)
+	{
+		AuMatrix4x4 move;
+		move.LoadIdentity();
+		move.Translate(originShift);
+		design->Parts().Transform(move);
+		report.notes << QString("The design was moved %1 ft so that its origin is inside the hull, as the game "
+								"needs (the hull did not reach it%2).")
+								.arg(QString::number(originShift.Length(), 'f', 1))
+								.arg(originShift.z < 0 ? ": it begins above the floor of the lowest deck, which may be empty"
+									: originShift.z > 0 ? ": it is all below the origin" : " from the side");
+	}
 	if(!AnalyseHull(*design, layout, analysis, error))
 		report.warnings << QString("The turned hull could not be measured: %1").arg(error);
 	report.hullVolumeM3 = analysis.volumeM3;
@@ -3322,6 +4326,8 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			pr.min = dr.boxMin;
 			pr.max = dr.boxMax;
 			TurnBox(pr.min, pr.max);
+			pr.min = pr.min + originShift;
+			pr.max = pr.max + originShift;
 			pr.voidId = dr.voidId;
 			pr.meshId = dr.meshId;
 			pr.volumeM3 = (dr.boxMax.x - dr.boxMin.x) * (dr.boxMax.y - dr.boxMin.y) * (dr.boxMax.z - dr.boxMin.z) * 0.0283168466;
@@ -3340,7 +4346,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				AuScPart* part = it.value();
 				if(!part || (part->Type() != AuScPart::Part_StationFireControl && part->Type() != AuScPart::Part_ConsoleFireControl))
 					continue;
-				part->SetEmitLoc(turn.Project(weaponEmitters.at(next++)));
+				part->SetEmitLoc(turn.Project(weaponEmitters.at(next++)) + originShift);
 				++report.weaponEmitters;
 			}
 			if(next < weaponEmitters.size())
@@ -3654,6 +4660,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	plan.model.scale = scale;
 	plan.model.sealFeet = options.sealFeet;
 	plan.model.asHull = slices && options.modelAsHull;
+	plan.model.sharp = true;		// New plans: the hull looks like the model (a choice on the hull page).
 	if(slices)
 		ModelSolids().insert(ModelKey(plan.model, plan.cellFeet), solidShared);
 	const int width = int(ceil((mx.x - mn.x) / options.cellFeet)) + 2;

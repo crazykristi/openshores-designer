@@ -721,6 +721,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		m["scale"] = model.scale;
 		m["seal"] = model.sealFeet;
 		m["asHull"] = model.asHull;
+		if(model.sharp)
+			m["sharp"] = true;
 		if(model.mirrorX || model.mirrorY || model.mirrorZ)
 		{
 			m["mirror"] = QJsonArray({ model.mirrorX, model.mirrorY, model.mirrorZ });
@@ -732,6 +734,10 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["windowSill"] = windowSillFeet;
 	root["windowTop"] = windowTopFeet;
 	root["joinWindows"] = joinWindows;
+	if(hullDoorExit != "auto")
+		root["hullDoorExit"] = hullDoorExit;
+	if(hullStyle != "smooth")
+		root["hullStyle"] = hullStyle;
 	root["slopedDecks"] = slopedDecks;
 	root["width"] = m_width;
 	root["depth"] = m_depth;
@@ -905,6 +911,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		plan.model.scale = m["scale"].toDouble(1);
 		plan.model.sealFeet = m["seal"].toDouble(1);
 		plan.model.asHull = m["asHull"].toBool();
+		plan.model.sharp = m["sharp"].toBool();
 		const QJsonArray mirror = m["mirror"].toArray();
 		plan.model.mirrorX = mirror.size() > 0 && mirror.at(0).toBool();
 		plan.model.mirrorY = mirror.size() > 1 && mirror.at(1).toBool();
@@ -915,6 +922,12 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.windowSillFeet = root["windowSill"].toDouble(plan.windowSillFeet);
 	plan.windowTopFeet = root["windowTop"].toDouble(plan.windowTopFeet);
 	plan.joinWindows = root["joinWindows"].toBool(plan.joinWindows);
+	plan.hullDoorExit = root["hullDoorExit"].toString("auto");
+	if(plan.hullDoorExit != "ladder" && plan.hullDoorExit != "none")
+		plan.hullDoorExit = "auto";
+	plan.hullStyle = root["hullStyle"].toString("smooth");
+	if(plan.hullStyle != "angular" && plan.hullStyle != "classic")
+		plan.hullStyle = "smooth";
 	plan.slopedDecks = root["slopedDecks"].toBool(plan.slopedDecks);
 	plan.m_width = qBound(2, root["width"].toInt(), 400);
 	plan.m_depth = qBound(2, root["depth"].toInt(), 400);

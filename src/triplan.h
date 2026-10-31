@@ -159,6 +159,9 @@ struct PlanModel
 	double	scale = 1;
 	double	sealFeet = 1;
 	bool	asHull = false;
+	// How the model is made the hull (asHull): sharp keeps its edges sharp
+	// and its flat faces flat; else it is smoothed (rounded, as before).
+	bool	sharp = false;
 	// Flipped with the plan after it was placed (TriPlan::Flip): x, y or z
 	// mirrored about the grid's centre (z about half of 'height').
 	bool	mirrorX = false;
@@ -198,6 +201,17 @@ public:
 	double	windowSillFeet = 3.0;		// Windows: from this high above the floor
 	double	windowTopFeet = 7.5;		// up to this high (less, in a low room).
 	bool	joinWindows = false;		// Windows side by side on one straight wall make one long window.
+	// The way out of the hull doors: "auto" a ramp where the door is low
+	// enough, else a ladder down to the ground; "ladder" always a ladder;
+	// "none" no way down (a docking door, for a ship that stays in space).
+	QString	hullDoorExit = "auto";
+	// How the hull is shaped from the drawn triangles: "smooth" pushed out
+	// by the skin and rounded; "angular" sloped between the decks and
+	// pushed out with mitred corners, so that flat areas stay flat panels;
+	// "classic" as the old Shores of Hazeron designer made it (its hull wall
+	// skinner): straight up from the drawn outline, flat on top and below
+	// each deck, with mitred corners.
+	QString	hullStyle = "smooth";
 
 	QList<PlanRoom>		rooms;
 	QList<PlanDoor>		doors;

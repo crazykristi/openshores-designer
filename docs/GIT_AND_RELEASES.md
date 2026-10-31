@@ -67,6 +67,7 @@ releases. The releases so far:
 | [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha) | 31 October 2026 | The first on GitHub, a pre-release. (The designer test builds before it were called alpha1 and alpha2.) |
 | [0.3.1-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.1-alpha) | 31 October 2026 | A pre-release with bug fixes: the model import kept no plan; clear feedback on why an import went wrong. |
 | [0.3.2-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.2-alpha) | 31 October 2026 | A pre-release: 3D models sliced and made the smooth hull, simplified to the face budget; turn and flip; contrail and weapon emitters; tooltips. The AppImage is built on Ubuntu 22.04. |
+| [0.3.3-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.3-alpha) | 31 October 2026 | A pre-release: angular and classic hull styles; sharp hulls from 3D models; a choice of way down at hull doors; fixed ships with empty lowest decks hanging the game. |
 
 1. **Set the version** in `src/version.h` (`SHIPGEN_VERSION`). The
    designer's window title, `--version` of all three programs and the

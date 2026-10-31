@@ -146,10 +146,14 @@ private:
 	QSpinBox*		m_maxFaces = 0;
 	QSpinBox*		m_panels = 0;
 	QCheckBox*		m_modelHull = 0;
+	QComboBox*		m_modelHullShape = 0;
+	QLabel*			m_modelHullShapeLabel = 0;
 	QDoubleSpinBox*	m_windowSill = 0;
 	QDoubleSpinBox*	m_windowTop = 0;
 	QCheckBox*		m_joinWindows = 0;
 	QCheckBox*		m_slopedDecks = 0;
+	QComboBox*		m_hullStyle = 0;
+	QComboBox*		m_hullDoorExit = 0;
 	QCheckBox*		m_noShields = 0;
 	QCheckBox*		m_noWeapons = 0;
 	QCheckBox*		m_noTransporter = 0;

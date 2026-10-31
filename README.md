@@ -18,8 +18,8 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.2-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.2-alpha),
-a pre-release: a smooth hull from 3D models, flips, emitters) are an AppImage holding the designer, `shipgen-gui` and the
+is [0.3.3-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.3-alpha),
+a pre-release: angular and classic hull styles, sharp hulls from 3D models) are an AppImage holding the designer, `shipgen-gui` and the
 command line; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
@@ -486,9 +486,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in

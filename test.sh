@@ -658,6 +658,24 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		fail=$((fail+1))
 		echo "  FAIL  $twice"
 	fi
+	# An empty deck under the ship and a diagonal corner on the top deck
+	# (testdata/hull_edge_cases.py): the design is moved so its origin is in
+	# the hull (else "CG outside design extents", and the game hung on it),
+	# the corner is filled in, and the engine takes it.
+	if command -v python3 > /dev/null 2>&1; then
+		if python3 "$HERE/testdata/hull_edge_cases.py" "$WORK/plan/example.json" "$WORK/plan/edges.json" > /dev/null 2>&1 &&
+				"$SHIPGEN" build-plan "$WORK/plan/edges.json" --out "$WORK/plan/edges.SoH" > "$WORK/plan/edges.txt" 2>&1 &&
+				grep -q 'was moved .* origin is inside the hull' "$WORK/plan/edges.txt" &&
+				grep -q 'triangle(s) were added to the hull' "$WORK/plan/edges.txt" &&
+				grep -q '^Errors (0)' "$WORK/plan/edges.txt"; then
+			pass=$((pass+1))
+			echo "  ok    a plan with an empty bottom deck and a diagonal corner is moved, mended and accepted"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  a plan with an empty bottom deck and a diagonal corner"
+			grep -E 'moved|added|Error' "$WORK/plan/edges.txt" | head -5
+		fi
+	fi
 	# What the game wants (learned from blueprints that work in it): hulls
 	# wound with a negative signed volume, rooms positive, fore along +Y,
 	# one engineer running the FTL drive.
@@ -791,6 +809,21 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		fail=$((fail+1))
 		echo "  FAIL  the model is not the hull"
 		grep -E '^Hull|model' "$WORK/plan/open-model.txt" | head -5
+	fi
+	# The model hull's shape is the user's choice: new plans are sharp (the
+	# model's own edges and faces), and a plan set to smooth builds too; both
+	# closed.
+	sed 's/"sharp": true/"sharp": false/' "$WORK/plan/open.json" > "$WORK/plan/open-smooth.json"
+	"$SHIPGEN" build-plan "$WORK/plan/open-smooth.json" --out "$WORK/plan/open-smooth.SoH" --no-furnish > "$WORK/plan/open-smooth.txt" 2>&1
+	if grep -q '"sharp": true' "$WORK/plan/open.json" && ! grep -q '"sharp": true' "$WORK/plan/open-smooth.json" &&
+			"$SHIPGEN" inspect "$WORK/plan/open-smooth.SoH" 2>&1 | grep -q 'closed solid' &&
+			! cmp -s "$WORK/plan/open-model.SoH" "$WORK/plan/open-smooth.SoH"; then
+		pass=$((pass+1))
+		echo "  ok    the model hull can be sharp or smooth, as chosen"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the model hull's shape is not the chosen one"
+		grep -E '^Hull' "$WORK/plan/open-smooth.txt" | head -3
 	fi
 	# The number of decks (slices) asked for sets the length: the box is a
 	# quarter as high as it is long, so 6 decks make it 240 ft long.

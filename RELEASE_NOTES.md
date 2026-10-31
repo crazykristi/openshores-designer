@@ -1,4 +1,4 @@
-# Shipgen Designer 0.3.2-alpha
+# Shipgen Designer 0.3.3-alpha
 
 The triangle designer for Shores of Hazeron and
 OpenShores: draw a ship deck by deck with triangles, draw its rooms, doors
@@ -6,44 +6,44 @@ and windows on the same triangles, paint it, and build a blueprint the game
 loads. The AppImage also holds `shipgen-gui` (the automatic generator's
 window) and the `shipgen` command line.
 
-0.3.2-alpha is a pre-release. Most of it is about ships made from 3D
-models, which came out jagged or lost much of their shape in 0.3.1-alpha.
+0.3.3-alpha is a pre-release. It is about how the hull looks: two new hull
+styles for drawn ships, a sharp hull for ships made from 3D models, and a
+fix for ships that hung the game.
 
-## New in 0.3.2-alpha
+## New in 0.3.3-alpha
 
-* **3D models keep their shape.** The model is cut into slices per deck
-  and the inside of each slice is filled in, so open panels, overlapping
-  parts and missing tops count too (before, only closed pieces did, and
-  complex models lost a lot). Choose the decks and slices per deck in the
-  import dialog.
-* **The model is the hull, and it is smooth.** A new import keeps its
-  model, and the hull follows the model's own slopes instead of stepping
-  from deck to deck; jagged edges are gone. Every room keeps a wall
-  between it and the outside.
-* **The hull is simplified to the face budget** (5,000 faces by default),
-  staying closed and keeping its paint edges. Tiny specks of the model are
-  dropped and pinholes are filled.
-* **A recommended length**: when the hull holds too little of the model,
-  the import suggests a longer ship and offers to import again at it.
-* **Turn and flip**, for a model that came in backwards or upside down:
-  turn the whole ship around, mirror it or turn it upside down, or turn
-  around or mirror one deck (*Ship* page and *Edit* menu).
-* **Contrail and weapon emitters**: two new room tools. Click a hull
-  triangle to put a contrail behind it (straight aft, at the hull's back),
-  or the spot weapons fire from (one per fire control station).
-* **Adding a room** asks for its type and name in a small dialog; before,
-  the type box also changed the room picked in the list.
-* **Tooltips** on every control explain what it does.
-* **The 3D view** no longer shows the far side of the see-through hull
-  through its near side.
+* **Hull styles** (*Hull style* on the Hull page). Choose how the drawn
+  triangles become the hull:
+  * **Smooth**, as before: pushed out by the skin and rounded.
+  * **Angular** (new, experimental): the hull slopes from deck to deck in
+    straight, flat panels and keeps sharp edges. A slope that does not
+    change comes out as one flat face, not a sawtooth, and corners are cut
+    off at 45 degrees. Decks only slope into each other where their edges
+    are within a cell and a half; further apart, the hull steps. An empty
+    deck between two others stays a gap.
+  * **Classic** (new): like the old Shores of Hazeron designer, straight
+    walls up from each deck's outline and flat tops and bottoms.
+* **Sharp hulls from 3D models** (*Model hull* on the Hull page, when the
+  model is the hull). *Sharp* follows the model's own edges and flat faces,
+  so the hull looks like the model; *Smooth* rounds it as in 0.3.2. New
+  plans from a model start on Sharp; plans saved before keep Smooth.
+* **Hull doors: choose the way down** (*Hull doors* on the Rooms page): a
+  ramp or a ladder down (as before), always a ladder, or none (a docking
+  door). The space kept clear outside a hull door now ends at the hull's
+  real surface and reaches no lower than the way down needs.
+* **Fixed: a ship whose lowest decks are empty hung the game** when it was
+  loaded (its hull did not reach the design's origin, which the game
+  needs). The design is now moved to fit, and the FTL drive and capacitor
+  are sized after the move. Hull cells that met only at a corner are joined
+  up too.
 
 ## Running it
 
 ```
-chmod +x shipgen-designer-0.3.2-alpha-x86_64.AppImage
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.2-alpha-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.3-alpha-x86_64.AppImage
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.3-alpha-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -51,7 +51,7 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (new, experimental):** unpack
-`shipgen-designer-0.3.2-alpha-windows-x86_64.zip` and start
+`shipgen-designer-0.3.3-alpha-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and was tried under Wine only, so please report what goes wrong on
@@ -61,12 +61,12 @@ are not signed): *More info*, then *Run anyway*.
 ## What the designer does
 
 * **Hull:** triangles on a grid of cells, deck by deck, shaped into a
-  smoothed, closed hull within a face budget. New: *Slope the hull between
-  decks*, so a narrower deck rises from the one below instead of stepping
-  in (the drawn triangles are always the least the hull may be).
+  closed hull within a face budget: smooth, angular or classic. *Slope the
+  hull between decks* lets a smooth hull rise from a wider deck instead of
+  stepping in (the drawn triangles are always the least the hull may be).
 * **Rooms** of the engine's own types, **doors** (neighbouring door edges
   make one wide bay door, as tall as the room), **hull doors** with a
-  ramp down to the ground (or a ladder, for doors over 15 ft up),
+  ramp down to the ground (or a ladder, for doors over 15 ft up, or none),
   **ladders** and **stairs** between decks, **windows** on cell edges and
   diagonals (adjustable height, optionally joined into long windows),
   **vehicle parking spots**.
@@ -78,8 +78,8 @@ are not signed): *More info*, then *Run anyway*.
   transporter optional.
 * **Paint** in plain or empire colours.
 * **From a 3D model:** *File > New plan from a 3D model* slices an STL,
-  3DS or OBJ file into decks and makes the model itself the hull, smoothed
-  and simplified to the face budget, with a progress window.
+  3DS or OBJ file into decks and makes the model itself the hull, sharp or
+  smooth, simplified to the face budget, with a progress window.
 * **Turn and flip** the ship or one deck; **contrail and weapon
   emitters**.
 * Feet or meters (*View > Metric units*).
@@ -87,7 +87,8 @@ are not signed): *More info*, then *Run anyway*.
 ## Not yet tried in the game
 
 Ramps at hull doors, stairs, the sloped hull, joined windows, the new
-interior look, the bay door switches, the smooth model hull and the
+interior look, the bay door switches, the smooth and sharp model hulls,
+the angular and classic hull styles, the hull door choices and the
 contrail and weapon emitters were made after the last in-game test.
 Please report how they behave.
 
@@ -96,7 +97,12 @@ Please report how they behave.
 * Rooms are one deck high; hull doors are one deck high.
 * On big round hulls, rooms far from the skin get no windows.
 * A very detailed model loses fine detail at 5,000 faces; a higher face
-  budget keeps more (the engine copes with about 15,000).
+  budget keeps more (the engine copes with about 15,000). The model hull is
+  built from cubes a quarter of a cell across, so details smaller than that
+  (about 1.25 ft) go.
+* The angular style follows the drawing exactly: an outline drawn as a
+  staircase (as the import draws shallow angles) comes out as vertical
+  fluting. Use the diagonals for slanted walls, or the model as the hull.
 * Big models take a while: the Truman carrier (4 million faces) takes about
   two minutes and 2.5 GB of memory.
 

@@ -153,7 +153,7 @@ do, with a 3D preview and the engine's report. For scripts:
 | `--screenshot <file.png>` | Save a picture of the window and quit. |
 | `--from-model <model>` | Start a new plan from a 3D model (STL, 3DS or OBJ), as *File > New plan from a 3D model* does, with a progress window. Prints "plan made from the model" or "no plan from the model". With `--screenshot` or `--export` nothing is asked and a failure exits with 1; without them, what went wrong is shown in a message box. |
 | `--length <ft>` | With `--from-model`: the length of the ship (default 150 ft). |
-| `--version` | The version (0.3.2-alpha). The window title shows it too. |
+| `--version` | The version (0.3.3-alpha). The window title shows it too. |
 
 ## build.sh and test.sh
 

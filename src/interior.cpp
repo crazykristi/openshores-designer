@@ -549,7 +549,7 @@ quint16 HullPartAt(const AuDesign& design, const AuPoint& p)
 
 bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
 		double roomWall, double surface, const QString& groupName, quint16& doorId,
-		quint16 roomMeshId, double groundZ)
+		quint16 roomMeshId, double clearBelowZ)
 {
 	doorId = 0;
 	const bool alongX = fabs(outward.x) > fabs(outward.y);
@@ -667,13 +667,13 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 
 	// The way up to the door from outside, always clear: from just beyond
 	// the threshold outwards (as in the scout, where it starts 0.9 ft out, so
-	// that it does not take the floor of the doorway away), and from below
-	// the foot of the ladder (under the hull) to above the door.
+	// that it does not take the floor of the doorway away), and from where
+	// the hull stops being in the way of the ladder to above the door.
 	AuPoint omn = slabMin, omx = slabMax;
 	span(omn, omx, surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), surface + sgn * SHIPGEN_HULL_VOID_OUTSIDE);
 	widen(omn, omx, SHIPGEN_HULL_VOID_MARGIN);
 	omx.z += SHIPGEN_HULL_VOID_MARGIN;
-	omn.z = qMin(slabMin.z, groundZ - SHIPGEN_LADDER_BELOW_HULL - 1.0);
+	omn.z = qMin(slabMin.z, clearBelowZ);
 	AuScHullVoid outside;
 	outside.AddFaces(BoxFaces(omn, omx));
 	outside.SetGroupName("Hull Door");

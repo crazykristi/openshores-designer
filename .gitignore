@@ -20,3 +20,4 @@ third_party/SoH-source/
 .vscode/
 .idea/
 __pycache__/
+build-appimage.log

@@ -1,5 +1,112 @@
 # Changes and known issues
 
+## 31 October 2026: release 0.3.3-alpha, hull styles
+
+* **Version 0.3.3-alpha** (`src/version.h`, `RELEASE_NOTES.md`).
+* **Hull styles** (`hullStyle` in the plan, *Hull style* on the Hull page:
+  `smooth`, the default and the hull as before; `angular`; `classic`). The
+  user found the smooth hull "bloated and crumpled" and asked for two other
+  ways: the look of the old Shores of Hazeron designer, and one that "tries
+  to make contiguous triangles as much as possible, as long as the slope
+  does not change".
+  * **Classic**: the prisms of the drawn triangles, not sloped, subdivided
+    or smoothed, grown by the skin with mitred corners (`OffsetMitred`:
+    each vertex moved to where the planes of its faces, each pushed out by
+    the skin, meet, by least squares). The old designer's leftovers in the
+    OpenShores client show how it worked (no converter or "hull wall
+    skinner" code survives): a grid of 5.66 ft (the square root of 32)
+    with diagonals to the centre, 8 ft decks (`DeckHeight`, `audef.h`), and
+    room types for the skinner, roof pieces (gable, hip, round) and *open
+    to the deck below* (`ROOMTYPE`, `audef.h`); its textures are in
+    `resources/textures/ships/data/txSpacecraft0Lit.png`.
+  * **Angular** (`AngularHullMesh`, `src/planbuild.cpp`): made from a field
+    rather than from the prisms. Each deck gets the signed distance to its
+    drawn outline in the plan; the hull is each deck's outline from floor
+    to ceiling, and between two decks next to each other that both have
+    hull, the outline blended from one to the other over each of the two
+    decks' height (the ledge rises from the lower deck's edge to the top of
+    the deck above, the underside falls to the bottom of the deck below, as
+    `SlopeBetweenDecks`). Two straight edges, one above the other, blend
+    into a plane. The surface is taken from a grid of cubes a quarter of a
+    cell across, every corner put where the planes round it meet (dual
+    contouring), and the flat areas merged. What made it work, each found
+    on the user's X-wing or a test bar moving over a cell each deck:
+    * The first version (the prisms, sloped by `SlopeBetweenDecks` and
+      grown by `OffsetMitred`) came out as a sawtooth.
+    * Each deck blended with the next deck's distance crumpled where one
+      deck's edge lies over the other's inner edge (a strut moving over by
+      its own width each deck: the two distances are equal and opposite).
+      The blend is with the two decks' outline seen together, and in the
+      part that is only the other deck, measured straight away from this
+      deck to where the outline ends (the slope's width there; the nearest
+      edge was the bar's end, and the slope came out as stairs).
+    * Round distances twisted the slopes at corners; the distance is in
+      the octagon norm (the plan's edges go only along the grid and its
+      diagonals), so it is flat in pieces everywhere and corners come out
+      cut off at 45 degrees.
+    * Slopes only between edges within a cell and a half; further apart,
+      the hull steps (without a limit, every part of a deck blended with
+      every part of the next: curved fillets between a wing and the body).
+    * The skin is taken off the field (grown afterwards by `OffsetMitred`,
+      the many nearly flat faces crumpled it), and above or below a deck
+      only where no slope goes on from it (a deck's box grown up by the
+      skin stood out of the slope as a step at every deck).
+    * An empty deck between two others stays a gap (the user: such gaps are
+      meant).
+  * The X-wing: 3,118 faces. Plans made from models draw shallow angles as
+    staircases, which the angular style keeps (vertical fluting): a known
+    limit; straightening such outlines is a possible next step.
+* **The model as the hull, sharp** (`"sharp": true` in the plan's
+  `"model"`, *Model hull* on the Hull page; `ModelHullMesh` with the
+  model's triangles). The smooth model hull (blurred cube grid, surface
+  nets) lost the shape of the user's reference models. Sharp leaves the
+  grid unblurred and puts each corner of the cube surface where the planes
+  round it meet: where the solid ends at the model, the model's own
+  triangle, found by casting the edge between two cube centres through
+  the model (looked for a cube and a half either way, as the sliced solid
+  is not exactly the model), with its normal; where it ends at a room's
+  wall, the wall found by halving along the grid. A corner may move up to
+  one and a half cubes (half a cube left steps where the sliced solid and
+  the model differ). Unlike drawing each point onto the nearest point of
+  the model (tried before, crumpled), the planes of all the crossings
+  round a corner are fitted together. On the user's Lantean Daedalus,
+  4,178 faces, closed, and recognisably the model; Oltenia and the Vaygr
+  battlecruiser follow their models closely; the Helios (thousands of
+  loose overlapping panels) stays over the budget. New plans from a model
+  are sharp; plans saved before keep smooth. The choice is the user's,
+  apart from the hull style (the user: "keep the choice between angular
+  style, model-as-hull, etc a user choice").
+* **Hull doors** (`hullDoorExit` in the plan, *Hull doors* on the Rooms
+  page): `auto` (a ramp or a ladder down, as before), `ladder` or `none`
+  (a docking door: no way down and no clear space below). The constant
+  hull void outside a hull door ends at the hull's real surface, found by
+  sight lines out through the hull at three heights (before, at the
+  boundary plus the skin, which on a sloped or model hull was inside or
+  well outside it), and the clear space below reaches only as low as the
+  ladder needs, stopping above any hull under the door (`AddHullDoor`'s
+  `clearBelowZ`).
+* **The game hung loading the Omega** (the user, OpenShores in Steam
+  through Proton; the game sat idle, not busy). Its lowest decks were
+  empty, so the hull began 17 ft above the design's origin, which the
+  engine reports as "CG outside design extents below" (the origin has to be
+  within the hull's extents on every axis). The builder now moves the
+  design so that it is (`OriginShift`), straight after turning it to the
+  game's axes and before the hull is measured: the engine measures the
+  volume on a grid from the origin (the Omega: 17,817 cubic meters, 18,320
+  moved), and the FTL drive and capacitor are sized by it. Moved at the
+  end instead, the Omega's FTL drive and capacitor came out too small
+  (errors the CG error had hidden, as it stops the engine's detailed
+  analysis). The Omega now builds with no errors.
+* **Hull edges with four faces**: where drawn cells met only at a corner,
+  or a triangle met the one across its edge only on the deck above, two
+  parts of the hull shared an edge (76 on the Omega). `ManifoldHull` fills
+  such gaps (only adds, so every drawn triangle stays inside) and says how
+  many triangles it added. Open edges after the door and window cuts are
+  normal (the example has about 700) and were not the problem.
+* `test.sh`: `testdata/hull_edge_cases.py` gives the example an empty deck
+  below and a diagonal corner on top; it is moved, mended and accepted.
+* `test.sh`: the model hull built sharp and smooth (206 checks).
+
 ## 31 October 2026: release 0.3.2-alpha, and a Windows build
 
 * **Version 0.3.2-alpha** (`src/version.h`, `RELEASE_NOTES.md`): the

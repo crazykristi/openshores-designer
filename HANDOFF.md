@@ -23,10 +23,18 @@ here); the user's in-game notes are in `work/ingame*/` (not in git).
   why an import went wrong), tagged `v0.3.1-alpha`; the user packages and
   publishes it.
 * **Release 0.3.2-alpha** (smooth model hull, flips, emitters, tooltips):
-  version set, notes written, not yet tagged. The AppImage is now built on
+  tagged `v0.3.2-alpha`. The AppImage is now built on
   Ubuntu 22.04 (`packaging/build-appimage-portable.sh`, glibc 2.35+), and a
   Windows zip is cross-built on Linux (`packaging/build-windows-cross.sh`,
   tried under Wine only).
+* **Release 0.3.3-alpha** (hull styles smooth, angular and classic; a
+  sharp model hull, the user's choice beside the hull style; hull door
+  exits; the fix for ships with empty lowest decks hanging the game):
+  version set, notes written, AppImage built with
+  `packaging/build-appimage-portable.sh`; the user tags and publishes it.
+  Next on the user's list: straighter outlines for the angular style,
+  windows joined across corners and window styles, interior wall, floor
+  and ceiling designs, door designs.
 * **Tests:** `./test.sh`, last run 373 checks over 126 blueprints, no
   errors.
 * **In the game** (the user's Wedge tests v1 to v6): the Wedge is fully

@@ -341,6 +341,17 @@ QWidget* DesignerWindow::MakeHullPage()
 						   "hull; the skin goes round them, and the smoothing rounds its edges and the steps "
 						   "between decks. The 3D view follows as you draw. The deck below shows faintly."));
 	QFormLayout* form = new QFormLayout;
+	m_hullStyle = new QComboBox;
+	m_hullStyle->addItem("Smooth", "smooth");
+	m_hullStyle->addItem("Angular (experimental)", "angular");
+	m_hullStyle->addItem("Classic", "classic");
+	m_hullStyle->setToolTip("How the hull is made from the drawn triangles (not used when the 3D model is the "
+							"hull). Smooth: the hull is pushed out round the drawn triangles and its edges rounded. "
+							"Angular: the hull slopes from deck to deck and keeps sharp edges, so flat areas "
+							"stay flat panels (the smoothing is not used). Classic: like the old Shores of "
+							"Hazeron designer, straight walls up from the drawn outline and flat tops and "
+							"bottoms, deck by deck.");
+	form->addRow("Hull style", m_hullStyle);
 	m_skin = new QDoubleSpinBox;
 	m_skin->setRange(0.5, 10);
 	m_skin->setSingleStep(0.5);
@@ -366,12 +377,20 @@ QWidget* DesignerWindow::MakeHullPage()
 						 "rounded hull, and is the better choice for now.");
 	form->addRow("Flat panels", m_panels);
 	m_modelHull = new QCheckBox("Use the 3D model as the hull");
-	m_modelHull->setToolTip("For a plan made from a 3D model: the hull is the model itself, smoothed, with a wall "
+	m_modelHull->setToolTip("For a plan made from a 3D model: the hull is the model itself, with a wall "
 							"round every room (a room drawn out past the model still gets its hull). Truer to the "
 							"model than the triangles. Hull triangles drawn or rubbed out do not change it: untick "
 							"this to go back to the drawn hull. Thin parts of the model (antennas) go, and a "
 							"detailed model loses detail at a low face budget.");
 	form->addRow(m_modelHull);
+	m_modelHullShape = new QComboBox;
+	m_modelHullShape->addItem("Sharp: follows the model's edges and faces", true);
+	m_modelHullShape->addItem("Smooth: rounded", false);
+	m_modelHullShape->setToolTip("How the 3D model is made the hull. Sharp keeps the model's edges sharp and its "
+								 "flat faces flat, so the hull looks like the model. Smooth rounds it (edges by "
+								 "about a quarter of a cell).");
+	m_modelHullShapeLabel = new QLabel("Model hull");
+	form->addRow(m_modelHullShapeLabel, m_modelHullShape);
 	m_slopedDecks = new QCheckBox("Slope the hull between decks");
 	m_slopedDecks->setToolTip("Where a deck is narrower than the one below, the hull slopes up to it instead of "
 							  "stepping in (and under a wider deck it slopes down). The drawn triangles stay the "
@@ -393,6 +412,8 @@ QWidget* DesignerWindow::MakeHullPage()
 	connect(m_panels, &QSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_modelHull, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_slopedDecks, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_hullStyle, QOverload<int>::of(&QComboBox::activated), this, [this](int) { OnSettingsChanged(); });
+	connect(m_modelHullShape, QOverload<int>::of(&QComboBox::activated), this, [this](int) { OnSettingsChanged(); });
 	return page;
 }
 
@@ -492,6 +513,14 @@ QWidget* DesignerWindow::MakeRoomPage()
 	m_joinWindows = new QCheckBox("Join windows side by side");
 	m_joinWindows->setToolTip("Windows next to each other on one straight wall of a room become one long window.");
 	windowForm->addRow(m_joinWindows);
+	m_hullDoorExit = new QComboBox;
+	m_hullDoorExit->addItem("A ramp or a ladder down", "auto");
+	m_hullDoorExit->addItem("A ladder down", "ladder");
+	m_hullDoorExit->addItem("None (docking door)", "none");
+	m_hullDoorExit->setToolTip("How people get from the hull doors down to the ground: a ramp where the door is "
+							   "low enough and a ladder otherwise, always a ladder, or no way down at all, for a "
+							   "ship that stays in space (no ladder, and nothing cleared below the door).");
+	windowForm->addRow("Hull doors", m_hullDoorExit);
 	layout->addWidget(windowBox);
 	layout->addStretch(1);
 
@@ -502,6 +531,7 @@ QWidget* DesignerWindow::MakeRoomPage()
 	connect(m_windowSill, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_windowTop, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_joinWindows, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_hullDoorExit, QOverload<int>::of(&QComboBox::activated), this, [this](int) { OnSettingsChanged(); });
 	connect(add, &QPushButton::clicked, this, &DesignerWindow::OnAddRoom);
 	connect(remove, &QPushButton::clicked, this, &DesignerWindow::OnRemoveRoom);
 	return page;
@@ -645,9 +675,15 @@ void DesignerWindow::RefreshAll()
 	m_panels->setValue(m_plan.panels);
 	m_modelHull->setChecked(m_plan.model.asHull);
 	m_modelHull->setVisible(m_plan.model.IsSet());
+	m_modelHullShape->setCurrentIndex(m_plan.model.sharp ? 0 : 1);
+	m_modelHullShape->setVisible(m_plan.model.IsSet());
+	m_modelHullShapeLabel->setVisible(m_plan.model.IsSet());
+	m_modelHullShape->setEnabled(m_plan.model.asHull);
 	if(m_plan.model.IsSet())
 		m_modelHull->setText(QString("Use the 3D model as the hull (%1)").arg(QFileInfo(m_plan.model.file).fileName()));
 	m_slopedDecks->setChecked(m_plan.slopedDecks);
+	m_hullStyle->setCurrentIndex(qMax(0, m_hullStyle->findData(m_plan.hullStyle)));
+	m_hullDoorExit->setCurrentIndex(qMax(0, m_hullDoorExit->findData(m_plan.hullDoorExit)));
 	m_windowSill->setValue(Shown(m_plan.windowSillFeet));
 	m_windowTop->setValue(Shown(m_plan.windowTopFeet));
 	m_joinWindows->setChecked(m_plan.joinWindows);
@@ -1180,7 +1216,11 @@ void DesignerWindow::OnSettingsChanged()
 	m_plan.maxFaces = m_maxFaces->value();
 	m_plan.panels = m_panels->value();
 	m_plan.model.asHull = m_plan.model.IsSet() && m_modelHull->isChecked();
+	m_plan.model.sharp = m_modelHullShape->currentData().toBool();
+	m_modelHullShape->setEnabled(m_plan.model.asHull);
 	m_plan.slopedDecks = m_slopedDecks->isChecked();
+	m_plan.hullStyle = m_hullStyle->currentData().toString();
+	m_plan.hullDoorExit = m_hullDoorExit->currentData().toString();
 	read(m_windowSill, m_plan.windowSillFeet);
 	read(m_windowTop, m_plan.windowTopFeet);
 	m_plan.joinWindows = m_joinWindows->isChecked();

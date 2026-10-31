@@ -135,13 +135,14 @@ bool AddInteriorDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& sl
 // pieces. Without it, or if the cut fails, the door is a box slab.
 //
 // Besides the doorway void and the hull void tied to the open state, a
-// constant hull void clears the outside in front of the door from below the
-// foot of the ladder down from it ('groundZ', the bottom of the hull, less
-// SHIPGEN_LADDER_BELOW_HULL; leave it out for none) up to above the door. Working designs have one; the White Star does not, and players get
-// stuck at its door.
+// constant hull void clears the outside in front of the door from
+// 'clearBelowZ' up to above the door. Working designs have one; the White
+// Star does not, and players get stuck at its door. It only has to reach
+// down as far as the hull is in the way of the ladder (the caller measures
+// that); left out, it covers the door's own height.
 bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
 		double roomWall, double surface, const QString& groupName, quint16& doorId,
-		quint16 roomMeshId = 0, double groundZ = 1e30);
+		quint16 roomMeshId = 0, double clearBelowZ = 1e30);
 
 // A fixed ramp from a hull door's floor down to 'groundZ': an invisible
 // Barrier that is walked on (a level landing over the threshold, then the

@@ -17,9 +17,10 @@ long-term aim is an offline designer inside the OpenShores client.
 | `shipgen-mesh` | Load a model, thin it to a number of faces, tidy it up, save it. |
 
 **Download:** the releases on GitHub
-(<https://github.com/crazykristi/openshores-designer/releases>) are an
-AppImage holding the designer, `shipgen-gui` and the command line; see
-*Release: the AppImage* below. **Code, git and making a release:**
+(<https://github.com/crazykristi/openshores-designer/releases>; the latest
+is [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha),
+a pre-release) are an AppImage holding the designer, `shipgen-gui` and the
+command line; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
 The generator from the command line, for example:

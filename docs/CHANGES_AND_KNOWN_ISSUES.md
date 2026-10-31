@@ -2,8 +2,8 @@
 
 ## 31 October 2026: release 0.3.0-alpha
 
-The first release on GitHub (<https://github.com/crazykristi/openshores-designer>),
-a pre-release: an AppImage of the triangle designer with `shipgen-gui` and
+The first release on GitHub, published by the user as a pre-release
+(<https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha>): an AppImage of the triangle designer with `shipgen-gui` and
 the command line (`package-appimage.sh`, `RELEASE_NOTES.md`). The version
 is in `src/version.h`; the designer's window title and `--version` show it.
 The documentation gained `docs/GIT_AND_RELEASES.md` (git, the AppImage,

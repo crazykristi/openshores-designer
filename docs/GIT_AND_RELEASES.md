@@ -60,8 +60,11 @@ git push                         # to GitHub
 ## Making a release
 
 Versions are `MAJOR.MINOR.PATCH`, with `-alpha` or `-beta` for test
-releases (0.3.0-alpha was the first on GitHub; the designer test builds
-before it were called alpha1 and alpha2).
+releases. The releases so far:
+
+| Version | Date | |
+|---|---|---|
+| [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha) | 31 October 2026 | The first on GitHub, a pre-release. (The designer test builds before it were called alpha1 and alpha2.) |
 
 1. **Set the version** in `src/version.h` (`SHIPGEN_VERSION`). The
    designer's window title, `--version` of all three programs and the

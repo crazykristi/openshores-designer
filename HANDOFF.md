@@ -14,7 +14,8 @@ here); the user's in-game notes are in `work/ingame*/` (not in git).
 * **Code on GitHub:** <https://github.com/crazykristi/openshores-designer>.
   The user pushes (no credentials on this machine for Claude). Workflow and
   release steps: `docs/GIT_AND_RELEASES.md`.
-* **Release 0.3.0-alpha** (pre-release): `src/version.h`,
+* **Release 0.3.0-alpha**, published 31 October 2026 as a pre-release
+  (<https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha>): `src/version.h`,
   `RELEASE_NOTES.md`, the AppImage from `./package-appimage.sh`
   (`build/shipgen-designer-0.3.0-alpha-x86_64.AppImage`). Built on
   Fedora 44, so it needs a glibc that new.

@@ -52,8 +52,10 @@ hull between decks.
 
 **Later on 31 October:** the code is on GitHub
 (https://github.com/crazykristi/openshores-designer; the user pushes).
-`shipgen-gui` is to be the mainline application and main release item, and
-in the long run an offline designer in the OpenShores client. New: sloped
+The triangle designer is the mainline application and main release item
+(an AppImage, `./package-appimage.sh`, holding shipgen-gui and the command
+line too); `shipgen-gui` is secondary. In the long run the designer becomes
+an offline designer in the OpenShores client. New: sloped
 hull between decks, background model import with progress (and 9 s instead
 of 86 s for half a million faces), an audit that copes with slanted rooms.
 

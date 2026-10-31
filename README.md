@@ -471,6 +471,27 @@ tested.
 
 ---
 
+## Release: the AppImage
+
+`shipgen-gui` is the main program, released as an AppImage that also holds
+the triangle designer and the command line:
+
+```
+./build.sh && ./package-appimage.sh      # build/shipgen-gui-x86_64.AppImage
+./shipgen-gui-x86_64.AppImage                  # the generator's window
+./shipgen-gui-x86_64.AppImage designer         # the triangle designer
+./shipgen-gui-x86_64.AppImage shipgen <command> ...
+```
+
+It bundles Qt 5 with its X11 and Wayland plugins, OpenAL and the other
+libraries, but not the C library, the OpenGL drivers, X11/xcb or the font
+libraries, which come from the system (the AppImage project's rules). It
+runs on systems with a glibc at least as new as the one it was built on,
+so for the widest reach build it on an older distribution. The script
+downloads `appimagetool` into `build/tools/` the first time;
+`APPDIR_ONLY=1 ./package-appimage.sh` makes only the folder
+`build/AppDir`, which runs as `build/AppDir/AppRun`.
+
 ## The graphical tool
 
 `build/bin/shipgen-gui` has a main window with the source files on the left,

@@ -1,0 +1,20 @@
+# Build output.
+build/
+build-windows/
+
+# Generated test output and in-game test rounds (rebuilt from the plans).
+work/
+
+# The large 3D models (some over 25 MB); see testdata/README if present.
+testdata/models/
+
+# The OpenShores source, a git repository of its own (886 MB):
+#   git clone --depth 1 https://github.com/Celarious/SoH-source.git third_party/SoH-source
+third_party/SoH-source/
+
+# Editors and tools.
+*.swp
+*~
+.vscode/
+.idea/
+__pycache__/

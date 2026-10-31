@@ -605,6 +605,3 @@ test.sh           runs the generator over a matrix of templates and hulls
 HANDOFF.md        the state of the work and what is left to do
 docs/             the documentation (docs/README.md is the index)
 ```
-# openshores-designer
-# openshores-designer
-# openshores-designer

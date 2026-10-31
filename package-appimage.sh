@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Packs shipgen-gui into an AppImage, with the shipgen command line and the
-# triangle designer inside it too:
+# Packs the triangle designer (shipgen-designer, the main program) into an
+# AppImage, with the generator's window (shipgen-gui) and the shipgen
+# command line inside it too:
 #
-#   ./build.sh && ./package-appimage.sh            -> build/shipgen-gui-x86_64.AppImage
+#   ./build.sh && ./package-appimage.sh            -> build/shipgen-designer-x86_64.AppImage
 #
-#   ./shipgen-gui-x86_64.AppImage                   the generator's window (shipgen-gui)
-#   ./shipgen-gui-x86_64.AppImage designer [...]    the triangle designer
-#   ./shipgen-gui-x86_64.AppImage shipgen [...]     the command line
+#   ./shipgen-designer-x86_64.AppImage [...]          the triangle designer
+#   ./shipgen-designer-x86_64.AppImage gui [...]      the generator's window (shipgen-gui)
+#   ./shipgen-designer-x86_64.AppImage shipgen [...]  the command line
 #
 # Bundled: Qt 5 and its plugins (the X11 and Wayland platforms, image
 # formats, icon engines), OpenAL and every other library the programs need,
@@ -88,29 +89,30 @@ HERE="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins"
 case "$1" in
-	designer) shift; exec "$HERE/usr/bin/shipgen-designer" "$@" ;;
+	gui)      shift; exec "$HERE/usr/bin/shipgen-gui" "$@" ;;
 	shipgen)  shift; exec "$HERE/usr/bin/shipgen" "$@" ;;
-	*)        exec "$HERE/usr/bin/shipgen-gui" "$@" ;;
+	designer) shift; exec "$HERE/usr/bin/shipgen-designer" "$@" ;;
+	*)        exec "$HERE/usr/bin/shipgen-designer" "$@" ;;
 esac
 EOF
 chmod +x "$APPDIR/AppRun"
 
-cat > "$APPDIR/shipgen-gui.desktop" <<'EOF'
+cat > "$APPDIR/shipgen-designer.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Shipgen
-GenericName=Ship and building designer
-Comment=Designs ships and buildings for Shores of Hazeron and OpenShores
-Exec=shipgen-gui
-Icon=shipgen-gui
+Name=Shipgen Designer
+GenericName=Ship designer
+Comment=Draws ships for Shores of Hazeron and OpenShores, triangle by triangle
+Exec=shipgen-designer
+Icon=shipgen-designer
 Categories=Graphics;3DGraphics;
 Terminal=false
 EOF
-cp "$APPDIR/shipgen-gui.desktop" "$APPDIR/usr/share/applications/"
-cp "$HERE/packaging/shipgen-gui.png" "$APPDIR/shipgen-gui.png"
-cp "$HERE/packaging/shipgen-gui.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
-ln -sf shipgen-gui.png "$APPDIR/.DirIcon"
-desktop-file-validate "$APPDIR/shipgen-gui.desktop" 2>/dev/null || true
+cp "$APPDIR/shipgen-designer.desktop" "$APPDIR/usr/share/applications/"
+cp "$HERE/packaging/shipgen-designer.png" "$APPDIR/shipgen-designer.png"
+cp "$HERE/packaging/shipgen-designer.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
+ln -sf shipgen-designer.png "$APPDIR/.DirIcon"
+desktop-file-validate "$APPDIR/shipgen-designer.desktop" 2>/dev/null || true
 
 # APPDIR_ONLY=1 stops here: the folder build/AppDir is the whole program,
 # and build/AppDir/AppRun runs it.
@@ -126,7 +128,7 @@ if [ ! -x "$TOOL" ]; then
 	curl -fL -o "$TOOL" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage"
 	chmod +x "$TOOL"
 fi
-TARGET="$OUT/shipgen-gui-$ARCH.AppImage"
+TARGET="$OUT/shipgen-designer-$ARCH.AppImage"
 rm -f "$TARGET"
 # Without FUSE (containers), appimagetool can run unpacked.
 ARCH="$ARCH" "$TOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$TARGET"

@@ -51,6 +51,10 @@ public:
 	void	SetDeck(int deck);
 	// Fits the plan and the 3D view to their windows.
 	void	FrameView();
+	// Starts a new plan from a 3D model, in the background with a progress
+	// window; 'tell' shows what went wrong or needs looking at in a message
+	// box (off for scripts). Returns whether a plan was made.
+	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true);
 
 private slots:
 	void	OnNew();

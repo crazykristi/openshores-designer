@@ -1,18 +1,43 @@
-# Shipgen Designer 0.3.0-alpha
+# Shipgen Designer 0.3.1-alpha
 
-A pre-release of the triangle designer for Shores of Hazeron and
+The triangle designer for Shores of Hazeron and
 OpenShores: draw a ship deck by deck with triangles, draw its rooms, doors
 and windows on the same triangles, paint it, and build a blueprint the game
 loads. The AppImage also holds `shipgen-gui` (the automatic generator's
 window) and the `shipgen` command line.
 
+0.3.1-alpha is a pre-release that fixes bugs in 0.3.0-alpha.
+
+## Bug fixes in 0.3.1-alpha
+
+* **New plan from a 3D model threw the plan away.** In 0.3.0-alpha the
+  import ran to the end ("Filling in deck 3 of 3") and then nothing
+  happened: closing the progress window counted as pressing its Stop
+  button, so every finished plan was discarded. Fixed: Stop only counts
+  while the import is still running, and a finished plan is always kept.
+* **No word on why an import went wrong.** When a model could not be used,
+  or came through only partly, the reasons were at most a line in the
+  status bar. Now:
+  * a plan that could not be made says why in a message box, naming the
+    file;
+  * a plan that was made but needs looking over (the model is not a closed
+    surface, it is in many separate pieces, or little of it came through)
+    says so in a message box;
+  * the summary gives the share of the model's volume the hull triangles
+    hold, and when it is low, suggests a longer length, a lower 'Inside at
+    least' or smaller cells.
+
+Also new: `shipgen-designer --from-model <model> [--length <ft>]` starts a
+plan from a model from the command line (with `--screenshot` or `--export`
+for scripts), which the test suite now uses to check the import.
+
 ## Running it
 
 ```
-chmod +x shipgen-designer-0.3.0-alpha-x86_64.AppImage
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.1-alpha-x86_64.AppImage
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux with a recent C library (glibc as new as Fedora 44's;

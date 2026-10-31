@@ -18,8 +18,8 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha),
-a pre-release) are an AppImage holding the designer, `shipgen-gui` and the
+is [0.3.1-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.1-alpha),
+a pre-release with bug fixes) are an AppImage holding the designer, `shipgen-gui` and the
 command line; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
@@ -486,9 +486,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.0-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.1-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in
@@ -596,7 +596,7 @@ the texture coordinates; and starts both graphical tools, drawing the 3D
 preview under Xvfb when it is available. It also builds designer plans
 (doors, windows, ladders, stairs, ramps, bay doors, joined windows, the
 sloped hull) and checks the results. A last run on this machine passed 372
-checks over 126 blueprints with no errors.
+checks over 126 blueprints with no errors (373 at 0.3.1-alpha).
 
 ---
 

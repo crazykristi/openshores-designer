@@ -1907,6 +1907,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	// they overlap. Each piece is tested on its own, and a point is inside
 	// the model when it is inside any of them.
 	QList<SolidMesh> pieces;
+	double modelVolume = 0;		// Of the closed pieces, in cubic feet (overlaps counted twice).
 	if(!step("Finding its pieces"))
 		return false;
 	{
@@ -1937,7 +1938,13 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		{
 			SolidMesh solid(piece);
 			if(solid.HasInside())
+			{
 				pieces << solid;
+				double v = 0;
+				for(const AuScTri& t : piece)
+					v += AuPoint(t.V0()).Dot(AuPoint(t.V1()).Cross(AuPoint(t.V2()))) / 6.0;
+				modelVolume += fabs(v);
+			}
 		}
 		if(byPiece.size() > 1)
 			notes << QString("The model has %1 separate pieces; %2 of them are closed and count as hull.")
@@ -1997,10 +2004,24 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	if(!hull)
 	{
 		error = QString("No part of %1 is thick enough for a %2 ft cell. Make it longer, or the cells smaller.")
-				.arg(modelFile).arg(options.cellFeet);
+				.arg(QFileInfo(modelFile).fileName()).arg(options.cellFeet);
 		return false;
 	}
-	notes << QString("%1 by %2 cells of %3 ft, %4 decks; %5 hull triangles.").arg(plan.Width()).arg(plan.Depth())
-			.arg(options.cellFeet).arg(plan.Decks()).arg(hull);
+	// How much of the model came through: a slender model, or one with fine
+	// parts, keeps little of itself on a grid of cells and decks.
+	const double filled = hull * options.cellFeet * options.cellFeet / 4 * options.deckFeet;
+	const double share = modelVolume > 0 ? filled / modelVolume : 1.0;
+	notes << QString("%1 by %2 cells of %3 ft, %4 decks; %5 hull triangles%6.").arg(plan.Width()).arg(plan.Depth())
+			.arg(options.cellFeet).arg(plan.Decks()).arg(hull)
+			.arg(modelVolume > 0 ? QString(", about %1% of the model's volume").arg(qRound(share * 100)) : QString());
+	if(modelVolume > 0)
+	{
+		if(share < .4)
+			notes << QString("Only a little of the model came through: the hull triangles hold about %1% of its "
+					"volume, because most of it is thinner than a %2 ft cell or a %3 ft deck at %4 ft long. Make "
+					"it longer, or lower 'Inside at least' (now %5), or use smaller cells.")
+					.arg(qRound(share * 100)).arg(options.cellFeet).arg(options.deckFeet).arg(options.lengthFeet)
+					.arg(options.threshold);
+	}
 	return true;
 }

@@ -894,6 +894,21 @@ if [ -x "$SHIPGEN_GUI" ]; then
 			head -5 "$WORK/designer.log"
 		fi
 	fi
+	# A plan from a 3D model in the designer itself, in the background with
+	# its progress window: the plan must be kept when the window closes
+	# (closing it counted as Stop and threw every plan away in 0.3.0-alpha).
+	if [ -x "$SHIPGEN_DESIGNER" ]; then
+		QT_QPA_PLATFORM=offscreen timeout 120 "$SHIPGEN_DESIGNER" --from-model "$HERE/testdata/testhull.stl" --length 120 \
+				--step 2 --screenshot "$WORK/designer-model.png" > "$WORK/designer-model.log" 2>&1
+		if grep -q '^plan made from the model$' "$WORK/designer-model.log" && [ -s "$WORK/designer-model.png" ]; then
+			pass=$((pass+1))
+			echo "  ok    the designer makes a plan from a 3D model and keeps it"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  the designer did not keep the plan from the model"
+			head -5 "$WORK/designer-model.log"
+		fi
+	fi
 
 	if [ -n "$XVFB_PID" ]; then
 		kill "$XVFB_PID" 2>/dev/null || true

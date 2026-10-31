@@ -61,6 +61,10 @@ int main(int argc, char* argv[])
 	parser.addOption(exportOption);
 	QCommandLineOption shotOption(QStringList() << "screenshot", "Save a picture of the window and quit.", "file.png");
 	parser.addOption(shotOption);
+	QCommandLineOption modelOption(QStringList() << "from-model", "Start a new plan from a 3D model (STL, 3DS or OBJ).", "model");
+	parser.addOption(modelOption);
+	QCommandLineOption lengthOption(QStringList() << "length", "With --from-model: the length in feet.", "feet");
+	parser.addOption(lengthOption);
 	parser.process(app);
 
 	DesignerWindow window;
@@ -68,6 +72,18 @@ int main(int argc, char* argv[])
 		return 1;
 	window.show();
 	QTimer::singleShot(0, &window, &DesignerWindow::FrameView);
+	if(parser.isSet(modelOption))
+	{
+		PlanFromModelOptions options;
+		if(parser.isSet(lengthOption))
+			options.lengthFeet = parser.value(lengthOption).toDouble();
+		// Without --screenshot or --export the user is there to read what went wrong.
+		const bool scripted = parser.isSet(shotOption) || parser.isSet(exportOption);
+		const bool made = window.ImportModel(parser.value(modelOption), options, !scripted);
+		std::printf("%s\n", made ? "plan made from the model" : "no plan from the model");
+		if(!made && scripted)
+			return 1;
+	}
 
 	if(parser.isSet(exportOption))
 	{

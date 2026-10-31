@@ -19,7 +19,10 @@ here); the user's in-game notes are in `work/ingame*/` (not in git).
   `RELEASE_NOTES.md`, the AppImage from `./package-appimage.sh`
   (`build/shipgen-designer-0.3.0-alpha-x86_64.AppImage`). Built on
   Fedora 44, so it needs a glibc that new.
-* **Tests:** `./test.sh`, last run 372 checks over 126 blueprints, no
+* **Release 0.3.1-alpha** (bug fixes: the model import kept no plan; feedback on
+  why an import went wrong), tagged `v0.3.1-alpha`; the user packages and
+  publishes it.
+* **Tests:** `./test.sh`, last run 373 checks over 126 blueprints, no
   errors.
 * **In the game** (the user's Wedge tests v1 to v6): the Wedge is fully
   functional (crew loading, ladder, windows, lighting). The ramp, stairs,

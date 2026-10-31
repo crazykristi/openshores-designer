@@ -65,6 +65,7 @@ releases. The releases so far:
 | Version | Date | |
 |---|---|---|
 | [0.3.0-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.0-alpha) | 31 October 2026 | The first on GitHub, a pre-release. (The designer test builds before it were called alpha1 and alpha2.) |
+| [0.3.1-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.1-alpha) | 31 October 2026 | A pre-release with bug fixes: the model import kept no plan; clear feedback on why an import went wrong. |
 
 1. **Set the version** in `src/version.h` (`SHIPGEN_VERSION`). The
    designer's window title, `--version` of all three programs and the
@@ -74,6 +75,8 @@ releases. The releases so far:
    Move the details into `docs/CHANGES_AND_KNOWN_ISSUES.md` as usual.
 3. **Build and test:** `./build.sh && ./test.sh`, which should end
    "... 0 with errors."
+   For a bug-fix release, put a *Bug fixes* section first, naming what was
+   wrong in the version before and what changed (as 0.3.1-alpha does).
 4. **Package:** `./package-appimage.sh` makes
    `build/shipgen-designer-<version>-x86_64.AppImage`. Try it:
    `build/shipgen-designer-<version>-x86_64.AppImage`, then

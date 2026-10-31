@@ -28,6 +28,7 @@
 #include <QPlainTextEdit>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -749,6 +750,11 @@ void DesignerWindow::OnNewFromModel()
 	options.threshold = threshold->value();
 	options.flip = flip->isChecked();
 	options.yUp = yUp->isChecked();
+	ImportModel(modelFile, options);
+}
+
+bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell)
+{
 	options.cellFeet = m_plan.cellFeet;
 	options.deckFeet = m_plan.deckFeet;
 
@@ -786,7 +792,13 @@ void DesignerWindow::OnNewFromModel()
 				.arg(clock.elapsed() / 1000)
 				.arg(stop.load() ? "\nStopping after this step." : ""));
 	});
+	// Closing a progress window counts as pressing its Stop button too, so
+	// only a press while the work is still going stops it (closing the
+	// window at the end threw every finished plan away).
+	bool running = true;
 	connect(&progress, &QProgressDialog::canceled, &progress, [&]() {
+		if(!running)
+			return;
 		stop = true;
 		progress.show();		// Stays up until the step it is on is done.
 	});
@@ -795,18 +807,23 @@ void DesignerWindow::OnNewFromModel()
 	tick.start(250);
 	worker->start();
 	wait.exec();
+	running = false;
 	tick.stop();
 	delete worker;
 	progress.close();
-	if(stop.load())
+	if(!made && stop.load())
 	{
 		m_status->setText("Stopped reading the model.");
-		return;
+		return false;
 	}
 	if(!made)
 	{
-		QMessageBox::warning(this, "Shipgen designer", (notes + QStringList(error)).join("\n"));
-		return;
+		const QString why = QString("The plan could not be made from %1.\n\n%2").arg(QFileInfo(modelFile).fileName(),
+				(notes + QStringList(error)).join("\n\n"));
+		m_status->setText(why.simplified());
+		if(tell)
+			QMessageBox::warning(this, "New plan from a 3D model", why);
+		return false;
 	}
 	m_undo << m_plan;
 	SetPlan(plan);
@@ -815,6 +832,13 @@ void DesignerWindow::OnNewFromModel()
 	ShowStep(StepHull);
 	RefreshTitle();
 	m_status->setText(notes.join(" "));
+	// What went less than well is worth more than a line in the status bar.
+	const QStringList worries = notes.filter(QRegularExpression("not closed|not quite closed|separate pieces|little of"));
+	if(tell && !worries.isEmpty())
+		QMessageBox::information(this, "New plan from a 3D model",
+				QString("The plan was made from %1, but look it over:\n\n%2").arg(QFileInfo(modelFile).fileName(),
+						notes.join("\n\n")));
+	return true;
 }
 
 void DesignerWindow::OnOpen()

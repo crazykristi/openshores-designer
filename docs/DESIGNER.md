@@ -240,8 +240,18 @@ A big model is thinned first: a quick clustering pass to five times the
 face budget, then the careful (quadric) pass. Half a million faces take
 about 9 seconds (the careful pass alone took a minute and a half). The
 designer reads the model in the background with a progress window that
-names the step it is on and can stop it between steps;
-`shipgen plan-from-model` prints the steps with their times.
+names the step it is on and can stop it between steps (in 0.3.0-alpha the
+closing of that window counted as Stop and threw every plan away; fixed in
+0.3.1-alpha); `shipgen plan-from-model` prints the steps with their times.
+
+What went wrong is said plainly: a plan that could not be made gives the
+reason in a message box, and a plan that was made but needs looking over
+(the model is not a closed surface, it is in many pieces, or little of it
+came through) says so too. The summary gives the share of the model's
+volume that the hull triangles hold; below 40 percent it suggests a longer
+length, a lower *Inside at least* or smaller cells. A slender ship at the
+default 150 ft (the user's Babylon 5 Warlock: 124 triangles, 652 cubic
+meters) is small; give it its real length.
 
 *File > New plan from a 3D model* (or `shipgen plan-from-model`) fills in
 the hull triangles from an stl, 3ds or obj model (`PlanFromModel`,

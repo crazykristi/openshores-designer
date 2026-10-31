@@ -1,5 +1,20 @@
 # Changes and known issues
 
+## 31 October 2026: release 0.3.1-alpha (bug fixes)
+
+* **The model import kept no plan** (the user, with a Babylon 5 Warlock
+  model: it "stopped loading when finishing the decks"). The import itself
+  was fine (2 s); closing the designer's progress window emitted its
+  `canceled` signal, which the designer took as Stop, so it discarded every
+  finished plan. Stop now only counts while the work runs, and a finished
+  plan is always kept. New `test.sh` check: the designer's own import
+  (`--from-model`) keeps its plan.
+* **Feedback:** a failed import says why in a message box, naming the
+  file; a made plan with worries (not closed, many pieces, little came
+  through) says so; the summary gives the share of the model's volume the
+  hull triangles hold, with a hint below 40 percent.
+* Version 0.3.1-alpha (`src/version.h`, `RELEASE_NOTES.md`).
+
 ## 31 October 2026: release 0.3.0-alpha
 
 The first release on GitHub, published by the user as a pre-release

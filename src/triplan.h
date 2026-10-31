@@ -144,6 +144,11 @@ public:
 	double	skinFeet = 2.0;			// How far the hull surface stands out from the drawn triangles.
 	int		smoothing = 6;			// How much the hull edges are rounded, 0 for none.
 	int		maxFaces = 5000;		// The face budget of the hull.
+	// The hull between decks: false, it steps from one deck's outline to the
+	// next; true, it slopes (the ledge rises to the top of the narrower deck
+	// above, an overhang falls to the bottom of the deck below). Either way
+	// the drawn triangles are the least the hull may be.
+	bool	slopedDecks = false;
 	double	windowSillFeet = 3.0;		// Windows: from this high above the floor
 	double	windowTopFeet = 7.5;		// up to this high (less, in a low room).
 	bool	joinWindows = false;		// Windows side by side on one straight wall make one long window.

@@ -52,6 +52,17 @@ ramps"); neither has been tried in the game yet (`work/ingame6/`).
   * Wedges are built without shields, weapon bay and transporter
     (`leaveOut` in the plan, the *No shields / No weapon bay / No
     transporter* boxes in the designer).
+* **Sloped hull between decks** (the user: sleeker, fewer faces; the drawn
+  hull is the minimum): `slopedDecks`, *Slope the hull between decks*.
+* **The 3D model importer froze the designer** (the user's 510,000-face
+  Moogle): it was working, not crashed, for 86 s on the window's own
+  thread. It now runs in the background with a progress window and a stop
+  button, and thins with a quick clustering pass first: 9 s.
+* **The audit** tested each room's bounding box, which for a room with
+  slanted walls (the Wedge's new bridge) reaches outside a tapering hull.
+  A room that is not a box and fails the box test is now tested by points
+  through its inside, allowing 3% failures by windows (rays leave through
+  them).
 * `third_party/SoH-source/`: the OpenShores source (github.com/Celarious/
   SoH-source, cloned 2026-10-31 at 849c43b), kept beside `third_party/soh/`
   for reference; the build still uses `third_party/soh/`. It is laid out

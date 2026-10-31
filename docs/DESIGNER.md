@@ -166,6 +166,16 @@ opening on the deck above (a Barrier 3.5 ft high and a rail on posts), open
 only at the landing. Walk paths across the rooms keep off the opening above
 and the run below, except the foot of the stairs.
 
+**Between decks** the hull steps from one deck's outline to the next,
+unless *Slope the hull between decks* (Hull page, `slopedDecks`) is on:
+then where a deck is narrower than the one below, the ledge rises from the
+lower deck's edge to the top of the narrower deck, and under a wider deck
+the underside falls to the bottom of the deck below (`SlopeBetweenDecks`).
+Points only move outward, so the drawn triangles stay the least the hull
+may be (the user: the drawn bounds are the minimum, so that rooms never
+clip). The slopes are flat, so the face merging takes them down well: the
+example Wedge needs 10,252 faces before thinning instead of 11,794.
+
 **How the inside looks.** Room floors are metal tiles, ceilings light
 plates, and walls metal panels in a light shade of the room's colour in the
 plan. Hull doors are painted yellow and interior doors blue, so that they
@@ -194,7 +204,7 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "name": "Wedge", "template": "military_frigate",
   "cellFeet": 5, "deckFeet": 10, "floorFeet": 1, "skinFeet": 2,
   "smoothing": 6, "maxFaces": 5000,
-  "windowSill": 3, "windowTop": 7.5, "joinWindows": false,
+  "windowSill": 3, "windowTop": 7.5, "joinWindows": false, "slopedDecks": false,
   "width": 36, "depth": 16, "decks": 2,
   "rooms":   [ { "type": "Bridge", "label": "Bridge 1", "colour": "#5a8cdc" } ],
   "ftl": "wormhole-p",
@@ -225,6 +235,13 @@ feet, the game's unit, so switching back and forth changes nothing. The
 setting is remembered.
 
 ## Starting from a 3D model
+
+A big model is thinned first: a quick clustering pass to five times the
+face budget, then the careful (quadric) pass. Half a million faces take
+about 9 seconds (the careful pass alone took a minute and a half). The
+designer reads the model in the background with a progress window that
+names the step it is on and can stop it between steps;
+`shipgen plan-from-model` prints the steps with their times.
 
 *File > New plan from a 3D model* (or `shipgen plan-from-model`) fills in
 the hull triangles from an stl, 3ds or obj model (`PlanFromModel`,

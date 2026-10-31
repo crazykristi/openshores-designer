@@ -130,6 +130,155 @@ IndexedMesh BuildPrisms(const TriPlan& plan, const std::function<bool(const TriR
 	return mesh;
 }
 
+// The plan distance from a point to a triangle of the plan (0 inside it).
+double PlanDistance(const TriPlan& plan, const QPointF& q, const TriRef& t)
+{
+	QPointF c[3];
+	plan.TriCorners(t, c);
+	auto cross = [](const QPointF& a, const QPointF& b) { return a.x() * b.y() - a.y() * b.x(); };
+	const double s0 = cross(c[1] - c[0], q - c[0]), s1 = cross(c[2] - c[1], q - c[1]), s2 = cross(c[0] - c[2], q - c[2]);
+	if((s0 >= -1e-9 && s1 >= -1e-9 && s2 >= -1e-9) || (s0 <= 1e-9 && s1 <= 1e-9 && s2 <= 1e-9))
+		return 0;
+	double best = 1e30;
+	for(int i = 0; i < 3; ++i)
+	{
+		const QPointF a = c[i], b = c[(i + 1) % 3], ab = b - a;
+		const double len2 = QPointF::dotProduct(ab, ab);
+		const double u = len2 > 0 ? qBound(0.0, QPointF::dotProduct(q - a, ab) / len2, 1.0) : 0.0;
+		const QPointF d = q - (a + ab * u);
+		best = qMin(best, sqrt(QPointF::dotProduct(d, d)));
+	}
+	return best;
+}
+
+// Slopes the hull between decks instead of stepping it (TriPlan::
+// slopedDecks). Where the deck above is narrower, the ledge rises from the
+// lower deck's edge to the top of the deck above; where the deck above is
+// wider, its underside falls to the bottom of the deck below. Points only
+// move outward from the solid, so every drawn triangle stays inside the
+// hull (the user: the drawn hull is the least the hull may be). Returns
+// false, leaving 'mesh' as it was, if the result is not a closed surface.
+bool SlopeBetweenDecks(const TriPlan& plan, IndexedMesh& mesh, const std::function<double(int)>& zOf, int rows)
+{
+	const double eps = 1e-6;
+	IndexedMesh out = mesh;
+	// The plan distance from a point to the hull of a deck, and to what is
+	// not hull of it (the grid's border counts as outside).
+	auto distTo = [&plan](const QPointF& q, int deck, bool hull) {
+		double best = 1e30;
+		if(!hull)
+		{
+			const QPointF lo = plan.Corner(0, 0), hi = plan.Corner(plan.Width(), plan.Depth());
+			best = qMin(qMin(q.x() - lo.x(), hi.x() - q.x()), qMin(q.y() - lo.y(), hi.y() - q.y()));
+		}
+		for(int cy = 0; cy < plan.Depth(); ++cy)
+			for(int cx = 0; cx < plan.Width(); ++cx)
+				for(int k = 0; k < 4; ++k)
+				{
+					const TriRef t(deck, cx, cy, k);
+					if(plan.Hull(t) != hull)
+						continue;
+					const QPointF c = plan.TriCentre(t);
+					if(fabs(c.x() - q.x()) > best + plan.cellFeet || fabs(c.y() - q.y()) > best + plan.cellFeet)
+						continue;
+					best = qMin(best, PlanDistance(plan, q, t));
+				}
+		return best;
+	};
+	for(int d = 0; d + 1 < plan.Decks(); ++d)
+	{
+		const double zb = zOf((d + 1) * rows), up = zOf((d + 2) * rows) - zb, down = zb - zOf(d * rows);
+		for(AuPoint& v : out.v)
+		{
+			if(v.z < zb - down - eps || v.z > zb + up + eps)
+				continue;
+			const QPointF q(v.x, v.y);
+			const double inLower = distTo(q, d, true), outLower = distTo(q, d, false);
+			const double inUpper = distTo(q, d + 1, true), outUpper = distTo(q, d + 1, false);
+			// A ledge: on the lower deck's hull, not inside the upper's.
+			if(v.z >= zb - eps && inLower < eps && outUpper < eps && (outLower > eps || inUpper > eps))
+				v.z = qMax(v.z, zb + up * outLower / (outLower + inUpper));
+			// An overhang: on the upper deck's hull, not inside the lower's.
+			if(v.z <= zb + eps && inUpper < eps && outLower < eps && (outUpper > eps || inLower > eps))
+				v.z = qMin(v.z, zb - down * outUpper / (outUpper + inLower));
+		}
+	}
+
+	// Walls that were raised or lowered onto the slope have collapsed: weld
+	// the points that now coincide and drop the faces with no area left.
+	QHash<QString, int> byPosition;
+	QVector<int> remap(out.v.size());
+	QVector<AuPoint> welded;
+	for(int i = 0; i < out.v.size(); ++i)
+	{
+		const AuPoint& p = out.v[i];
+		const QString key = QString("%1,%2,%3").arg(qRound64(p.x * 1e4)).arg(qRound64(p.y * 1e4)).arg(qRound64(p.z * 1e4));
+		QHash<QString, int>::const_iterator it = byPosition.constFind(key);
+		if(it == byPosition.constEnd())
+		{
+			byPosition.insert(key, welded.size());
+			remap[i] = welded.size();
+			welded << p;
+		}
+		else
+			remap[i] = it.value();
+	}
+	IndexedMesh result;
+	result.v = welded;
+	for(int fi = 0; fi < out.Faces(); ++fi)
+	{
+		const int a = remap[out.f[fi*3]], b = remap[out.f[fi*3 + 1]], c = remap[out.f[fi*3 + 2]];
+		if(a == b || b == c || a == c)
+			continue;
+		if((welded[b] - welded[a]).Cross(welded[c] - welded[a]).Length() < 1e-9)
+			continue;
+		result.f << a << b << c;
+		result.paint << out.paint[fi];
+	}
+	// Faces that now lie on each other back to back (a wall squeezed flat
+	// between two slopes) cancel out.
+	{
+		QHash<QString, int> seen;
+		QVector<bool> drop(result.Faces(), false);
+		for(int fi = 0; fi < result.Faces(); ++fi)
+		{
+			int k[3] = { result.f[fi*3], result.f[fi*3 + 1], result.f[fi*3 + 2] };
+			std::sort(k, k + 3);
+			const QString key = QString("%1,%2,%3").arg(k[0]).arg(k[1]).arg(k[2]);
+			QHash<QString, int>::const_iterator it = seen.constFind(key);
+			if(it != seen.constEnd() && !drop[it.value()])
+			{
+				drop[fi] = drop[it.value()] = true;
+				continue;
+			}
+			seen.insert(key, fi);
+		}
+		IndexedMesh kept;
+		kept.v = result.v;
+		for(int fi = 0; fi < result.Faces(); ++fi)
+			if(!drop[fi])
+			{
+				kept.f << result.f[fi*3] << result.f[fi*3 + 1] << result.f[fi*3 + 2];
+				kept.paint << result.paint[fi];
+			}
+		result = kept;
+	}
+	AuScTriList tris;
+	for(int fi = 0; fi < result.Faces(); ++fi)
+	{
+		const AuPoint& a = result.v[result.f[fi*3]];
+		const AuPoint& b = result.v[result.f[fi*3 + 1]];
+		const AuPoint& c = result.v[result.f[fi*3 + 2]];
+		AuPoint n = (b - a).Cross(c - a);
+		n.Unit();
+		tris.append(AuScTri(AuScPoint(a, 0.f, 0.f, n), AuScPoint(b, 0.f, 0.f, n), AuScPoint(c, 0.f, 0.f, n)));
+	}
+	if(!AuditSolidity(tris).Closed())
+		return false;
+	mesh = result;
+	return true;
+}
+
 // Merges the faces of flat areas of one colour, by moving vertices that lie
 // inside such an area onto a neighbour. The edges of the areas, and every
 // vertex where the surface bends, stay where they are, so the shape and the
@@ -687,6 +836,9 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 		out.notes << "There is no hull yet: draw some triangles first.";
 		return out;
 	}
+	if(plan.slopedDecks && plan.Decks() > 1 && !SlopeBetweenDecks(plan, mesh, zOf, rows))
+		out.notes << "The hull could not be sloped between the decks (it would not be a closed surface), so it "
+					 "steps from deck to deck.";
 	if(plan.smoothing > 0)
 		Subdivide(mesh);
 
@@ -1644,6 +1796,16 @@ static AuScTri TriOf(const AuPoint& a, const AuPoint& b, const AuPoint& c)
 bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,
 		QStringList& notes, QString& error)
 {
+	auto step = [&](const QString& what, int done = 0, int total = 0) {
+		if(options.progress && !options.progress(what, done, total))
+		{
+			error = "Stopped.";
+			return false;
+		}
+		return true;
+	};
+	if(!step("Reading the model"))
+		return false;
 	AuScTriList tris;
 	if(!LoadMeshFile(modelFile, tris, error))
 		return false;
@@ -1657,6 +1819,18 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	if(options.maxFaces > 0 && tris.size() > options.maxFaces)
 	{
 		const int before = tris.size();
+		if(!step(QString("Thinning %1 faces to %2 (the longest step)").arg(before).arg(options.maxFaces)))
+			return false;
+		// The careful method takes a minute and a half on half a million
+		// faces; a quick clustering pass down to five times the target first
+		// leaves it little to do, and the clustering's blockiness is
+		// smoothed over by the careful pass.
+		if(tris.size() > options.maxFaces * 5)
+		{
+			const AuScTriList quick = SimplifyMesh(tris, options.maxFaces * 5, SimplifyMethod::Cluster);
+			if(quick.size() > options.maxFaces)
+				tris = quick;
+		}
 		tris = SimplifyMesh(tris, options.maxFaces, SimplifyMethod::Quadric);
 		if(InspectMesh(tris).loose > 0)
 			tris = FillHoles(tris);
@@ -1666,6 +1840,8 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	// Repair it only when it needs it, and keep the repair only when it helps:
 	// on some closed models the repair does more harm than good.
 	auto problems = [](const MeshSolidity& m) { return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges; };
+	if(!step("Repairing the surface"))
+		return false;
 	{
 		const AuScTriList windings = FixWindings(CleanMesh(tris));
 		if(problems(AuditSolidity(windings)) <= problems(AuditSolidity(tris)))
@@ -1731,6 +1907,8 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	// they overlap. Each piece is tested on its own, and a point is inside
 	// the model when it is inside any of them.
 	QList<SolidMesh> pieces;
+	if(!step("Finding its pieces"))
+		return false;
 	{
 		QHash<QString, int> vertexIds;
 		auto vid = [&vertexIds](const AuPoint& p) {
@@ -1787,6 +1965,9 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 
 	int hull = 0;
 	for(int d = 0; d < plan.Decks(); ++d)
+	{
+		if(!step(QString("Filling in deck %1 of %2").arg(d + 1).arg(plan.Decks()), d, plan.Decks()))
+			return false;
 		for(int cy = 0; cy < plan.Depth(); ++cy)
 			for(int cx = 0; cx < plan.Width(); ++cx)
 				for(int k = 0; k < 4; ++k)
@@ -1812,6 +1993,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 						++hull;
 					}
 				}
+	}
 	if(!hull)
 	{
 		error = QString("No part of %1 is thick enough for a %2 ft cell. Make it longer, or the cells smaller.")

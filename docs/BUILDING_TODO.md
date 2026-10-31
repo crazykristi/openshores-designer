@@ -163,9 +163,11 @@ centrepiece:
 - [x] Chairs face the front; the Wedge's bridge has front windows; floors,
   walls and ceilings differ and walls are tinted per room; doors painted
   to stand out (the user's Wedge v6 test), 2026-10-31.
-- [ ] A hull option where the hull between decks slopes from one deck's
+- [x] A hull option where the hull between decks slopes from one deck's
   outline to the next instead of stepping (the user, 2026-10-31: sleeker,
-  fewer faces). Asked the user to confirm what is meant.
+  fewer faces; the drawn hull is the minimum): `slopedDecks`, 2026-10-31.
+- [x] Progress and a stop button when reading a big 3D model, and quicker
+  thinning (86 s to 9 s for half a million faces), 2026-10-31.
 - [ ] Rooms of more than one deck, and hull doors over more than one deck
   (the user: "would be awesome").
 - [x] The 3D model importer should thin and repair the model itself, as

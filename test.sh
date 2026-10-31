@@ -782,6 +782,24 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		"$SHIPGEN" parts "$WORK/plan/joined.SoH" | grep '  Window  ' | head -4
 	fi
 	check "the plan with joined windows" "$WORK/plan/joined.SoH"
+	# The hull sloped between the decks: closed, more volume than stepped
+	# (sloping only adds hull: the drawn triangles are the least it may be),
+	# no room outside it.
+	sed -e 's|^    "slopedDecks": false|    "slopedDecks": true|' "$WORK/plan/example.json" > "$WORK/plan/sloped.json"
+	"$SHIPGEN" build-plan "$WORK/plan/sloped.json" --out "$WORK/plan/sloped.SoH" > "$WORK/plan/sloped.txt" 2>&1
+	stepped=$(sed -n 's/^Hull         : .* about \([0-9]*\) cubic meters$/\1/p' "$WORK/plan/build.txt")
+	sloped=$(sed -n 's/^Hull         : .* about \([0-9]*\) cubic meters$/\1/p' "$WORK/plan/sloped.txt")
+	if [ -n "$sloped" ] && [ -n "$stepped" ] && [ "$sloped" -gt "$stepped" ] && grep -q 'Errors (0)' "$WORK/plan/sloped.txt" &&
+			! grep -q 'could not be sloped' "$WORK/plan/sloped.txt" &&
+			"$SHIPGEN" inspect "$WORK/plan/sloped.SoH" | grep -q 'Rooms outside the hull: 0'; then
+		pass=$((pass+1))
+		echo "  ok    the hull slopes between the decks ($stepped m3 stepped, $sloped m3 sloped), rooms inside"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the sloped hull is wrong ($stepped m3 stepped, $sloped m3 sloped)"
+		grep -E '^Hull|Errors|sloped' "$WORK/plan/sloped.txt" | head -4
+	fi
+	check "the plan with a sloped hull" "$WORK/plan/sloped.SoH"
 	# Room surfaces have their normals pointing into the room (as in the
 	# user's scout), and a hull door's switches are in reach: inside the room
 	# and just outside the hull, 4 ft up, not in the middle of the door.

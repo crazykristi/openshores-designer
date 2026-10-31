@@ -31,6 +31,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <functional>
 
 #include "auscface.h"
 #include "triplan.h"
@@ -108,6 +109,10 @@ struct PlanFromModelOptions
 	bool	flip = false;		// Turn it round: the model's other end is fore.
 	bool	yUp = false;		// The model was made with y up (many obj files are), not z.
 	int		maxFaces = 20000;	// A bigger model is thinned to this first, as shipgen reduce does (0: never).
+	// Told what is being done and how far it has got ('total' 0 when that
+	// cannot be said); return false to stop. A big model takes a while
+	// (half a million faces: about a minute and a half, mostly thinning).
+	std::function<bool(const QString& step, int done, int total)>	progress;
 
 };
 bool	PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,

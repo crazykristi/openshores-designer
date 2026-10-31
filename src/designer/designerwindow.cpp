@@ -11,6 +11,8 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -22,7 +24,9 @@
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMutex>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -31,8 +35,10 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <atomic>
 
 #include "aufilever.h"
 #include "auscdesign.h"
@@ -299,6 +305,11 @@ QWidget* DesignerWindow::MakeHullPage()
 	m_maxFaces->setSingleStep(500);
 	m_maxFaces->setToolTip("The game copes with about 15,000 faces, is comfortable with 5,000 and happy with 2,000.");
 	form->addRow("Face budget", m_maxFaces);
+	m_slopedDecks = new QCheckBox("Slope the hull between decks");
+	m_slopedDecks->setToolTip("Where a deck is narrower than the one below, the hull slopes up to it instead of "
+							  "stepping in (and under a wider deck it slopes down). The drawn triangles stay the "
+							  "least the hull may be: sloping only adds hull. Sleeker, and usually fewer faces.");
+	form->addRow(m_slopedDecks);
 	layout->addLayout(form);
 	QPushButton* shape = new QPushButton("Shape the hull now");
 	layout->addWidget(shape);
@@ -311,6 +322,7 @@ QWidget* DesignerWindow::MakeHullPage()
 	connect(m_skin, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_smoothing, &QSlider::valueChanged, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_maxFaces, &QSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_slopedDecks, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	return page;
 }
 
@@ -496,6 +508,7 @@ void DesignerWindow::RefreshAll()
 	m_skin->setValue(Shown(m_plan.skinFeet));
 	m_smoothing->setValue(m_plan.smoothing);
 	m_maxFaces->setValue(m_plan.maxFaces);
+	m_slopedDecks->setChecked(m_plan.slopedDecks);
 	m_windowSill->setValue(Shown(m_plan.windowSillFeet));
 	m_windowTop->setValue(Shown(m_plan.windowTopFeet));
 	m_joinWindows->setChecked(m_plan.joinWindows);
@@ -738,12 +751,57 @@ void DesignerWindow::OnNewFromModel()
 	options.cellFeet = m_plan.cellFeet;
 	options.deckFeet = m_plan.deckFeet;
 
+	// A big model takes a while (half a million faces: about a minute and a
+	// half), so it is read in the background, with the step it is on shown
+	// and a way to stop. The window looked frozen to the user before.
 	TriPlan plan;
 	QStringList notes;
 	QString error;
-	QApplication::setOverrideCursor(Qt::WaitCursor);
-	const bool made = PlanFromModel(modelFile, options, plan, notes, error);
-	QApplication::restoreOverrideCursor();
+	bool made = false;
+	QMutex lock;
+	QString stepText = "Starting";
+	std::atomic<bool> stop(false);
+	options.progress = [&](const QString& what, int, int) {
+		QMutexLocker locked(&lock);
+		stepText = what;
+		return !stop.load();
+	};
+	QThread* worker = QThread::create([&]() { made = PlanFromModel(modelFile, options, plan, notes, error); });
+	QProgressDialog progress(QString("Reading %1").arg(QFileInfo(modelFile).fileName()), "Stop", 0, 0, this);
+	progress.setWindowTitle("New plan from a 3D model");
+	progress.setWindowModality(Qt::WindowModal);
+	progress.setMinimumDuration(0);
+	progress.setMinimumWidth(460);
+	QElapsedTimer clock;
+	clock.start();
+	QTimer tick;
+	connect(&tick, &QTimer::timeout, &progress, [&]() {
+		QString what;
+		{
+			QMutexLocker locked(&lock);
+			what = stepText;
+		}
+		progress.setLabelText(QString("%1\n%2...\n%3 s so far%4").arg(QFileInfo(modelFile).fileName(), what)
+				.arg(clock.elapsed() / 1000)
+				.arg(stop.load() ? "\nStopping after this step." : ""));
+	});
+	connect(&progress, &QProgressDialog::canceled, &progress, [&]() {
+		stop = true;
+		progress.show();		// Stays up until the step it is on is done.
+	});
+	QEventLoop wait;
+	connect(worker, &QThread::finished, &wait, &QEventLoop::quit);
+	tick.start(250);
+	worker->start();
+	wait.exec();
+	tick.stop();
+	delete worker;
+	progress.close();
+	if(stop.load())
+	{
+		m_status->setText("Stopped reading the model.");
+		return;
+	}
 	if(!made)
 	{
 		QMessageBox::warning(this, "Shipgen designer", (notes + QStringList(error)).join("\n"));
@@ -888,6 +946,7 @@ void DesignerWindow::OnSettingsChanged()
 	read(m_skin, m_plan.skinFeet);
 	m_plan.smoothing = m_smoothing->value();
 	m_plan.maxFaces = m_maxFaces->value();
+	m_plan.slopedDecks = m_slopedDecks->isChecked();
 	read(m_windowSill, m_plan.windowSillFeet);
 	read(m_windowTop, m_plan.windowTopFeet);
 	m_plan.joinWindows = m_joinWindows->isChecked();

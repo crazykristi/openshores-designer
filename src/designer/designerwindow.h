@@ -141,6 +141,7 @@ private:
 	QDoubleSpinBox*	m_windowSill = 0;
 	QDoubleSpinBox*	m_windowTop = 0;
 	QCheckBox*		m_joinWindows = 0;
+	QCheckBox*		m_slopedDecks = 0;
 	QCheckBox*		m_noShields = 0;
 	QCheckBox*		m_noWeapons = 0;
 	QCheckBox*		m_noTransporter = 0;

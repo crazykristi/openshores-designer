@@ -513,6 +513,13 @@ int cmdPlanFromModel(const QStringList& args)
 	TriPlan plan;
 	QStringList notes;
 	QString error;
+	// Each step and how long it took, on stderr.
+	QElapsedTimer clock;
+	clock.start();
+	options.progress = [&clock](const QString& what, int, int) {
+		err() << QString("  [%1 s] %2\n").arg(clock.elapsed() / 1000.0, 0, 'f', 1).arg(what);
+		return true;
+	};
 	const bool made = PlanFromModel(modelFile, options, plan, notes, error);
 	for(const QString& n : notes)
 		out() << n << "\n";

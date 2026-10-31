@@ -50,6 +50,13 @@ apart by texture and colour, and Wedges leave out shields, weapons and the
 transporter. Test files `work/ingame7/`. Asked the user about a sloped
 hull between decks.
 
+**Later on 31 October:** the code is on GitHub
+(https://github.com/crazykristi/openshores-designer; the user pushes).
+`shipgen-gui` is to be the mainline application and main release item, and
+in the long run an offline designer in the OpenShores client. New: sloped
+hull between decks, background model import with progress (and 9 s instead
+of 86 s for half a million faces), an audit that copes with slanted rooms.
+
 **Next work:** the building todo list agreed with the user,
 `docs/BUILDING_TODO.md` (power plants first).
 

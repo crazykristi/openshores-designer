@@ -569,6 +569,7 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["windowSill"] = windowSillFeet;
 	root["windowTop"] = windowTopFeet;
 	root["joinWindows"] = joinWindows;
+	root["slopedDecks"] = slopedDecks;
 	root["width"] = m_width;
 	root["depth"] = m_depth;
 	root["decks"] = m_decks;
@@ -716,6 +717,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.windowSillFeet = root["windowSill"].toDouble(plan.windowSillFeet);
 	plan.windowTopFeet = root["windowTop"].toDouble(plan.windowTopFeet);
 	plan.joinWindows = root["joinWindows"].toBool(plan.joinWindows);
+	plan.slopedDecks = root["slopedDecks"].toBool(plan.slopedDecks);
 	plan.m_width = qBound(2, root["width"].toInt(), 400);
 	plan.m_depth = qBound(2, root["depth"].toInt(), 400);
 	plan.m_decks = qBound(1, root["decks"].toInt(), 64);

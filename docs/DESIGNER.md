@@ -244,14 +244,29 @@ names the step it is on and can stop it between steps (in 0.3.0-alpha the
 closing of that window counted as Stop and threw every plan away; fixed in
 0.3.1-alpha); `shipgen plan-from-model` prints the steps with their times.
 
+Before anything else the model is **repaired the way the mesh tool does
+it** (`RepairMesh`: triangles with no area and doubles taken away, windings
+turned, holes closed), and again after thinning; a repair is kept only when
+it leaves fewer broken edges (on some models closing holes makes things
+worse), and the notes say what was done. The user's Babylon 5 Warlock
+gained about 40 percent more hull triangles from it.
+
+How much of the model came through is measured by points spread through
+its inside: the share that lands on hull triangles. Below 85 percent the
+importer tries longer lengths (1.5 to 4 times, up to 2000 ft) and
+**recommends** the shortest that holds 85 percent, or the best one if it
+gains at least ten points, with the grid it gives. The cells and decks keep
+their size, which doors and headroom need; a longer ship makes the thin
+parts of the model thick enough for them. In the designer the message has a
+button to import again at that length. The Warlock: about 63 percent at
+150 ft, 83 percent at the recommended 450 ft (which the real import then
+confirms).
+
 What went wrong is said plainly: a plan that could not be made gives the
 reason in a message box, and a plan that was made but needs looking over
 (the model is not a closed surface, it is in many pieces, or little of it
-came through) says so too. The summary gives the share of the model's
-volume that the hull triangles hold; below 40 percent it suggests a longer
-length, a lower *Inside at least* or smaller cells. A slender ship at the
-default 150 ft (the user's Babylon 5 Warlock: 124 triangles, 652 cubic
-meters) is small; give it its real length.
+came through) says so too. Below half it also suggests a lower
+*Inside at least*.
 
 *File > New plan from a 3D model* (or `shipgen plan-from-model`) fills in
 the hull triangles from an stl, 3ds or obj model (`PlanFromModel`,

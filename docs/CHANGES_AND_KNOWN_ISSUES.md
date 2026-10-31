@@ -1,5 +1,20 @@
 # Changes and known issues
 
+## 31 October 2026, after 0.3.1-alpha: repair and length recommendation
+
+* **The model import repairs like the mesh tool** (the user): `RepairMesh`
+  (clean, windings, close holes) before and after thinning, kept only when
+  it leaves fewer broken edges. The Warlock: 176 hull triangles instead of
+  124; the Moogle is unchanged (the repair after thinning made it worse,
+  so it was not kept, and the notes say so).
+* **A recommended length** (the user: keep as much of the geometry as
+  possible): how much of the model the hull holds is measured by points
+  through its inside; below 85 percent longer lengths are tried and the
+  shortest that holds 85 percent (or ten points more) is recommended, with
+  a button in the designer to import again at it. The summary no longer
+  gives a share of the volume (overfilled cells made it read over 100
+  percent).
+
 ## 31 October 2026: release 0.3.1-alpha (bug fixes)
 
 * **The model import kept no plan** (the user, with a Babylon 5 Warlock

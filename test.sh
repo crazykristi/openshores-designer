@@ -725,6 +725,19 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		echo "  FAIL  the plan from a model is wrong"
 		cat "$WORK/plan/frommodel.txt" | head -5
 	fi
+	# The importer says how much of the model came through and recommends a
+	# length that keeps more: the test box 60 ft long is 15 ft high, a deck
+	# and a half, and keeps about 63%; at 90 ft it fills three decks.
+	"$SHIPGEN" plan-from-model "$HERE/testdata/testhull.stl" "$WORK/plan/short.json" --length 60 > "$WORK/plan/short.txt" 2>&1
+	if grep -q 'holding about 6[0-9]% of the model' "$WORK/plan/short.txt" &&
+			grep -q '^Recommended: about 90 ft long holds about' "$WORK/plan/short.txt"; then
+		pass=$((pass+1))
+		echo "  ok    the importer recommends a length that keeps more of the model"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the importer's recommendation is wrong"
+		grep -E 'holding|Recommended' "$WORK/plan/short.txt"
+	fi
 	# A vehicle bay: five door edges side by side on the engine room's
 	# starboard wall make one wide bay door, and a ground vehicle parking
 	# spot goes on its floor.

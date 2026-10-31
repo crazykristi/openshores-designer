@@ -115,7 +115,19 @@ struct PlanFromModelOptions
 	std::function<bool(const QString& step, int done, int total)>	progress;
 
 };
+// What came of it, beside the notes.
+struct PlanFromModelReport
+{
+	double	keptShare = 0;			// The share of the model (points through its inside) on hull triangles.
+	// When much is lost (under 85 percent), the shortest length tried that
+	// keeps 85 percent (or the best one tried), and what it keeps; 0 when
+	// no longer length is needed or none keeps at least ten points more. The cells and decks stay
+	// the size they are (doors and headroom need them): a longer ship makes
+	// the thin parts of the model thick enough for them.
+	double	suggestedLength = 0;
+	double	suggestedShare = 0;
+};
 bool	PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,
-		QStringList& notes, QString& error);
+		QStringList& notes, QString& error, PlanFromModelReport* report = 0);
 
 #endif

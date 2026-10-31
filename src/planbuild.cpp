@@ -1794,7 +1794,7 @@ static AuScTri TriOf(const AuPoint& a, const AuPoint& b, const AuPoint& c)
 }
 
 bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,
-		QStringList& notes, QString& error)
+		QStringList& notes, QString& error, PlanFromModelReport* report)
 {
 	auto step = [&](const QString& what, int done = 0, int total = 0) {
 		if(options.progress && !options.progress(what, done, total))
@@ -1814,8 +1814,35 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		error = QString("%1 has no triangles.").arg(modelFile);
 		return false;
 	}
-	// A big model is thinned out first, the way shipgen reduce does it, and
-	// the holes the thinning opens are closed again.
+	// Tidied up first, the way the mesh tool does it (and shipgen reduce):
+	// models from the internet have triangles with no area, doubles, faces
+	// the wrong way round and holes, and an inside cannot be told without
+	// a closed surface.
+	if(!step("Repairing the model (as the mesh tool does)"))
+		return false;
+	// A repair is kept only when it leaves fewer broken edges: on some models
+	// (the Moogle, after thinning) closing the holes makes things worse.
+	auto brokenEdges = [](const AuScTriList& t) {
+		const MeshSolidity m = AuditSolidity(t);
+		return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges;
+	};
+	auto repair = [&](const QString& when) {
+		QStringList done;
+		const AuScTriList repaired = RepairMesh(tris, &done);
+		if(done.isEmpty())
+			return;
+		if(brokenEdges(repaired) <= brokenEdges(tris))
+		{
+			tris = repaired;
+			notes << when + done.join("; ") + ".";
+		}
+		else
+			notes << when + "the mesh tool's repair (" + done.join("; ") + ") left more broken edges than "
+					"before, so the model was kept as it was.";
+	};
+	repair("Repaired the model: ");
+	// A big model is thinned out next, the way shipgen reduce does it, and
+	// tidied up again after (thinning opens holes).
 	if(options.maxFaces > 0 && tris.size() > options.maxFaces)
 	{
 		const int before = tris.size();
@@ -1832,15 +1859,14 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 				tris = quick;
 		}
 		tris = SimplifyMesh(tris, options.maxFaces, SimplifyMethod::Quadric);
-		if(InspectMesh(tris).loose > 0)
-			tris = FillHoles(tris);
 		notes << QString("The model was thinned from %1 to %2 faces.").arg(before).arg(tris.size());
+		repair("After thinning: ");
 	}
 
 	// Repair it only when it needs it, and keep the repair only when it helps:
 	// on some closed models the repair does more harm than good.
 	auto problems = [](const MeshSolidity& m) { return m.openEdges + m.foldedEdges + m.thickEdges - m.pinchedEdges; };
-	if(!step("Repairing the surface"))
+	if(!step("Checking the surface is closed"))
 		return false;
 	{
 		const AuScTriList windings = FixWindings(CleanMesh(tris));
@@ -1855,8 +1881,9 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	}
 	const MeshSolidity solidity = AuditSolidity(tris);
 	if(!solidity.Closed() && !solidity.ClosedButForOpenings())
-		notes << QString("The model is not closed (%1 open, %2 thick, %3 folded edges after repair), so its inside "
-				"cannot be told. Repair it first, for example with shipgen reduce.")
+		notes << QString("The model is not closed even after repair (%1 open, %2 thick, %3 folded edges), so its "
+				"inside cannot be told everywhere: only its closed pieces count as hull. The mesh tool "
+				"(shipgen-mesh) can show where.")
 				.arg(solidity.openEdges).arg(solidity.thickEdges).arg(solidity.foldedEdges);
 	else if(!solidity.Closed())
 		notes << QString("The model is not quite closed (%1 open edges after repair); the inside is found by a "
@@ -1907,7 +1934,6 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	// they overlap. Each piece is tested on its own, and a point is inside
 	// the model when it is inside any of them.
 	QList<SolidMesh> pieces;
-	double modelVolume = 0;		// Of the closed pieces, in cubic feet (overlaps counted twice).
 	if(!step("Finding its pieces"))
 		return false;
 	{
@@ -1938,13 +1964,7 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 		{
 			SolidMesh solid(piece);
 			if(solid.HasInside())
-			{
 				pieces << solid;
-				double v = 0;
-				for(const AuScTri& t : piece)
-					v += AuPoint(t.V0()).Dot(AuPoint(t.V1()).Cross(AuPoint(t.V2()))) / 6.0;
-				modelVolume += fabs(v);
-			}
 		}
 		if(byPiece.size() > 1)
 			notes << QString("The model has %1 separate pieces; %2 of them are closed and count as hull.")
@@ -2007,21 +2027,138 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 				.arg(QFileInfo(modelFile).fileName()).arg(options.cellFeet);
 		return false;
 	}
-	// How much of the model came through: a slender model, or one with fine
-	// parts, keeps little of itself on a grid of cells and decks.
-	const double filled = hull * options.cellFeet * options.cellFeet / 4 * options.deckFeet;
-	const double share = modelVolume > 0 ? filled / modelVolume : 1.0;
-	notes << QString("%1 by %2 cells of %3 ft, %4 decks; %5 hull triangles%6.").arg(plan.Width()).arg(plan.Depth())
-			.arg(options.cellFeet).arg(plan.Decks()).arg(hull)
-			.arg(modelVolume > 0 ? QString(", about %1% of the model's volume").arg(qRound(share * 100)) : QString());
-	if(modelVolume > 0)
+	// How much of the model came through: the share of points spread through
+	// the inside of the model that land on hull triangles. A slender model,
+	// or one with fine parts, keeps little of itself on a grid of cells and
+	// decks.
+	QVector<AuPoint> samples;
 	{
-		if(share < .4)
-			notes << QString("Only a little of the model came through: the hull triangles hold about %1% of its "
-					"volume, because most of it is thinner than a %2 ft cell or a %3 ft deck at %4 ft long. Make "
-					"it longer, or lower 'Inside at least' (now %5), or use smaller cells.")
-					.arg(qRound(share * 100)).arg(options.cellFeet).arg(options.deckFeet).arg(options.lengthFeet)
-					.arg(options.threshold);
+		const AuPoint size = mx - mn;
+		const double step3 = qMax(.25, pow(size.x * size.y * qMax(size.z, 1.0) / 30000.0, 1.0 / 3));
+		for(double x = mn.x + step3 / 2; x < mx.x; x += step3)
+			for(double y = mn.y + step3 / 2; y < mx.y; y += step3)
+				for(double z = mn.z + step3 / 2; z < mx.z; z += step3)
+					if(inModel(AuPoint(x, y, z)))
+						samples << AuPoint(x, y, z);
 	}
+	// Which triangle of a grid of 'cell' and 'deck' a point is in.
+	auto triangleOf = [](const TriPlan& grid, double deck, const AuPoint& p) {
+		const QPointF lo = grid.Corner(0, 0);
+		const int cx = int(floor((p.x - lo.x()) / grid.cellFeet)), cy = int(floor((p.y - lo.y()) / grid.cellFeet));
+		const QPointF c = grid.CellCentre(cx, cy);
+		const double dx = p.x - c.x(), dy = p.y - c.y();
+		const int k = fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S);
+		return TriRef(int(floor(p.z / deck)), cx, cy, k);
+	};
+	auto keptOnPlan = [&]() {
+		int in = 0;
+		for(const AuPoint& p : samples)
+		{
+			const TriRef t = triangleOf(plan, plan.deckFeet, p);
+			if(plan.Valid(t) && plan.Hull(t))
+				++in;
+		}
+		return samples.isEmpty() ? 1.0 : double(in) / samples.size();
+	};
+	const double kept = keptOnPlan();
+	notes << QString("%1 by %2 cells of %3 ft, %4 decks; %5 hull triangles, holding about %6% of the model.")
+			.arg(plan.Width()).arg(plan.Depth()).arg(options.cellFeet).arg(plan.Decks()).arg(hull)
+			.arg(qRound(kept * 100));
+	if(report)
+		report->keptShare = kept;
+
+	// When much is lost, find the length that keeps more: a longer ship with
+	// the same cells and decks is the same as smaller cells and decks on
+	// this one. The triangles the sample points fall in are judged the way
+	// the grid above was, from a little longer to four times, up to 2000 ft.
+	if(!samples.isEmpty() && kept < .85)
+	{
+		auto keptAt = [&](double k) {
+			TriPlan grid;
+			grid.cellFeet = options.cellFeet / k;
+			const double deck = options.deckFeet / k;
+			grid.Resize(int(ceil((mx.x - mn.x) / grid.cellFeet)) + 2,
+					int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 / grid.cellFeet)) + 2);
+			QHash<qint64, bool> judged;
+			int in = 0;
+			for(const AuPoint& p : samples)
+			{
+				const TriRef t = triangleOf(grid, deck, p);
+				const qint64 key = ((qint64(t.deck) * 100000 + t.cy) * 100000 + t.cx) * 4 + t.k;
+				QHash<qint64, bool>::const_iterator it = judged.constFind(key);
+				bool hullHere;
+				if(it != judged.constEnd())
+					hullHere = it.value();
+				else
+				{
+					QPointF c[3];
+					grid.TriCorners(TriRef(0, t.cx, t.cy, t.k), c);
+					const QPointF middle = (c[0] + c[1] + c[2]) / 3.0;
+					QPointF at[4] = { middle, middle, middle, middle };
+					for(int i = 0; i < 3; ++i)
+						at[i + 1] = middle + (c[i] - middle) * .6;
+					int inside = 0, tests = 0;
+					for(const QPointF& q : at)
+						for(double h : { .2, .5, .8 })
+						{
+							++tests;
+							if(inModel(AuPoint(q.x(), q.y(), deck * (t.deck + h))))
+								++inside;
+						}
+					hullHere = inside >= options.threshold * tests && inside > 0;
+					judged.insert(key, hullHere);
+				}
+				if(hullHere)
+					++in;
+			}
+			return double(in) / samples.size();
+		};
+		double bestLength = 0, bestKept = kept;
+		for(double k : { 1.5, 2.0, 3.0, 4.0 })
+		{
+			const double length = options.lengthFeet * k;
+			if(length > 2000.0)
+				break;
+			if(!step(QString("Looking for a length that keeps more of the model: %1 ft").arg(qRound(length))))
+				return false;
+			// Only worth it for at least ten points more: the shortest length
+			// that keeps enough, or else the best one tried.
+			const double here = keptAt(k);
+			if(here >= .85 && here >= kept + .1)
+			{
+				bestKept = here;
+				bestLength = length;
+				break;
+			}
+			if(here >= bestKept + .1 || (bestLength > 0 && here > bestKept + .05))
+			{
+				bestKept = here;
+				bestLength = length;
+			}
+		}
+		if(bestLength > 0)
+		{
+			const double k = bestLength / options.lengthFeet;
+			const int w = int(ceil((mx.x - mn.x) * k / options.cellFeet)) + 2;
+			int dpt = int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 * k / options.cellFeet)) + 2;
+			dpt += dpt % 2;
+			const int dk = qMax(1, int(ceil(mx.z * k / options.deckFeet - .2)));
+			notes << QString("Recommended: about %1 ft long holds about %2% of the model (a grid of %3 by %4 cells, "
+					"%5 decks), against %6% at %7 ft. The cells and decks stay %8 and %9 ft, which doors and "
+					"headroom need; a longer ship makes the thin parts of the model thick enough for them.")
+					.arg(qRound(bestLength)).arg(qRound(bestKept * 100)).arg(w).arg(dpt).arg(dk)
+					.arg(qRound(kept * 100)).arg(qRound(options.lengthFeet)).arg(options.cellFeet).arg(options.deckFeet);
+			if(report)
+			{
+				report->suggestedLength = bestLength;
+				report->suggestedShare = bestKept;
+			}
+		}
+	}
+	if(kept < .5)
+		notes << QString("Only a little of the model came through (about %1%): most of it is thinner than a %2 ft "
+				"cell or a %3 ft deck at %4 ft long. Make it longer, or lower 'Inside at least' (now %5).")
+				.arg(qRound(kept * 100)).arg(options.cellFeet).arg(options.deckFeet).arg(options.lengthFeet)
+				.arg(options.threshold);
 	return true;
 }

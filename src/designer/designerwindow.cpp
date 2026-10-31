@@ -765,6 +765,7 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 	QStringList notes;
 	QString error;
 	bool made = false;
+	PlanFromModelReport report;
 	QMutex lock;
 	QString stepText = "Starting";
 	std::atomic<bool> stop(false);
@@ -773,7 +774,7 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 		stepText = what;
 		return !stop.load();
 	};
-	QThread* worker = QThread::create([&]() { made = PlanFromModel(modelFile, options, plan, notes, error); });
+	QThread* worker = QThread::create([&]() { made = PlanFromModel(modelFile, options, plan, notes, error, &report); });
 	QProgressDialog progress(QString("Reading %1").arg(QFileInfo(modelFile).fileName()), "Stop", 0, 0, this);
 	progress.setWindowTitle("New plan from a 3D model");
 	progress.setWindowModality(Qt::WindowModal);
@@ -833,11 +834,26 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 	RefreshTitle();
 	m_status->setText(notes.join(" "));
 	// What went less than well is worth more than a line in the status bar.
-	const QStringList worries = notes.filter(QRegularExpression("not closed|not quite closed|separate pieces|little of"));
+	// And a longer ship, when that would keep much more of the model, at the
+	// press of a button.
+	const QStringList worries = notes.filter(QRegularExpression("not closed|not quite closed|separate pieces|little of|Recommended"));
 	if(tell && !worries.isEmpty())
-		QMessageBox::information(this, "New plan from a 3D model",
+	{
+		QMessageBox box(QMessageBox::Information, "New plan from a 3D model",
 				QString("The plan was made from %1, but look it over:\n\n%2").arg(QFileInfo(modelFile).fileName(),
-						notes.join("\n\n")));
+						notes.join("\n\n")), QMessageBox::Ok, this);
+		QPushButton* again = 0;
+		if(report.suggestedLength > 0)
+			again = box.addButton(QString("Make it %1 long").arg(m_metric
+					? QString("%1 m").arg(Shown(report.suggestedLength), 0, 'f', 0)
+					: QString("%1 ft").arg(qRound(report.suggestedLength))), QMessageBox::AcceptRole);
+		box.exec();
+		if(again && box.clickedButton() == again)
+		{
+			options.lengthFeet = report.suggestedLength;
+			return ImportModel(modelFile, options, tell);
+		}
+	}
 	return true;
 }
 

@@ -104,6 +104,12 @@ AuScTriList	FixWindings(const AuScTriList& tris);
 // out as closed as it can be.
 AuScTriList	FillHoles(const AuScTriList& tris);
 
+// Everything the mesh tool's "Tidying up" does, in its order: takes away
+// the triangles with no area and the doubles, turns the ones that wind the
+// wrong way round, and closes the holes. What it did is added to 'done' (one
+// line per step that changed anything), for telling the user.
+AuScTriList	RepairMesh(const AuScTriList& tris, QStringList* done = 0);
+
 // Puts the model in the place it belongs: the bottom on the ground and the
 // middle in the middle.
 AuScTriList	GroundMesh(const AuScTriList& tris);

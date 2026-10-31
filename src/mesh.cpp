@@ -1407,6 +1407,39 @@ AuScTriList FixWindings(const AuScTriList& tris)
 
 
 
+AuScTriList RepairMesh(const AuScTriList& tris, QStringList* done)
+{
+	AuScTriList out = tris;
+	const MeshReport first = InspectMesh(out);
+	if(first.degenerate || first.duplicate)
+	{
+		out = CleanMesh(out);
+		if(done)
+		{
+			QStringList what;
+			if(first.degenerate)
+				what << QString("%1 triangle(s) with no area").arg(first.degenerate);
+			if(first.duplicate)
+				what << QString("%1 double(s)").arg(first.duplicate);
+			*done << "took away " + what.join(" and ");
+		}
+	}
+	if(!InspectMesh(out).windingsAgree)
+	{
+		out = FixWindings(out);
+		if(done)
+			*done << "turned the triangles that wound the wrong way round";
+	}
+	const int loose = InspectMesh(out).loose;
+	if(loose > 0)
+	{
+		out = FillHoles(out);
+		if(done)
+			*done << QString("closed holes (%1 open edge(s), %2 left)").arg(loose).arg(InspectMesh(out).loose);
+	}
+	return out;
+}
+
 AuScTriList FillHoles(const AuScTriList& tris)
 {
 	if(tris.isEmpty())

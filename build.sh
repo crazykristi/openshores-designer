@@ -184,7 +184,10 @@ elif [ "$HOST" = Darwin ]; then
 	MOC="$QT_BINS/moc"
 	RCC="$QT_BINS/rcc"
 	# Match GCC's acceptance of the engine/tool integer-to-double initializers.
-	CXXFLAGS="-std=c++11 -fPIC -O2 -w -pthread -Wno-c++11-narrowing"
+	# Without -ffp-contract=off, clang on Apple's processors merges multiply and
+	# add, which rounds differently: points on a void's edge come out on the wrong
+	# side of it, and the engine reports walk paths as blocked.
+	CXXFLAGS="-std=c++11 -fPIC -O2 -w -pthread -Wno-c++11-narrowing -ffp-contract=off"
 	CXXFLAGS_TOOL="$CXXFLAGS -g"
 	INCS="-I$QT_INC -F$QT_LIBS"
 	QLIBS="-F$QT_LIBS -Wl,-rpath,$QT_LIBS -framework OpenGL -framework OpenAL"

@@ -80,7 +80,10 @@ done
 bad=0
 while IFS= read -r -d '' file; do
 	if file -b "$file" | grep -q 'Mach-O'; then
-		if otool -L "$file" | tail -n +2 | grep -E '/opt/homebrew|/usr/local/(opt|Cellar|lib)'; then
+		# A library's own install name is listed too; it is only a label, and
+		# a plugin keeps the one it was built with.
+		own="$(otool -D "$file" | tail -n +2)"
+		if otool -L "$file" | tail -n +2 | awk -v own="$own" '$1 != own' | grep -E '/opt/homebrew|/usr/local/(opt|Cellar|lib)'; then
 			echo "  ... in $file" >&2
 			bad=1
 		fi

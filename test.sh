@@ -12,6 +12,27 @@ export LD_LIBRARY_PATH="$TC/usr/lib64:${LD_LIBRARY_PATH:-}"
 SHIPGEN="$HERE/build/bin/shipgen"
 SHIPGEN_GUI="$HERE/build/bin/shipgen-gui"
 SHIPGEN_MESH="$HERE/build/bin/shipgen-mesh"
+# macOS has neither GNU timeout nor an X11 desktop. Use Cocoa for GUI tests.
+ON_MAC=0
+if [ "$(uname -s)" = Darwin ]; then
+	ON_MAC=1
+	timeout() {
+		python3 - "$@" <<'PYTHON'
+import os
+import subprocess
+import sys
+
+env = os.environ.copy()
+env.pop("QT_QPA_PLATFORM", None)
+try:
+    result = subprocess.run(sys.argv[2:], env=env, timeout=float(sys.argv[1]))
+    sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+PYTHON
+	}
+fi
+
 WORK="$HERE/work/test"
 DESIGNS="${DESIGNS:-$HOME/Documents/designs}"
 EXAMPLE_BUILDINGS="${EXAMPLE_BUILDINGS:-$HOME/Documents/designs/examplebuildings}"
@@ -974,7 +995,7 @@ if [ -x "$SHIPGEN_GUI" ]; then
 	# started, which still catches a crash on the way up.
 	XVFB_PID=""
 	GUI_DISPLAY=""
-	if [ -x "$TC/x11/Xvfb" ]; then
+	if [ "$ON_MAC" = 0 ] && [ -x "$TC/x11/Xvfb" ]; then
 		"$TC/x11/Xvfb" :99 -screen 0 1280x900x24 > "$WORK/xvfb.log" 2>&1 &
 		XVFB_PID=$!
 		sleep 1
@@ -1000,8 +1021,12 @@ if [ -x "$SHIPGEN_GUI" ]; then
 	if run_gui "${GUI_ARGS[@]}" > "$WORK/gui.log" 2>&1; then
 		pass=$((pass+1))
 		echo "  ok    the graphical tool starts"
-		if [ -n "$GUI_DISPLAY" ]; then
-			preview_size=$(stat -c %s "$WORK/preview.png" 2>/dev/null || echo 0)
+		if [ -n "$GUI_DISPLAY" ] || [ "$ON_MAC" = 1 ]; then
+			if [ "$ON_MAC" = 1 ]; then
+				preview_size=$(stat -f %z "$WORK/preview.png" 2>/dev/null || echo 0)
+			else
+				preview_size=$(stat -c %s "$WORK/preview.png" 2>/dev/null || echo 0)
+			fi
 			if [ "$preview_size" -gt 4000 ]; then
 				pass=$((pass+1))
 				echo "  ok    the 3D view draws the painted model ($preview_size bytes)"
@@ -1017,7 +1042,7 @@ if [ -x "$SHIPGEN_GUI" ]; then
 	fi
 
 	SHIPGEN_DESIGNER="$HERE/build/bin/shipgen-designer"
-	if [ -x "$SHIPGEN_DESIGNER" ] && [ -n "$GUI_DISPLAY" ]; then
+	if [ -x "$SHIPGEN_DESIGNER" ] && { [ -n "$GUI_DISPLAY" ] || [ "$ON_MAC" = 1 ]; }; then
 		if DISPLAY="$GUI_DISPLAY" LIBGL_ALWAYS_SOFTWARE=1 timeout 60 "$SHIPGEN_DESIGNER" --open "$WORK/plan/example.json" \
 				--step 5 --build --screenshot "$WORK/designer.png" > "$WORK/designer.log" 2>&1; then
 			pass=$((pass+1))

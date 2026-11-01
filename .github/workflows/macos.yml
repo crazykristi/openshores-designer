@@ -58,6 +58,8 @@ jobs:
 
       - name: Start the designer from the app
         continue-on-error: true
+        env:
+          QT_DEBUG_PLUGINS: 1  # Says why a plugin would not load.
         run: |
           perl -e 'alarm shift; exec @ARGV' 180 \
             "build/macos/stage/Shipgen Designer.app/Contents/MacOS/shipgen-designer" \

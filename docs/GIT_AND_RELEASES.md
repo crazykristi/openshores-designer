@@ -105,6 +105,13 @@ releases. The releases so far:
        --title "Shipgen Designer 0.3.0-alpha" --notes-file RELEASE_NOTES.md --prerelease
    ```
 
+7. **The Mac download** comes from GitHub, since it has to be built on a Mac:
+   pushing the tag starts *Actions > macOS build*. If the release was not
+   published by the time the build ended, the dmg stays with the run; run the
+   workflow by hand (*Run workflow*, with the tag filled in) to add it to the
+   release. The same builds any older tag. Mention the dmg in the release text
+   once it has been tried on a real Mac.
+
 ### What the AppImage needs
 
 It bundles Qt 5 and its X11 and Wayland plugins, OpenAL and the other

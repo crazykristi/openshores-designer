@@ -493,7 +493,14 @@ brew install qt@5
 
 `build.sh` finds Qt through `$(brew --prefix qt@5)/bin/qmake` (set `QMAKE`
 to use another one) and refuses Qt 6. The designer asks for a desktop
-OpenGL 3.3 context, as on Windows. There is no packaged Mac download yet.
+OpenGL 3.3 context, as on Windows.
+
+`packaging/build-macos-app.sh` packs that build as
+`build/shipgen-designer-<version>-macos-<arm64|x86_64>.dmg`, with Qt inside the
+app. `.github/workflows/macos.yml` does this on GitHub's Macs, for Apple and
+Intel processors, and adds the dmg to the release (`docs/GIT_AND_RELEASES.md`).
+The app is signed ad hoc, not by a paid Apple Developer account, so macOS asks
+the first time it is opened (`packaging/macos-readme.txt`).
 
 ---
 

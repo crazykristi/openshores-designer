@@ -1,5 +1,15 @@
 # Changes and known issues
 
+## 1 November 2026: a Mac download, built on GitHub
+
+* **`.github/workflows/macos.yml`** builds a dmg on GitHub's Macs, for Apple
+  and Intel processors, for every tag or by hand for an older one, and adds
+  it to the release. `packaging/build-macos-app.sh` makes the app (Qt inside
+  it, signed ad hoc, checked to need nothing from the build machine, and
+  refusing to pack the private building designs).
+* **Known**: written on Linux; the workflow and script have not run yet, and
+  the app has not been tried on a real Mac.
+
 ## 1 November 2026: release 0.3.5-alpha
 
 * **Version 0.3.5-alpha** (`src/version.h`, `RELEASE_NOTES.md`): everything

@@ -1,0 +1,83 @@
+# Builds the macOS download on GitHub's Macs: for Apple and for Intel
+# processors. A pushed tag v* is built by itself. An existing tag can be built
+# by hand (Actions > macOS build > Run workflow, with the tag filled in), with
+# the packaging from the branch it is run on. Either way the dmg is kept with
+# the run, and added to the tag's GitHub release if there is one.
+name: macOS build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'A tag to build and add to its release, such as v0.3.5-alpha. Empty: this branch, kept with the run only.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Choose the source
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        run: |
+          git rev-parse --verify "refs/tags/$TAG^{commit}"
+          git checkout "refs/tags/$TAG"
+          # A tag from before this workflow has no packaging for the Mac.
+          git checkout "$GITHUB_SHA" -- packaging/build-macos-app.sh packaging/macos-readme.txt
+
+      - name: Install Qt 5
+        run: brew install qt@5
+
+      - name: Build
+        run: ./build.sh
+
+      # Reported, but does not hold the download back while the Mac path is new.
+      - name: Test
+        continue-on-error: true
+        run: ./test.sh
+
+      - name: Package
+        run: packaging/build-macos-app.sh
+
+      - name: Start the designer from the app
+        continue-on-error: true
+        run: |
+          perl -e 'alarm shift; exec @ARGV' 180 \
+            "build/macos/stage/Shipgen Designer.app/Contents/MacOS/shipgen-designer" \
+            --open build/macos/try/example.json --step 5 --build --screenshot "$PWD/build/macos/designer.png"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shipgen-designer-${{ runner.arch }}
+          path: |
+            build/shipgen-designer-*-macos-*.dmg
+            build/macos/designer.png
+          if-no-files-found: warn
+
+      - name: Add to the release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" build/shipgen-designer-*-macos-*.dmg --clobber
+          else
+            echo "::notice::There is no release for $TAG yet. The dmg is with this run; publish the release, then run this workflow by hand with the tag."
+          fi

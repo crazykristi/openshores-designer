@@ -20,74 +20,78 @@ as they are done.
 ### 0. Groundwork
 - [x] How teleporter pads are associated with a teleporter station: the console's pad locations and pad effect number, and pad meshes drawn with that effect (`docs/SOH_FORMAT.md`, "Transporter pads"; example `exported/buildngs/airport (teleporter).SoH`).
 - [ ] Give the generator's transporter stations pads (ships and buildings).
-- [x] The list of power plant types (from the user, 2026-10-31; see section 1). Still to check in the engine source: what each one needs.
-- [ ] Reusable building blocks: halls, towers, domes, chimneys, tanks, gears, fields of light.
+- [x] The list of power plant types (from the user, 2026-10-31; see section 1). What each needs, from the engine source: a generator, an office, and the generator module for its fuel, carried in the blueprint (2026-11-01). Full battery storage takes 3,900 to 10,300 m³.
+- [x] Reusable building blocks: halls, towers, domes, chimneys, tanks, gears, fields of light (2026-11-01).
 - [ ] Find the room counts for each type's expanded variant (the scale is settled above), and check the face budget and size limits at that scale.
-- [ ] A `test.sh` check that each type has its required parts.
+- [x] A `test.sh` check that each type has its required parts: the kit check fails on the engine's "cannot be used for its intended purpose" (2026-11-01; against the stand-in industry table).
+
+**Minimal versions of sections 1 to 6 exist as private designs (2026-11-01)**,
+kept outside this repository. A ticked item below has one; the expanded
+variants are still to do. Not yet seen in the game.
 
 ### 1. Power plants (top priority)
 One building per type, each minimal and expanded:
-- [ ] Hydro-electric
-- [ ] Coal
-- [ ] Wind
-- [ ] Solar
-- [ ] Hydrogen (fusion)
-- [ ] Nuclear fission
-- [ ] Natural gas
-- [ ] Gasoline
+- [x] Hydro-electric
+- [x] Coal
+- [x] Wind
+- [x] Solar
+- [x] Hydrogen (fusion)
+- [x] Nuclear fission
+- [x] Natural gas
+- [x] Gasoline
 
 ### 2. Resources and basic industry
-- [ ] Farm
-- [ ] Orchard
-- [ ] Mine
-- [ ] Well
-- [ ] Smelter
-- [ ] Refinery
+- [x] Farm
+- [x] Orchard
+- [x] Mine
+- [x] Well
+- [x] Smelter
+- [x] Refinery
 
 ### 3. Housing and civic
-- [ ] House
-- [ ] Apartments
-- [ ] Capitol (the Aether Spire exists as a starting point)
-- [ ] Police
-- [ ] Fire station
-- [ ] Hospital
-- [ ] University
-- [ ] Bank
-- [ ] Mass media
-- [ ] Street light
+- [x] House
+- [x] Apartments
+- [x] Capitol (the Aether Spire)
+- [x] Police
+- [x] Fire station
+- [x] Hospital
+- [x] University
+- [x] Bank
+- [x] Mass media
+- [x] Street light
 
 ### 4. Commerce and social
-- [ ] Cantina
-- [ ] Church (possibly from the user's 3D models)
-- [ ] Grocery
-- [ ] Retailer
-- [ ] Broker
-- [ ] Design studio
+- [x] Cantina
+- [x] Church (possibly from the user's 3D models)
+- [x] Grocery
+- [x] Retailer
+- [x] Broker
+- [x] Design studio
 
 ### 5. Factories
-- [ ] Textile mill
-- [ ] Clothing factory
-- [ ] Explosives factory
-- [ ] Plastics factory
-- [ ] Electronics factory
-- [ ] Computer factory
-- [ ] Pharmaceutical lab
-- [ ] Munitions plant
-- [ ] Weapons factory
-- [ ] Armorer
-- [ ] Machine shop
-- [ ] Vehicle factory
-- [ ] Aircraft factory
-- [ ] Spacecraft factory
+- [x] Textile mill
+- [x] Clothing factory
+- [x] Explosives factory
+- [x] Plastics factory
+- [x] Electronics factory
+- [x] Computer factory
+- [x] Pharmaceutical lab
+- [x] Munitions plant
+- [x] Weapons factory
+- [x] Armorer
+- [x] Machine shop
+- [x] Vehicle factory
+- [x] Aircraft factory
+- [x] Spacecraft factory
 
 ### 6. Airports and space
-- [ ] Airport, minimal, without teleporter
-- [ ] Airport, minimal, with teleporter (station plus associated pads)
+- [x] Airport, minimal, without teleporter
+- [x] Airport, minimal, with teleporter (the station; the pads are still to do)
 - [ ] Airport, expanded, without teleporter
 - [ ] Airport, expanded, with teleporter
-- [ ] Airport radar
-- [ ] Airport repair shop
-- [ ] Space station
+- [x] Airport radar
+- [x] Airport repair shop
+- [ ] Space station (a different structure; not started)
 
 ### 7. Ships (after the buildings)
 All with the P wormhole drive unless noted. Combat ships may take ideas from

@@ -25,6 +25,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <functional>
 
 #include "auscface.h"
 #include "aupoint.h"
@@ -98,5 +99,20 @@ QList<KitItem>	KitItems();
 // Builds one blueprint of the kit and saves it in 'outDir' as <label>.SoH.
 // 'log' gets what happened, including the engine's report.
 bool			BuildKitItem(const QString& key, const QString& outDir, QStringList& log, QString* savedAs = 0);
+
+class AuBdDesign;
+struct BuildingBrief;
+
+// How a kit building is made: the building template it starts from, the
+// floors, what the brief changes (industry and volumes), the body (the hull
+// the building generator fills) and the ornaments (mesh parts, added after).
+struct KitBuildingRecipe
+{
+	QString		templateKey;
+	int			floors = 1;
+	std::function<void(BuildingBrief&)>	brief;
+	std::function<void(AuBdDesign&)>	body;
+	std::function<void(AuBdDesign&)>	ornaments;
+};
 
 #endif

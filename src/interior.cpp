@@ -796,11 +796,39 @@ bool AddShaft(AuDesign& design, const QString& groupName, const AuPoint& mn, con
 	return voidId != 0;
 }
 
+bool AddVoid(AuDesign& design, const QString& groupName, const AuScFaceList& faces, quint16& voidId)
+{
+	voidId = 0;
+	AuScFaceList voidFaces = faces;
+	OrientAsVoid(voidFaces);
+	AuScRoomVoid v;
+	v.AddFaces(voidFaces);
+	SetUpRoomVoid(v, groupName, false);
+	if(!v.IsValid())
+		return false;
+	voidId = design.Parts().AddPart(v);
+	return voidId != 0;
+}
+
+bool SetVoidGravity(AuDesign& design, quint16 voidId, GRAVITY gravity)
+{
+	AuScPart* part = voidId ? design.Parts().value(voidId) : 0;
+	if(!part)
+		return false;
+	part->SetGravity(gravity, AuPoint(0, 0, 1));
+	return part->GravityType() == gravity;
+}
+
 bool CutLadderOpening(AuDesign& design, const AuPoint& mn, const AuPoint& mx, quint16 lowerRoomId, quint16 upperRoomId)
+{
+	return CutOpening(design, BoxFaces(mn, mx), lowerRoomId, upperRoomId);
+}
+
+bool CutOpening(AuDesign& design, const AuScFaceList& jigFaces, quint16 lowerRoomId, quint16 upperRoomId)
 {
 	if(!lowerRoomId || !upperRoomId)
 		return false;
-	AuScFaceList jig = BoxFaces(mn, mx);
+	AuScFaceList jig = jigFaces;
 	OrientAsHull(jig);
 	QList<quint16> added;
 	if(!JigCut(design, AuScPart::Part_CuttingJig, jig, lowerRoomId, upperRoomId, &added))

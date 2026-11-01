@@ -18,8 +18,9 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.3-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.3-alpha),
-a pre-release: angular and classic hull styles, sharp hulls from 3D models) are an AppImage holding the designer, `shipgen-gui` and the
+is [0.3.5-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.5-alpha),
+a pre-release: zero-G shafts, a progress bar and background shaping in the
+designer, paint over the whole model hull, macOS from source) are an AppImage holding the designer, `shipgen-gui` and the
 command line; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
@@ -355,6 +356,7 @@ The brief is the same kind of JSON file:
     "industry": "capitol",
     "groundParking": 5,
     "spaceParking": 2,
+    "spacecraftParking": 0,
     "volumes": {
         "offices": 500, "store": 500, "hold": 500, "auditorium": 2000
     }
@@ -477,6 +479,22 @@ and the first things to check. That path has not been run on a Windows
 machine in this workspace, so it is documented rather than claimed as
 tested.
 
+### macOS
+
+Since 0.3.5-alpha (a contribution from yamamushi, pull request #1) the
+tools build natively on macOS with Apple's `clang++` and Qt 5 from
+Homebrew:
+
+```bash
+brew install qt@5
+./build.sh          # build/bin/shipgen, shipgen-gui, shipgen-designer, ...
+./test.sh           # the GUI tests run natively (Cocoa), no X server needed
+```
+
+`build.sh` finds Qt through `$(brew --prefix qt@5)/bin/qmake` (set `QMAKE`
+to use another one) and refuses Qt 6. The designer asks for a desktop
+OpenGL 3.3 context, as on Windows. There is no packaged Mac download yet.
+
 ---
 
 ## Release: the AppImage
@@ -486,9 +504,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.3-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.3-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.3-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.5-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.5-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.5-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in

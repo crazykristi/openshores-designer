@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QHash>
+#include <QMutex>
 #include <QLineF>
 #include <QMap>
 #include <QQueue>
@@ -26,6 +27,7 @@
 #include "auscparts.h"
 #include "generate.h"
 #include "interior.h"
+#include "names.h"
 #include "shipgen.h"
 
 namespace {
@@ -2084,7 +2086,7 @@ bool SliceSolid::Build(const AuScTriList& tris, const AuPoint& mn, const AuPoint
 	};
 	for(int n = 0; n < tris.size(); ++n)
 	{
-		if(n % 200000 == 0 && progress && !progress(0, n, tris.size()))
+		if(n % qMax(2000, int(tris.size() / 100)) == 0 && progress && !progress(0, n, tris.size()))
 			return false;
 		const AuScTri& t = tris.at(n);
 		const QVector<AuPoint> corners = { AuPoint(t.V0()), AuPoint(t.V1()), AuPoint(t.V2()) };
@@ -2177,6 +2179,14 @@ static QString ModelKey(const PlanModel& model, double cellFeet)
 			.arg(model.scale, 0, 'g', 12).arg(model.sealFeet).arg(cellFeet)
 			.arg(model.mirrorX).arg(model.mirrorY).arg(model.mirrorZ).arg(model.height, 0, 'g', 12);
 }
+// The model caches are shared by the designer's background work and its
+// own thread, so they are used one at a time.
+static QMutex& ModelCacheLock()
+{
+	static QMutex lock(QMutex::Recursive);
+	return lock;
+}
+
 static QHash<QString, std::shared_ptr<SliceSolid> >& ModelSolids()
 {
 	static QHash<QString, std::shared_ptr<SliceSolid> > solids;
@@ -2220,11 +2230,16 @@ static QHash<QString, std::shared_ptr<AuScTriList> >& ModelTris()
 	return tris;
 }
 
-static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& error)
+static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& error,
+		const PlanProgress& progress = PlanProgress())
 {
+	QMutexLocker locked(&ModelCacheLock());
 	const QString key = ModelKey(plan.model, plan.cellFeet);
 	if(ModelSolids().contains(key))
 		return ModelSolids().value(key);
+	const QString name = QFileInfo(plan.model.file).fileName();
+	if(progress)
+		progress(QString("Reading the model %1").arg(name), 0, 0);
 	AuScTriList tris;
 	if(!LoadMeshFile(plan.model.file, tris, error))
 		return std::shared_ptr<SliceSolid>();
@@ -2233,7 +2248,13 @@ static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& e
 	MeshExtents(tris, mn, mx);
 	const double fine = SliceStep(mn, mx, plan.cellFeet);
 	std::shared_ptr<SliceSolid> solid = std::make_shared<SliceSolid>();
-	solid->Build(tris, mn, mx, fine, qMax(0, int(ceil(plan.model.sealFeet / fine / 2 - 1e-9))), 0);
+	solid->Build(tris, mn, mx, fine, qMax(0, int(ceil(plan.model.sealFeet / fine / 2 - 1e-9))),
+			[&](int phase, int done, int total) {
+				if(progress)
+					progress(phase == 0 ? QString("Slicing %1: %2 of %3 faces").arg(name).arg(done).arg(total)
+							: QString("Finding the inside of the slices: %1 of %2").arg(done).arg(total), done, total);
+				return true;
+			});
 	ModelSolids().insert(key, solid);
 	ModelTris().insert(key, std::make_shared<AuScTriList>(tris));
 	return solid;
@@ -2243,6 +2264,7 @@ static std::shared_ptr<SliceSolid> ModelSolidFor(const TriPlan& plan, QString& e
 // solid was kept, as PlanFromModel keeps it).
 static std::shared_ptr<AuScTriList> ModelTrisFor(const TriPlan& plan)
 {
+	QMutexLocker locked(&ModelCacheLock());
 	const QString key = ModelKey(plan.model, plan.cellFeet);
 	if(ModelTris().contains(key))
 		return ModelTris().value(key);
@@ -2335,7 +2357,60 @@ static AuPoint CornerOnPlanes(const QVector<AuPoint>& pts, const QVector<AuPoint
 // model's own planes where the surface is the model's, the rooms' walls
 // where it is theirs (dual contouring, as AngularHullMesh). Without, as
 // below (smooth).
-static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, const AuScTriList* tris = 0)
+// The paint for a point of a hull surface made from a field (the model as
+// the hull, or the angular hull). The surface lies round the drawn hull
+// triangles, partly in triangles next to them that are not hull and cannot
+// be painted (the skin, a deck's top just over the deck line, model parts the
+// grid missed, the grid's edge): those take the paint of the nearest hull
+// triangle, looking straight out along x, y and z first (so a colour edge
+// carries straight on), then round the deck. Base coat when none is near.
+static int HullPaintNear(const TriPlan& plan, const AuPoint& p, double reach)
+{
+	const QPointF c0 = plan.Corner(0, 0);
+	const double cell = plan.cellFeet;
+	auto triAt = [&](const AuPoint& q) {
+		const int cx = qBound(0, int(floor((q.x - c0.x()) / cell)), plan.Width() - 1);
+		const int cy = qBound(0, int(floor((q.y - c0.y()) / cell)), plan.Depth() - 1);
+		const int d = qBound(0, int(floor(q.z / plan.deckFeet)), plan.Decks() - 1);
+		const QPointF c = plan.CellCentre(cx, cy);
+		const double dx = q.x - c.x(), dy = q.y - c.y();
+		return TriRef(d, cx, cy, fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S));
+	};
+	const TriRef here = triAt(p);
+	if(plan.Hull(here))
+		return plan.Paint(here);
+	const double step = cell / 4;
+	static const double dirs[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+	for(double r = step; r <= reach + 1e-9; r += step)
+		for(const auto& dir : dirs)
+		{
+			const TriRef t = triAt(p + AuPoint(dir[0], dir[1], dir[2]) * r);
+			if(plan.Hull(t))
+				return plan.Paint(t);
+		}
+	// Round the deck, nearest triangle centre first, up to two cells out.
+	int best = 0;
+	double bestDist = 1e30;
+	for(int cy = here.cy - 2; cy <= here.cy + 2; ++cy)
+		for(int cx = here.cx - 2; cx <= here.cx + 2; ++cx)
+			for(int k = 0; k < 4; ++k)
+			{
+				const TriRef t(here.deck, cx, cy, k);
+				if(!plan.Valid(t) || !plan.Hull(t))
+					continue;
+				const QPointF c = plan.TriCentre(t);
+				const double dist = (c.x() - p.x) * (c.x() - p.x) + (c.y() - p.y) * (c.y() - p.y);
+				if(dist < bestDist)
+				{
+					bestDist = dist;
+					best = plan.Paint(t);
+				}
+			}
+	return best;
+}
+
+static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, const AuScTriList* tris = 0,
+		const PlanProgress& progress = PlanProgress())
 {
 	const double h = plan.cellFeet / 4;
 	AuPoint lo, hi;
@@ -2389,6 +2464,9 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 	// The grid, then blurred (not when sharp).
 	QVector<float> field(count, 0.f);
 	for(int k = 2; k < nz - 2; ++k)
+	{
+		if(progress && k % 4 == 0)
+			progress(QString("Filling the model's grid: layer %1 of %2").arg(k).arg(nz), k, nz);
 		for(int j = 2; j < ny - 2; ++j)
 			for(int i = 2; i < nx - 2; ++i)
 			{
@@ -2396,6 +2474,7 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 				if(solid.Inside(p) || drawnWithSkin(p))
 					field[index(i, j, k)] = 1.f;
 			}
+	}
 	if(!tris)
 	{
 		QVector<float> blurred(count, 0.f);
@@ -2443,15 +2522,13 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 		cornerId.insert(key, id);
 		return id;
 	};
-	auto paintAt = [&](const AuPoint& p) {
-		TriRef t = triangleAt(p);
-		t.deck = qBound(0, t.deck, plan.Decks() - 1);
-		return plan.Valid(t) ? plan.Paint(t) : 0;
-	};
+	auto paintAt = [&](const AuPoint& p) { return HullPaintNear(plan, p, skin + plan.cellFeet); };
 	auto quad = [&](int a, int b, int c, int d, int paint) {
 		mesh.f << a << b << c << a << c << d;
 		mesh.paint << paint << paint;
 	};
+	if(progress)
+		progress("Finding the surface of the model's grid", 0, 0);
 	for(int k = 0; k < nz; ++k)
 		for(int j = 0; j < ny; ++j)
 			for(int i = 0; i < nx; ++i)
@@ -2543,6 +2620,8 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 		static const AuPoint kAxis[3] = { AuPoint(1, 0, 0), AuPoint(0, 1, 0), AuPoint(0, 0, 1) };
 		for(int vi = 0; vi < mesh.v.size(); ++vi)
 		{
+			if(progress && vi % 20000 == 0)
+				progress(QString("Placing the corners on the model's surface: %1 of %2 corners").arg(vi).arg(mesh.v.size()), vi, mesh.v.size());
 			const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
 			QVector<AuPoint> pts, normals;
 			for(int c = 0; c < 8; ++c)
@@ -2588,6 +2667,8 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 	}
 	for(int vi = 0; vi < mesh.v.size(); ++vi)
 	{
+		if(progress && vi % 20000 == 0)
+			progress(QString("Smoothing the surface: %1 of %2 corners").arg(vi).arg(mesh.v.size()), vi, mesh.v.size());
 		const int ci = cornerAt[vi][0], cj = cornerAt[vi][1], ck = cornerAt[vi][2];
 		float f[8];
 		for(int c = 0; c < 8; ++c)
@@ -2922,14 +3003,7 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 		cornerId.insert(key, id);
 		return id;
 	};
-	auto paintAt = [&](const AuPoint& p) {
-		const int cx = qBound(0, int(floor((p.x - c0.x()) / cell)), W - 1), cy = qBound(0, int(floor((p.y - c0.y()) / cell)), D - 1);
-		const int d = qBound(0, int(floor(p.z / deckH)), decks - 1);
-		const QPointF c = plan.CellCentre(cx, cy);
-		const double dx = p.x - c.x(), dy = p.y - c.y();
-		const TriRef t(d, cx, cy, fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S));
-		return plan.Paint(t);
-	};
+	auto paintAt = [&](const AuPoint& p) { return HullPaintNear(plan, p, qMax(0.0, plan.skinFeet) + plan.cellFeet); };
 	auto quad = [&](int a, int b, int c, int dd, int paint) {
 		mesh.f << a << b << c << a << c << dd;
 		mesh.paint << paint << paint;
@@ -3045,9 +3119,13 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 	return mesh;
 }
 
-PlanHull BuildPlanHull(const TriPlan& plan)
+PlanHull BuildPlanHull(const TriPlan& plan, const PlanProgress& progress)
 {
 	PlanHull out;
+	auto tell = [&progress](const QString& what) {
+		if(progress)
+			progress(what, 0, 0);
+	};
 	const int rows = 2;
 	auto zOf = [&plan, rows](int level) { return level * plan.deckFeet / rows; };
 	// The model itself as the hull, when the plan was made from one and says
@@ -3056,18 +3134,19 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	if(plan.model.IsSet() && plan.model.asHull)
 	{
 		QString error;
-		modelSolid = ModelSolidFor(plan, error);
+		modelSolid = ModelSolidFor(plan, error, progress);
 		if(!modelSolid)
 			out.notes << QString("The model %1 could not be read (%2), so the hull is made from the drawn triangles.")
 					.arg(plan.model.file, error);
 	}
 	IndexedMesh mesh;
+	tell(modelSolid ? "Shaping the hull from the model" : "Building the hull from the drawn triangles");
 	if(modelSolid)
 	{
 		// Sharp or smoothed, as the user chose (PlanModel::sharp).
 		const std::shared_ptr<AuScTriList> tris = plan.model.sharp
 				? ModelTrisFor(plan) : std::shared_ptr<AuScTriList>();
-		mesh = ModelHullMesh(plan, *modelSolid, tris.get());
+		mesh = ModelHullMesh(plan, *modelSolid, tris.get(), progress);
 	}
 	else
 	{
@@ -3131,6 +3210,7 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	if(modelSolid || angularField)
 	{
 		DumpHull(mesh, "raw");
+		tell(QString("Taking the slivers out of %1 faces").arg(mesh.Faces()));
 		DecimateHull(mesh, 0, QVector<double>(mesh.v.size(), 1e9), QVector<double>() << plan.cellFeet / 80);
 	}
 	QVector<double> allowance(modelSolid || angularField ? 0 : mesh.v.size(), base + maxExtra);
@@ -3151,6 +3231,7 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 
 	if(!modelSolid && !angularField)
 	{
+		tell("Smoothing the hull");
 		DumpHull(mesh, "raw");
 		if(plan.hullStyle == "classic")
 			OffsetMitred(mesh, plan.skinFeet);
@@ -3159,6 +3240,7 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	}
 	DumpHull(mesh, "smoothed");
 	out.rawTriangles = mesh.Faces();
+	tell(QString("Merging the flat areas of %1 faces").arg(mesh.Faces()));
 	CollapseFlat(mesh);
 
 	// Over the budget: simplified, the cheapest change to the shape first
@@ -3221,6 +3303,8 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 		int simplified = 0;
 		for(int round = 0; round < rounds; ++round)
 		{
+			if(progress)
+				progress(QString("Making flat panels: round %1 of %2").arg(round + 1).arg(rounds), round, rounds);
 			QVector<AuPoint> fn(mesh.Faces());
 			QVector<double> fd(mesh.Faces());
 			for(int fi = 0; fi < mesh.Faces(); ++fi)
@@ -3240,6 +3324,8 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 
 	DumpHull(mesh, "merged");
 	const int merged = mesh.Faces();
+	if(mesh.Faces() > plan.maxFaces)
+		tell(QString("Simplifying %1 faces to %2").arg(mesh.Faces()).arg(plan.maxFaces));
 	if(mesh.Faces() > plan.maxFaces)
 	{
 		QVector<double> inward = inwardFor(mesh);
@@ -3270,6 +3356,7 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
 			fprintf(stderr, "before decimate: %s inward %g\n", qPrintable(checksum(mesh)),
 					std::accumulate(inward.begin(), inward.end(), 0.0));
+		tell(QString("Simplifying %1 faces to %2 (the longest step on a big hull)").arg(mesh.Faces()).arg(plan.maxFaces));
 		DecimateHull(mesh, plan.maxFaces, inward, moves, &used, 0, 0, regions);
 		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
 			fprintf(stderr, "after decimate: %s\n", qPrintable(checksum(mesh)));
@@ -3287,6 +3374,7 @@ PlanHull BuildPlanHull(const TriPlan& plan)
 	double usedAngle = 0;
 	for(const auto& step : kSteps)
 	{
+		tell(QString("Merging nearly flat areas: %1 faces").arg(mesh.Faces()));
 		if(mesh.Faces() <= plan.maxFaces)
 			break;
 		CollapseFlat(mesh, step[0], step[1]);
@@ -3502,6 +3590,8 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				report.warnings << QString("The engine did not accept room '%1'.").arg(dr.group);
 				continue;
 			}
+			if(IsZeroGRoomType(room.type) && !SetVoidGravity(*design, dr.voidId, G_Zero))
+				report.warnings << QString("'%1' could not be made zero-G.").arg(dr.group);
 
 			// The anchor: the room triangle nearest its middle.
 			const QPointF mid(sx / count, sy / count);
@@ -4050,6 +4140,62 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		if(fabs(surface - roomWall) - plan.skinFeet > s * 1.5)
 			report.warnings << QString("A window of '%1' is %2 ft from the hull surface; it looks down a tunnel.")
 					.arg(room->group).arg(qRound(fabs(surface - roomWall) - plan.skinFeet));
+	}
+
+	// Zero-G shafts stacked on decks next to each other are one space: where
+	// a shaft's triangle has a shaft's triangle above it, the ceiling below
+	// and the floor above are cut away, and a zero-G void fills the
+	// structure between them, so people float straight through.
+	for(int d = 0; d + 1 < plan.Decks(); ++d)
+	{
+		QMap<QPair<int, int>, int> pairs;		// (lower deck room, upper deck room) -> triangles
+		for(int cy = 0; cy < plan.Depth(); ++cy)
+			for(int cx = 0; cx < plan.Width(); ++cx)
+				for(int k = 0; k < 4; ++k)
+				{
+					const DeckRoom* lower = deckRoomOf(TriRef(d, cx, cy, k));
+					const DeckRoom* upper = deckRoomOf(TriRef(d + 1, cx, cy, k));
+					if(lower && upper && lower->voidId && upper->voidId &&
+							IsZeroGRoomType(lower->type) && IsZeroGRoomType(upper->type))
+						++pairs[qMakePair(deckRoomIndex.value(qint64(lower->room) * 1000 + d),
+								deckRoomIndex.value(qint64(upper->room) * 1000 + d + 1))];
+				}
+		for(auto it = pairs.constBegin(); it != pairs.constEnd(); ++it)
+		{
+			const DeckRoom& lower = deckRooms.at(it.key().first);
+			const DeckRoom& upper = deckRooms.at(it.key().second);
+			double lz0, lz1, uz0, uz1;
+			RoomHeights(plan, d, lz0, lz1);
+			RoomHeights(plan, d + 1, uz0, uz1);
+			const int lr = lower.room, ur = upper.room;
+			auto shared = [&plan, d, lr, ur](const TriRef& t) {
+				return t.deck == d && plan.Room(t) == lr && plan.Room(TriRef(d + 1, t.cx, t.cy, t.k)) == ur;
+			};
+			auto facesBetween = [&](double z0, double z1) {
+				IndexedMesh mesh = BuildPrisms(plan, shared, [d, z0, z1](int level) { return level == d ? z0 : z1; },
+						1, false, true, [](const TriRef&) { return 0; });
+				CollapseFlat(mesh);
+				AuScFaceList faces;
+				for(int fi = 0; fi < mesh.Faces(); ++fi)
+					faces.AddFace(AuScFaceTri(AuScPoint(mesh.v[mesh.f[fi*3]], 0.f, 0.f, AuPoint(0, 0, 1)),
+							AuScPoint(mesh.v[mesh.f[fi*3 + 1]], 0.f, 0.f, AuPoint(0, 0, 1)),
+							AuScPoint(mesh.v[mesh.f[fi*3 + 2]], 0.f, 0.f, AuPoint(0, 0, 1))));
+				return faces;
+			};
+			const QString group = QString("%1 to %2").arg(lower.group, upper.group);
+			// The void spans the structure, overlapping both rooms a little.
+			quint16 gapVoid = 0;
+			if(!AddVoid(*design, group, facesBetween(lz1 - 1.0, uz0 + 1.0), gapVoid) ||
+					!SetVoidGravity(*design, gapVoid, G_Zero))
+			{
+				report.warnings << QString("The zero-G shafts '%1' and '%2' could not be joined.").arg(lower.group, upper.group);
+				continue;
+			}
+			if(!CutOpening(*design, facesBetween(lz1 - 1.0, uz0 + 1.0), lower.meshId, upper.meshId))
+				report.warnings << QString("The floor between the zero-G shafts '%1' and '%2' could not be cut away.")
+						.arg(lower.group, upper.group);
+			++report.zeroGJoins;
+		}
 	}
 
 	// The ladders: a shaft through the floor between the two rooms, and a
@@ -4662,7 +4808,10 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	plan.model.asHull = slices && options.modelAsHull;
 	plan.model.sharp = true;		// New plans: the hull looks like the model (a choice on the hull page).
 	if(slices)
+	{
+		QMutexLocker locked(&ModelCacheLock());
 		ModelSolids().insert(ModelKey(plan.model, plan.cellFeet), solidShared);
+	}
 	const int width = int(ceil((mx.x - mn.x) / options.cellFeet)) + 2;
 	int depth = int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 / options.cellFeet)) + 2;
 	depth += depth % 2;		// Even, so that the mirror line is a cell edge.

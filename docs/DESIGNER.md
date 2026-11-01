@@ -56,6 +56,19 @@ the middle and the 3D view on the right.
   zooms, the middle button pans. In the 3D view the left button turns the
   model and the wheel zooms.
 * **Undo/redo**: Ctrl+Z / Ctrl+Shift+Z, 100 steps.
+* **Redrawing the 3D view**: after each change the hull is shaped again
+  and the 3D view redrawn, in the background, so drawing goes on meanwhile.
+  On a big model that takes a while: untick *Redraw 3D while drawing* (bottom
+  right, or the View menu; remembered) and press **F5** (View, *Redraw the
+  3D view*) when you want to see the changes. The Hull page says when the
+  3D view is out of date. Opening a plan, a new plan and the Build step
+  always shape it.
+* **The task bar** (bottom right) shows anything that takes a while:
+  reading a 3D model, shaping the hull, building the blueprint. It names the
+  task, the step it is on (numbered), how far along that step is where it
+  can be counted (a progress bar with a percentage; a moving bar where it
+  cannot), and the seconds so far. Reading a model can be stopped there
+  between steps.
 
 The steps are the tabs of the side panel:
 
@@ -241,6 +254,17 @@ Paths lie on the floor. A ladder between decks also gets an opening through
 the lower room's ceiling and the upper room's floor (the engine's cutting
 jig) and a visible ladder of two rails and rungs.
 
+**Zero-G shafts** (room type *Zero-G Shaft*; the engine calls it a
+"Gravity Well", and plans that say so still open) have no gravity: people
+float in them and move up and down freely (in the game, while the ship's
+gravity is working; without it the room has the gravity around the ship).
+Where a zero-G shaft has a zero-G shaft directly above it on the next deck,
+the lower one's ceiling and the upper one's floor are cut away over the
+triangles they share, and a zero-G void fills the structure between them,
+so the two are one space to float through, with no ladder needed. Each
+such join is counted in the build report (`Zero-G joins` in
+`build-plan`).
+
 **Stairs** climb one deck over `StairCells()` cells (deck height times 1.4,
 rounded up to whole cells: 3 cells of 5 ft for 10 ft decks, about 34
 degrees). They are made the way the user's aircraft factory makes them,
@@ -400,8 +424,9 @@ The older method, *closed pieces only*:
 A big model is thinned first: a quick clustering pass to five times the
 face budget, then the careful (quadric) pass. Half a million faces take
 about 9 seconds (the careful pass alone took a minute and a half). The
-designer reads the model in the background with a progress window that
-names the step it is on and can stop it between steps (in 0.3.0-alpha the
+designer reads the model in the background, with the task bar at the
+bottom of the window naming the step it is on and how far along it is, and
+a Stop button that stops it between steps (in 0.3.0-alpha the
 closing of that window counted as Stop and threw every plan away; fixed in
 0.3.1-alpha); `shipgen plan-from-model` prints the steps with their times.
 

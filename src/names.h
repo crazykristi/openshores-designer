@@ -13,6 +13,16 @@
 #include <QStringList>
 
 // The room types a spacecraft may have. This is the engine's own list.
+// A room without gravity: people float in it and can move up and down. The
+// engine calls it a "Gravity Well" (ROOM_GravityWell, room gravity G_Zero);
+// the designer calls it a Zero-G Shaft, and still reads the old name.
+inline QString ZeroGRoomType() { return QStringLiteral("Zero-G Shaft"); }
+inline bool IsZeroGRoomType(const QString& type)
+{
+	return type.compare(ZeroGRoomType(), Qt::CaseInsensitive) == 0 ||
+		type.compare(QStringLiteral("Gravity Well"), Qt::CaseInsensitive) == 0;
+}
+
 QStringList	SpacecraftRoomTypes();
 
 // The room types a building may have. The game does not fix a list for

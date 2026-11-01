@@ -98,11 +98,41 @@ const IndustryEntry kIndustries[] = {
 	{ IID_Farm, "Farm", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 },
 	{ IID_Mine, "Mine", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_MachineShop, "Machine Shop", 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_Smelter, "Smelter", 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Smelter, "Smelter", 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_ShipYard, "Ship Yard", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
 	{ IID_Biodome, "Biodome", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_SpacecraftFactory, "Spacecraft Factory", 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseAirTerminal, "Base Air Terminal", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+	// For the building prototypes. Guesses: the game's
+	// own table is in its database, not in the source. Factories need a
+	// workshop and a store (and the engine wants an office with a workshop),
+	// power plants a generator, the airport's buildings an office, a sensor
+	// or a workshop.
+	//                                                 hL hM hS of sh st lo ge ba ca gu se sh tu wb su tr pg ar au fi lp vl
+	{ IID_WindPowerPlant, "Wind Power Plant",           0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_NaturalGasPowerPlant, "Natural Gas Power Plant", 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Orchard, "Orchard",                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 },
+	{ IID_Well, "Well",                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Refinery, "Refinery",                         0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_FireDepartment, "Fire Department",            0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_MassMedia, "Mass Media",                      0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Church, "Church",                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 },
+	{ IID_TextileMill, "Textile Mill",                  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_ClothingFactory, "Clothing Factory",          0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_ExplosivesFactory, "Explosives Factory",      0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_PlasticsFactory, "Plastics Factory",          0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_ElectronicsFactory, "Electronics Factory",    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_ComputerFactory, "Computer Factory",          0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_PharmaceuticalLab, "Pharmaceutical Lab",      0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_MunitionsFactory, "Munitions Factory",        0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_GunSmith, "Gunsmith",                         0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Armorer, "Armorer",                           0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_VehicleFactory, "Vehicle Factory",            0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_AircraftFactory, "Aircraft Factory",          0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_AirportTerminal, "Airport Terminal",          0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_AirportRadar, "Airport Radar",                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_AirportRepairShop, "Airport Repair Shop",     0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_StreetLight, "Street Light",                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 };
 
 } // namespace
@@ -129,7 +159,7 @@ void InstallIndustryTable(DgData* data)
 		out << (quint8)0;						// population
 		out << (qint8)0;						// employees
 		out << (quint8)0;						// storage
-		out << (quint8)BD_Building;				// structure
+		out << (quint8)(e.id == IID_StreetLight ? BD_StreetLight : BD_Building);	// structure
 		out << (qint8)e.field;
 		out << (qint8)e.arena;
 		out << (qint8)e.auditorium;
@@ -394,6 +424,7 @@ static void briefFromJson(const QJsonObject& o, BuildingBrief& brief)
 	if(b.contains("livestockPosts"))	brief.livestockPosts = b.value("livestockPosts").toInt();
 	if(b.contains("groundParking"))	brief.groundParking = b.value("groundParking").toInt();
 	if(b.contains("spaceParking"))	brief.spaceParking = b.value("spaceParking").toInt();
+	if(b.contains("spacecraftParking"))	brief.spacecraftParking = b.value("spacecraftParking").toInt();
 
 	if(b.contains("footprint"))
 	{
@@ -516,6 +547,8 @@ bool SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QStr
 	o["livestockPosts"] = brief.livestockPosts;
 	o["groundParking"] = brief.groundParking;
 	o["spaceParking"] = brief.spaceParking;
+	if(brief.spacecraftParking)
+		o["spacecraftParking"] = brief.spacecraftParking;
 	QJsonArray fp;
 	fp.append(brief.footprintX);
 	fp.append(brief.footprintY);
@@ -773,6 +806,9 @@ static QList<BuildingRoom> PackFloor(const QList<RoomSpec>& rooms, const AuPoint
 
 } // namespace
 
+// Half the size of a spacecraft berth (GroundSpawnSizeLimit in the engine).
+const double kSpacecraftBerth = 119.;
+
 BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, const QString& strategy)
 {
 	BuildingResult result;
@@ -828,6 +864,15 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			if(spot.IsValid())
 				design.Parts().AddPart(spot);
 		}
+		// Spacecraft berths beside the building, on the +X side: each takes
+		// GroundSpawnSizeLimit (119 ft) each way from its centre.
+		for(int i = 0; i < brief.spacecraftParking; ++i)
+		{
+			AuScSpacecraftParkingSpot spot;
+			spot.MakeIcon(AuPoint(hullMax.x + 20. + kSpacecraftBerth * (2 * i + 1), 0, 0), 0.f, plane);
+			if(spot.IsValid())
+				design.Parts().AddPart(spot);
+		}
 	}
 
 	// The site. It is a flat polygon on the ground that has to cover the
@@ -836,6 +881,12 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		const double margin = 20.;
 		AuPoint siteMin(hullMin.x - margin, hullMin.y - margin - 40.);
 		AuPoint siteMax(hullMax.x + margin, hullMax.y + margin);
+		if(brief.spacecraftParking > 0)
+		{
+			siteMax.x = hullMax.x + 20. + kSpacecraftBerth * 2 * brief.spacecraftParking + 10.;
+			siteMin.y = qMin(siteMin.y, -kSpacecraftBerth - 10.);
+			siteMax.y = qMax(siteMax.y, kSpacecraftBerth + 10.);
+		}
 		AuPointArray bnd;
 		bnd.append(AuPoint(siteMin.x, siteMin.y, 0));
 		bnd.append(AuPoint(siteMax.x, siteMin.y, 0));
@@ -847,6 +898,27 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		site.SetGrass(1);
 		if(site.IsValid())
 			design.Parts().AddPart(site);
+
+		// Fields: bare cracked earth behind the building. The game counts a
+		// site paved with it as field, one field per 4,000 square meters
+		// (AuBdDesign::AreaFirstField), so each is a little over that.
+		if(brief.volumes.field > 0)
+		{
+			const double fieldFeet = sqrt(4000. * 1.08 / 0.09290304);	// About 216 ft square.
+			const double width = qMax(fieldFeet, siteMax.x - siteMin.x);
+			const double depth = fieldFeet * fieldFeet * brief.volumes.field / width;
+			AuPointArray f;
+			f.append(AuPoint(-width/2, siteMax.y, 0));
+			f.append(AuPoint(width/2, siteMax.y, 0));
+			f.append(AuPoint(width/2, siteMax.y + depth, 0));
+			f.append(AuPoint(-width/2, siteMax.y + depth, 0));
+			AuScSite field;
+			field.MakeSite(f, AuMatrix4x4::IdentityMatrix());
+			field.SetGrade(AuScSite::Level);
+			field.SetPavement(WORLDTEX_DirtCrackedSmooth);
+			if(field.IsValid())
+				design.Parts().AddPart(field);
+		}
 	}
 
 	// The interior rooms, floor by floor. The rooms of the brief are the
@@ -1004,6 +1076,8 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			{ brief.volumes.sensors > 0, AuScPart::Part_ConsoleSensor, CID_SensorModule },
 			{ brief.volumes.shields > 0, AuScPart::Part_ConsoleShield, CID_EnergyShieldModule },
 			{ brief.volumes.capacitor > 0, AuScPart::Part_ConsoleEngineer, CID_GravityDriveModule },
+			{ brief.volumes.surgery > 0, AuScPart::Part_ConsoleMedic, CID_SurgeryMedicalModule },
+			{ brief.volumes.transporters > 0, AuScPart::Part_ConsoleTransporter, CID_PersonnelTransporterModule },
 		};
 		int slot = 0;
 		for(const StationEntry& e : entries)
@@ -1111,6 +1185,8 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		design.SetPowerPlantVolume(v.powerPlant);
 		design.SetLifeSupportVolume(v.lifeSupport);
 		design.SetCapacitorVolume(v.capacitor);
+		// Battery space only stores power with the battery module fitted.
+		design.SetCapacitorModule(v.capacitor > 0 ? CID_CapacitorModule : CID_Invalid);
 		design.SetSensorVolume(v.sensors);
 		design.SetShieldVolume(v.shields);
 		design.SetHoldVolume(v.hold);
@@ -1152,6 +1228,24 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		if(chosen != IID_None)
 		{
 			design.SetIndustryId(chosen);
+
+			// A power plant needs the generator module for its fuel
+			// (AuBdReport::IndustryCanUse, codes 62 and 63).
+			COMMODITYID module = CID_Invalid;
+			switch(chosen)
+			{
+			default:							break;
+			case IID_CoalPowerPlant:			module = CID_CoalPowerPlantModule; break;
+			case IID_GasolinePowerPlant:		module = CID_GasolinePowerPlantModule; break;
+			case IID_HydroelectricPowerPlant:	module = CID_HydroelectricPowerPlantModule; break;
+			case IID_HydrogenPowerPlant:		module = CID_HydrogenPowerPlantModule; break;
+			case IID_NaturalGasPowerPlant:		module = CID_NaturalGasPowerPlantModule; break;
+			case IID_NuclearPowerPlant:			module = CID_NuclearPowerPlantModule; break;
+			case IID_SolarPowerPlant:			module = CID_SolarPowerPlantModule; break;
+			case IID_WindPowerPlant:			module = CID_WindPowerPlantModule; break;
+			}
+			if(module != CID_Invalid && design.PowerPlantVolume() > 0)
+				design.SetPowerPlantModule(module);
 			result.industryName = QString::number(int(chosen));
 
 			// Check that the building can actually serve that industry.
@@ -1160,8 +1254,23 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			QSet<INDUSTRYID> usable;
 			report.Industries(usable);
 			if(!usable.contains(chosen))
-				result.warnings << QString("the building does not have enough of something for a %1.")
-						.arg(brief.industry);
+			{
+				// Say what is missing, in the engine's words.
+				QString why;
+				const DgData& gd = g_Au.LockDataForRead();
+				for(DbIndustryArray::const_iterator ii = gd.m_bIndustryArray.cbegin(); ii != gd.m_bIndustryArray.cend(); ii++)
+				{
+					if((*ii).IndustryId() == chosen)
+					{
+						const int code = report.IndustryCanUse(*ii);
+						why = QString(" (%1: %2)").arg(code).arg(AuBdReport::IndustryCanUseMessage(code));
+						break;
+					}
+				}
+				g_Au.UnlockData();
+				result.warnings << QString("the building does not have enough of something for a %1%2.")
+						.arg(brief.industry, why);
+			}
 		}
 		else
 			result.warnings << "no industry could use this building as it stands.";

@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "triplan.h"
+#include "names.h"
 
 #include <QFile>
 #include <QJsonArray>
@@ -939,6 +940,8 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		const QJsonObject o = v.toObject();
 		PlanRoom r;
 		r.type = o["type"].toString();
+		if(IsZeroGRoomType(r.type))
+			r.type = ZeroGRoomType();		// Plans from before 0.3.5-alpha say "Gravity Well".
 		r.label = o["label"].toString();
 		r.colour = QColor(o["colour"].toString("#808080"));
 		plan.rooms << r;

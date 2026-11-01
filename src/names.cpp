@@ -46,6 +46,44 @@ const IndustryEntry kIndustries[] = {
 	{ "fence",			IID_Fence },
 	{ "bridge",		IID_Bridge },
 	{ "spaceport",		IID_BaseAirTerminal },
+	// The building prototypes, by the game's names.
+	{ "coal power plant",		IID_CoalPowerPlant },
+	{ "gasoline power plant",	IID_GasolinePowerPlant },
+	{ "hydroelectric plant",	IID_HydroelectricPowerPlant },
+	{ "hydrogen power plant",	IID_HydrogenPowerPlant },
+	{ "natural gas power plant", IID_NaturalGasPowerPlant },
+	{ "solar power plant",		IID_SolarPowerPlant },
+	{ "wind power plant",		IID_WindPowerPlant },
+	{ "nuclear power plant",	IID_NuclearPowerPlant },
+	{ "orchard",				IID_Orchard },
+	{ "well",					IID_Well },
+	{ "smelter",				IID_Smelter },
+	{ "police department",		IID_PoliceDepartment },
+	{ "fire department",		IID_FireDepartment },
+	{ "mass media",			IID_MassMedia },
+	{ "church",				IID_Church },
+	{ "grocery",				IID_Grocery },
+	{ "retail store",			IID_RetailStore },
+	{ "broker",				IID_Broker },
+	{ "cantina",				IID_Cantina },
+	{ "design studio",			IID_DesignStudio },
+	{ "textile mill",			IID_TextileMill },
+	{ "clothing factory",		IID_ClothingFactory },
+	{ "explosives factory",	IID_ExplosivesFactory },
+	{ "plastics factory",		IID_PlasticsFactory },
+	{ "electronics factory",	IID_ElectronicsFactory },
+	{ "computer factory",		IID_ComputerFactory },
+	{ "pharmaceutical lab",	IID_PharmaceuticalLab },
+	{ "munitions factory",		IID_MunitionsFactory },
+	{ "gunsmith",				IID_GunSmith },
+	{ "armorer",				IID_Armorer },
+	{ "machine shop",			IID_MachineShop },
+	{ "vehicle factory",		IID_VehicleFactory },
+	{ "aircraft factory",		IID_AircraftFactory },
+	{ "spacecraft factory",	IID_SpacecraftFactory },
+	{ "airport terminal",		IID_AirportTerminal },
+	{ "airport radar",			IID_AirportRadar },
+	{ "airport repair shop",	IID_AirportRepairShop },
 };
 
 } // namespace
@@ -75,7 +113,9 @@ QStringList SpacecraftRoomTypes()
 	for(int type = ROOM_None + 1; type <= ROOM_RoofRound; ++type)
 	{
 		const QString name = RoomTypeNameInSpacecraft((ROOMTYPE)type);
-		if(!name.isEmpty())
+		if(type == ROOM_GravityWell)
+			names << ZeroGRoomType();
+		else if(!name.isEmpty())
 			names << name;
 	}
 	return names;

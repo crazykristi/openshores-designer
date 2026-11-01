@@ -5,6 +5,8 @@
 #include "aether.h"
 
 #include <QDir>
+#include <QFile>
+#include <QTextStream>
 #include <QMap>
 #include <QSet>
 #include <cmath>
@@ -17,6 +19,15 @@
 #include "building.h"
 #include "generate.h"
 #include "interior.h"
+// The building prototypes are the user's own design work, kept out of the
+// public repository: built in when src/prototypes.cpp is there, left out
+// (with the rest of the kit working) when it is not.
+#if defined(__has_include)
+#if __has_include("prototypes.h")
+#include "prototypes.h"
+#define SHIPGEN_HAVE_PROTOTYPES 1
+#endif
+#endif
 #include "shipgen.h"
 #include "sohfile.h"
 
@@ -469,13 +480,39 @@ struct ShipRecipe
 	std::function<void(AuScDesign&)>	ornaments;
 };
 
-struct BuildingRecipe
+typedef KitBuildingRecipe BuildingRecipe;
+
+// SHIPGEN_DUMP_KIT=<dir>: every built blueprint's outside (hull, decoration,
+// site; not the rooms) as <dir>/<key>.obj, for looking at it in a viewer
+// (debugging only).
+void DumpKitItem(const AuDesign& design, const QString& key)
 {
-	QString		templateKey;
-	int			floors = 1;
-	std::function<void(AuBdDesign&)>	body;
-	std::function<void(AuBdDesign&)>	ornaments;
-};
+	const QByteArray dir = qgetenv("SHIPGEN_DUMP_KIT");
+	if(dir.isEmpty())
+		return;
+	QFile file(QDir(QString::fromLocal8Bit(dir)).filePath(key + ".obj"));
+	if(!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		return;
+	QTextStream out(&file);
+	int base = 1;
+	for(AuScParts::const_iterator pi = design.Parts().cbegin(); pi != design.Parts().cend(); ++pi)
+	{
+		if((*pi)->IsOmitted() || (*pi)->IsRoomMesh() || (*pi)->IsLight())
+			continue;
+		AuScFaceList faces;
+		(*pi)->Faces(faces);
+		AuScTriList tris;
+		faces.Triangles(tris);
+		for(const AuScTri& t : tris)
+		{
+			const AuPoint v[3] = { t.V0(), t.V1(), t.V2() };
+			for(const AuPoint& p : v)
+				out << "v " << p.x << " " << p.y << " " << p.z << "\n";
+			out << "f " << base << " " << base + 1 << " " << base + 2 << "\n";
+			base += 3;
+		}
+	}
+}
 
 // A gear standing upright on the side of a ship or building, facing along X.
 void SideGear(AuDesign& d, const AuPoint& centre, double radius, int teeth, const char* look)
@@ -757,6 +794,11 @@ QMap<QString, BuildingRecipe> BuildingRecipes()
 		};
 		out.insert("orrery-observatory", r);
 	}
+#ifdef SHIPGEN_HAVE_PROTOTYPES
+	const QMap<QString, BuildingRecipe> prototypes = PrototypeRecipes();
+	for(QMap<QString, BuildingRecipe>::const_iterator it = prototypes.constBegin(); it != prototypes.constEnd(); ++it)
+		out.insert(it.key(), it.value());
+#endif
 	return out;
 }
 
@@ -780,6 +822,9 @@ QList<KitItem> KitItems()
 	add("gear-works", "Gear Works", "building", "A factory hall with copper stacks, great brass wheels and a lantern roof.");
 	add("crystal-conservatory", "Crystal Conservatory", "building", "Homes under a stained glass dome, ringed with crystals of light.");
 	add("orrery-observatory", "Orrery Observatory", "building", "Offices in an obsidian drum under the rings and spheres of an orrery.");
+#ifdef SHIPGEN_HAVE_PROTOTYPES
+	items << PrototypeItems();
+#endif
 	return items;
 }
 
@@ -888,6 +933,8 @@ bool BuildKitItem(const QString& key, const QString& outDir, QStringList& log, Q
 		brief.name = item.label;
 		ApplyBuildingTemplate(brief, recipe.templateKey);
 		brief.floors = recipe.floors;
+		if(recipe.brief)
+			recipe.brief(brief);
 		AuBdDesign design;
 		design.SetId(1);
 		design.SetArchitectId(AuId(0));
@@ -897,7 +944,13 @@ bool BuildKitItem(const QString& key, const QString& outDir, QStringList& log, Q
 		recipe.body(design);
 		const BuildingResult result = GenerateBuilding(design, brief, "auto");
 		log << QString("%1 rooms, %2 doors.").arg(result.roomsPlaced).arg(result.doorsPlaced);
+		for(const QString& w : result.warnings)
+		{
+			if(!w.startsWith("hull volume"))
+				log << "Note: " + w;
+		}
 		recipe.ornaments(design);
+		DumpKitItem(design, key);
 		ValidateBuilding(design, errors, warnings);
 		if(!SaveDesign(design, fileName))
 		{

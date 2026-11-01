@@ -27,6 +27,8 @@
 #include <QMessageBox>
 #include <QMutex>
 #include <QPlainTextEdit>
+#include <QProgressBar>
+#include <QToolButton>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -156,6 +158,37 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 
 	m_status = new QLabel;
 	statusBar()->addWidget(m_status, 1);
+	// The task bar: hidden until something takes a while.
+	m_taskBox = new QWidget;
+	QHBoxLayout* taskLayout = new QHBoxLayout(m_taskBox);
+	taskLayout->setContentsMargins(0, 0, 0, 0);
+	m_taskLabel = new QLabel;
+	m_taskBar = new QProgressBar;
+	m_taskBar->setMinimumWidth(220);
+	m_taskBar->setMaximumHeight(16);
+	m_taskBar->setTextVisible(true);
+	m_taskStop = new QToolButton;
+	m_taskStop->setText("Stop");
+	taskLayout->addWidget(m_taskLabel);
+	taskLayout->addWidget(m_taskBar);
+	taskLayout->addWidget(m_taskStop);
+	statusBar()->addPermanentWidget(m_taskBox);
+	m_taskBox->hide();
+	m_taskTimer = new QTimer(this);
+	m_taskTimer->setInterval(150);
+	connect(m_taskTimer, &QTimer::timeout, this, &DesignerWindow::RefreshTask);
+	connect(m_taskStop, &QToolButton::clicked, this, [this]() {
+		m_taskStopAsked = true;
+		m_taskStop->setEnabled(false);
+		RefreshTask();
+	});
+	m_autoRedraw = QSettings().value("designer/autoRedraw", true).toBool();
+	m_autoRedrawBox = new QCheckBox("Redraw 3D while drawing");
+	m_autoRedrawBox->setToolTip("Reshape the hull and redraw the 3D view after every change. On a big model "
+								"that takes a while; turn it off and press F5 (View, Redraw the 3D view) when "
+								"you want to see the changes.");
+	m_autoRedrawBox->setChecked(m_autoRedraw);
+	statusBar()->addPermanentWidget(m_autoRedrawBox);
 
 	// Menus.
 	QMenu* file = menuBar()->addMenu("&File");
@@ -183,11 +216,19 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	metric->setChecked(QSettings().value("designer/metric", false).toBool());
 	connect(metric, &QAction::toggled, this, &DesignerWindow::OnMetric);
 	m_metric = metric->isChecked();
+	view->addSeparator();
+	QAction* autoRedraw = view->addAction("Redraw the 3D view &while drawing");
+	autoRedraw->setCheckable(true);
+	autoRedraw->setChecked(m_autoRedraw);
+	connect(autoRedraw, &QAction::toggled, this, &DesignerWindow::OnAutoRedraw);
+	connect(m_autoRedrawBox, &QCheckBox::toggled, autoRedraw, &QAction::setChecked);
+	connect(autoRedraw, &QAction::toggled, m_autoRedrawBox, &QCheckBox::setChecked);
+	view->addAction("&Redraw the 3D view", this, SLOT(OnShape()), QKeySequence(Qt::Key_F5));
 
 	m_shapeTimer = new QTimer(this);
 	m_shapeTimer->setSingleShot(true);
 	m_shapeTimer->setInterval(400);
-	connect(m_shapeTimer, &QTimer::timeout, this, &DesignerWindow::ShapeNow);
+	connect(m_shapeTimer, &QTimer::timeout, this, &DesignerWindow::ShapeSoon);
 
 	connect(m_view, &PlanView::AboutToChange, this, &DesignerWindow::OnAboutToChange);
 	connect(m_view, &PlanView::PlanChanged, this, &DesignerWindow::OnPlanChanged);
@@ -207,6 +248,14 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 
 DesignerWindow::~DesignerWindow()
 {
+	if(m_shapeWorker)
+	{
+		m_shapeWorker->wait();
+		delete m_shapeWorker;
+		m_shapeWorker = 0;
+		if(m_shapeJob)
+			delete m_shapeJob->design;
+	}
 	m_preview->SetDesign(0);
 	delete m_design;
 }
@@ -628,7 +677,7 @@ void DesignerWindow::SetPlan(const TriPlan& plan)
 	m_view->SetPlan(&m_plan);
 	m_hullShaped = false;
 	RefreshAll();
-	ShapeNow();
+	ShapeNow();		// Always, whether redrawing while drawing or not.
 	m_preview->FrameAll();
 }
 
@@ -795,7 +844,12 @@ void DesignerWindow::OnStepChanged(int step)
 		return;
 	}
 	m_preview->SetHullOpacity(step == StepRooms ? 0.35f : 0.9f);
-	ShapeNow();
+	// The hull does not depend on the step: shaped again only when the view
+	// shows the blueprint (from the build step) or nothing, or is out of date.
+	if(!m_design || m_designIsBlueprint || (m_shapeStale && m_autoRedraw))
+		ShapeSoon();
+	else if(m_shapeStale)
+		m_status->setText("The 3D view is out of date: press F5 to redraw it.");
 }
 
 void DesignerWindow::OnDeckChanged(int deck)
@@ -817,10 +871,30 @@ void DesignerWindow::OnPlanChanged(bool hullChanged)
 {
 	m_dirty = true;
 	RefreshTitle();
-	if(hullChanged)
+	if(hullChanged || m_steps->currentIndex() == StepRooms)		// The smoothing gives way to rooms.
+		PlanEdited();
+}
+
+void DesignerWindow::PlanEdited()
+{
+	if(m_autoRedraw)
+	{
 		m_shapeTimer->start();
-	else if(m_steps->currentIndex() == StepRooms)
-		m_shapeTimer->start();		// The smoothing gives way to rooms.
+		return;
+	}
+	m_shapeStale = true;
+	m_hullInfo->setText("The 3D view is out of date: press F5 (View, Redraw the 3D view) to redraw it, "
+						"or turn on redrawing while drawing.");
+}
+
+void DesignerWindow::OnAutoRedraw(bool on)
+{
+	if(on == m_autoRedraw)
+		return;
+	m_autoRedraw = on;
+	QSettings().setValue("designer/autoRedraw", on);
+	if(on && m_shapeStale)
+		ShapeSoon();
 }
 
 void DesignerWindow::OnUndo()
@@ -832,7 +906,7 @@ void DesignerWindow::OnUndo()
 	m_view->SetDeck(qMin(m_view->Deck(), m_plan.Decks() - 1));
 	RefreshAll();
 	m_view->update();
-	m_shapeTimer->start();
+	PlanEdited();
 }
 
 void DesignerWindow::OnRedo()
@@ -844,7 +918,7 @@ void DesignerWindow::OnRedo()
 	m_view->SetDeck(qMin(m_view->Deck(), m_plan.Decks() - 1));
 	RefreshAll();
 	m_view->update();
-	m_shapeTimer->start();
+	PlanEdited();
 }
 
 void DesignerWindow::OnNew()
@@ -968,53 +1042,35 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 	QString error;
 	bool made = false;
 	PlanFromModelReport report;
-	QMutex lock;
-	QString stepText = "Starting";
-	std::atomic<bool> stop(false);
-	options.progress = [&](const QString& what, int, int) {
-		QMutexLocker locked(&lock);
-		stepText = what;
-		return !stop.load();
+	if(m_shapeWorker)		// The model caches are shared with the shaping.
+	{
+		m_shapeWorker->wait();
+		ShapingDone();
+	}
+	options.progress = [this](const QString& what, int done, int total) {
+		SetTask(what, done, total);
+		return !m_taskStopAsked.load();
 	};
 	QThread* worker = QThread::create([&]() { made = PlanFromModel(modelFile, options, plan, notes, error, &report); });
-	QProgressDialog progress(QString("Reading %1").arg(QFileInfo(modelFile).fileName()), "Stop", 0, 0, this);
-	progress.setWindowTitle("New plan from a 3D model");
-	progress.setWindowModality(Qt::WindowModal);
-	progress.setMinimumDuration(0);
-	progress.setMinimumWidth(460);
-	QElapsedTimer clock;
-	clock.start();
-	QTimer tick;
-	connect(&tick, &QTimer::timeout, &progress, [&]() {
-		QString what;
-		{
-			QMutexLocker locked(&lock);
-			what = stepText;
-		}
-		progress.setLabelText(QString("%1\n%2...\n%3 s so far%4").arg(QFileInfo(modelFile).fileName(), what)
-				.arg(clock.elapsed() / 1000)
-				.arg(stop.load() ? "\nStopping after this step." : ""));
-	});
-	// Closing a progress window counts as pressing its Stop button too, so
-	// only a press while the work is still going stops it (closing the
-	// window at the end threw every finished plan away).
-	bool running = true;
-	connect(&progress, &QProgressDialog::canceled, &progress, [&]() {
-		if(!running)
-			return;
-		stop = true;
-		progress.show();		// Stays up until the step it is on is done.
-	});
+	// The progress shows in the task bar at the bottom of the window, which
+	// cannot be used meanwhile.
+	BeginTask(QString("Reading %1").arg(QFileInfo(modelFile).fileName()), true);
+	centralWidget()->setEnabled(false);
+	menuBar()->setEnabled(false);
+	m_autoRedrawBox->setEnabled(false);
 	QEventLoop wait;
 	connect(worker, &QThread::finished, &wait, &QEventLoop::quit);
-	tick.start(250);
 	worker->start();
 	wait.exec();
-	running = false;
-	tick.stop();
+	worker->wait();
 	delete worker;
-	progress.close();
-	if(!made && stop.load())
+	const bool stopped = m_taskStopAsked.load();
+	const qint64 ms = m_taskClock.elapsed();
+	EndTask();
+	centralWidget()->setEnabled(true);
+	menuBar()->setEnabled(true);
+	m_autoRedrawBox->setEnabled(true);
+	if(!made && stopped)
 	{
 		m_status->setText("Stopped reading the model.");
 		return false;
@@ -1034,7 +1090,8 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 	m_dirty = true;
 	ShowStep(StepHull);
 	RefreshTitle();
-	m_status->setText(notes.join(" "));
+	m_status->setText(QString("Read %1 in %2 s. ").arg(QFileInfo(modelFile).fileName()).arg(ms / 1000.0, 0, 'f', 1)
+			+ notes.join(" "));
 	// What went less than well is worth more than a line in the status bar.
 	// And a longer ship, when that would keep much more of the model, at the
 	// press of a button.
@@ -1418,25 +1475,49 @@ void DesignerWindow::OnColourSelected(int row)
 		m_view->SetPaintIndex(row);
 }
 
-void DesignerWindow::ShapeNow()
+void DesignerWindow::RunShapeJob(ShapeJob& job, const PlanProgress& progress)
 {
-	m_shapeTimer->stop();
-	QApplication::setOverrideCursor(Qt::WaitCursor);
-	m_hull = BuildPlanHull(m_plan);
+	job.hull = BuildPlanHull(job.plan, progress);
+	if(!job.hull.tris.isEmpty())
+	{
+		if(progress)
+			progress("Finding where rooms fit inside the hull", 0, 0);
+		job.roomable = RoomableTriangles(job.plan, job.hull);
+	}
+	if(job.makeDesign)
+	{
+		if(progress)
+			progress(QString("Making the 3D view of %1 faces").arg(job.hull.tris.size()), 0, 0);
+		job.design = BuildPlanHullDesign(job.plan, job.hull);
+	}
+}
+
+void DesignerWindow::ApplyShapeJob(ShapeJob& job)
+{
+	m_hull = job.hull;
 	m_hullShaped = !m_hull.tris.isEmpty();
-	if(m_hullShaped)
-		m_view->SetRoomable(RoomableTriangles(m_plan, m_hull));
-	else
+	// The roomable triangles fit the plan they were found for; after a
+	// resize while shaping they wait for the next round.
+	if(m_hullShaped && job.plan.Width() == m_plan.Width() && job.plan.Depth() == m_plan.Depth() &&
+			job.plan.Decks() == m_plan.Decks())
+		m_view->SetRoomable(job.roomable);
+	else if(!m_hullShaped)
 		m_view->ClearRoomable();
 
-	if(m_steps->currentIndex() != StepBuild)
+	if(job.design)
 	{
-		AuScDesign* shown = BuildPlanHullDesign(m_plan, m_hull);
-		m_preview->SetDesign(shown, false);
-		delete m_design;
-		m_design = shown;
+		if(m_steps->currentIndex() != StepBuild)
+		{
+			m_preview->SetDesign(job.design, false);
+			delete m_design;
+			m_design = job.design;
+			m_designIsBlueprint = false;
+		}
+		else
+			delete job.design;		// The blueprint is shown on the build step.
+		job.design = 0;
 	}
-	QApplication::restoreOverrideCursor();
+	m_shapeStale = false;
 
 	QString info = m_hullShaped ? QString("%1 faces (%2 before the flat areas were merged), %3")
 			.arg(m_hull.tris.size()).arg(m_hull.rawTriangles).arg(m_hull.closed ? "closed" : "NOT closed")
@@ -1444,17 +1525,172 @@ void DesignerWindow::ShapeNow()
 	if(!m_hull.notes.isEmpty())
 		info += "\n" + m_hull.notes.join("\n");
 	m_hullInfo->setText(info);
+	if(m_frameAfterShape)
+	{
+		m_frameAfterShape = false;
+		m_preview->FrameAll();
+	}
+}
+
+void DesignerWindow::ShapeSoon()
+{
+	m_shapeTimer->stop();
+	if(m_shapeWorker)
+	{
+		m_shapeAgain = true;		// After the one under way.
+		return;
+	}
+	m_shapeAgain = false;
+	m_shapeJob = std::make_shared<ShapeJob>();
+	m_shapeJob->plan = m_plan;
+	m_shapeJob->makeDesign = m_steps->currentIndex() != StepBuild;
+	BeginTask("Shaping the hull", false);
+	std::shared_ptr<ShapeJob> job = m_shapeJob;
+	m_shapeWorker = QThread::create([this, job]() {
+		RunShapeJob(*job, [this](const QString& step, int done, int total) {
+			SetTask(step, done, total);
+			return true;
+		});
+	});
+	const int generation = ++m_shapeGeneration;
+	connect(m_shapeWorker, &QThread::finished, this, [this, generation]() {
+		if(generation == m_shapeGeneration)
+			ShapingDone();
+	}, Qt::QueuedConnection);
+	m_shapeWorker->start();
+}
+
+void DesignerWindow::ShapingDone()
+{
+	if(!m_shapeWorker)
+		return;
+	++m_shapeGeneration;		// A finished signal still on its way is for this one.
+	m_shapeWorker->wait();
+	delete m_shapeWorker;
+	m_shapeWorker = 0;
+	std::shared_ptr<ShapeJob> job = m_shapeJob;
+	m_shapeJob.reset();
+	const qint64 ms = m_taskClock.elapsed();
+	ApplyShapeJob(*job);
+	EndTask(ms > 1500 ? QString("Shaped the hull in %1 s.").arg(ms / 1000.0, 0, 'f', 1) : QString());
+	if(m_shapeAgain)
+	{
+		if(m_autoRedraw)
+			ShapeSoon();
+		else
+			PlanEdited();
+	}
+}
+
+void DesignerWindow::ShapeNow()
+{
+	// Before the window is up (scripts, the first plan) there is nothing to
+	// keep responsive: done here and now.
+	if(!isVisible() && !m_shapeWorker)
+	{
+		m_shapeTimer->stop();
+		ShapeJob job;
+		job.plan = m_plan;
+		job.makeDesign = m_steps->currentIndex() != StepBuild;
+		RunShapeJob(job, PlanProgress());
+		ApplyShapeJob(job);
+		return;
+	}
+	ShapeSoon();
+	// Waits, keeping the window drawn and the task bar moving; edits made
+	// meanwhile shape it again after.
+	QEventLoop wait;
+	while(m_shapeWorker)
+	{
+		QTimer::singleShot(50, &wait, &QEventLoop::quit);
+		wait.exec();
+	}
 }
 
 void DesignerWindow::OnShape()
 {
-	ShapeNow();
-	m_preview->FrameAll();
+	m_frameAfterShape = true;
+	ShapeSoon();
+}
+
+void DesignerWindow::BeginTask(const QString& title, bool canStop)
+{
+	{
+		QMutexLocker locked(&m_taskLock);
+		m_taskStep.clear();
+		m_taskDone = m_taskTotal = 0;
+		m_taskSteps = 0;
+	}
+	m_taskTitle = title;
+	m_taskStopAsked = false;
+	m_taskStop->setVisible(canStop);
+	m_taskStop->setEnabled(true);
+	m_taskClock.start();
+	m_taskBox->show();
+	RefreshTask();
+	m_taskTimer->start();
+}
+
+void DesignerWindow::SetTask(const QString& step, int done, int total)
+{
+	QMutexLocker locked(&m_taskLock);
+	if(step != m_taskStep && !(total > 0 && m_taskTotal > 0 && done > 0))
+		++m_taskSteps;
+	m_taskStep = step;
+	m_taskDone = done;
+	m_taskTotal = total;
+}
+
+void DesignerWindow::RefreshTask()
+{
+	QString step;
+	int done, total, steps;
+	{
+		QMutexLocker locked(&m_taskLock);
+		step = m_taskStep;
+		done = m_taskDone;
+		total = m_taskTotal;
+		steps = m_taskSteps;
+	}
+	if(total > 0)
+	{
+		m_taskBar->setRange(0, 1000);
+		m_taskBar->setValue(int(1000.0 * qBound(0, done, total) / total));
+		m_taskBar->setFormat(QString("%1%").arg(100.0 * qBound(0, done, total) / total, 0, 'f', 0));
+	}
+	else
+	{
+		m_taskBar->setRange(0, 0);		// Busy, no count.
+		m_taskBar->setFormat(QString());
+	}
+	QString text = m_taskTitle;
+	if(!step.isEmpty())
+		text += QString(" \u2013 step %1: %2").arg(qMax(1, steps)).arg(step);
+	text += QString("  (%1 s)").arg(m_taskClock.elapsed() / 1000);
+	if(m_taskStopAsked)
+		text += "  Stopping after this step...";
+	m_taskLabel->setText(text);
+}
+
+void DesignerWindow::EndTask(const QString& finalText)
+{
+	m_taskTimer->stop();
+	m_taskBox->hide();
+	if(!finalText.isEmpty())
+		m_status->setText(finalText);
 }
 
 bool DesignerWindow::BuildNow()
 {
+	// The model caches are shared with the shaping.
+	if(m_shapeWorker)
+	{
+		m_shapeWorker->wait();
+		ShapingDone();
+	}
 	QApplication::setOverrideCursor(Qt::WaitCursor);
+	BeginTask("Building the blueprint", false);
+	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 	PlanBuildOptions options;
 	options.furnish = m_furnish->isChecked();
 	options.walkPaths = m_walkPaths->isChecked();
@@ -1462,11 +1698,13 @@ bool DesignerWindow::BuildNow()
 	m_preview->SetDesign(0);
 	delete m_design;
 	m_design = design;
+	m_designIsBlueprint = true;
 	if(m_steps->currentIndex() == StepBuild)
 	{
 		m_preview->SetHullOpacity(0.25f);
 		m_preview->SetDesign(m_design, false);
 	}
+	EndTask(QString("Built the blueprint in %1 s.").arg(m_taskClock.elapsed() / 1000.0, 0, 'f', 1));
 	QApplication::restoreOverrideCursor();
 
 	QStringList lines;

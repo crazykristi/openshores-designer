@@ -139,6 +139,8 @@ int cmdParts(const QStringList& args)
 			line += QString("  [%1]").arg(p->GroupName());
 		if(p->AssociatedPartId())
 			line += QString("  tied to %1 state %2").arg(p->AssociatedPartId()).arg(int(p->AssociatedPartState()));
+		if(p->Type() == AuScPart::Part_RoomVoid && p->GravityType() == G_Zero)
+			line += "  zero-G";
 		if(p->Module() != CID_Invalid)
 			line += QString("  module %1").arg(g_Au.CommodityName(p->Module()));
 		{
@@ -669,6 +671,7 @@ int cmdBuildPlan(const QStringList& args)
 	out() << "Doors        : " << report.doors << "\n";
 	out() << "Windows      : " << report.windows << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
+	out() << "Zero-G joins : " << report.zeroGJoins << "\n";
 	out() << "Parking      : " << report.parking << "\n";
 	out() << "Ramps        : " << report.ramps << "\n";
 	out() << "Stairs       : " << report.stairs << "\n";

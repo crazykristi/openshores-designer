@@ -76,6 +76,7 @@ struct BuildingBrief
 	int						livestockPosts = 0;
 	int						groundParking = 0;	// Parking for ground vehicles.
 	int						spaceParking = 0;	// Landing pads for space vehicles.
+	int						spacecraftParking = 0;	// Berths for spacecraft (238 ft square each), beside the building.
 };
 
 // The outcome of one candidate building.

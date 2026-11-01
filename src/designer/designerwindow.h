@@ -10,8 +10,12 @@
 #ifndef SHIPGEN_DESIGNERWINDOW_H
 #define SHIPGEN_DESIGNERWINDOW_H
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QMainWindow>
+#include <QMutex>
+#include <atomic>
+#include <memory>
 
 #include "planbuild.h"
 #include "triplan.h"
@@ -26,6 +30,9 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
+class QProgressBar;
+class QThread;
+class QToolButton;
 class QSlider;
 class QSpinBox;
 class QTabWidget;
@@ -41,8 +48,10 @@ public:
 
 	bool	OpenPlan(const QString& fileName);
 	void	SetPlan(const TriPlan& plan);
-	// Shapes the hull now rather than after the pause.
+	// Shapes the hull now rather than after the pause, and waits for it.
 	void	ShapeNow();
+	// Shapes the hull in the background; the 3D view follows when it is done.
+	void	ShapeSoon();
 	// Builds the blueprint and shows it. Returns whether the engine accepted it.
 	bool	BuildNow();
 	// With 'ask', a blueprint the engine does not accept is only saved if the user says so.
@@ -101,6 +110,32 @@ private:
 	// Flips the plan (TriPlan::Flip), or with 'deckOnly' the deck shown.
 	void		Flip(bool foreAft, bool portStarboard, bool upsideDown, bool deckOnly);
 
+	// The hull is shaped on a worker thread (a big model takes long), from a
+	// copy of the plan; edits made meanwhile shape it again after.
+	struct ShapeJob
+	{
+		TriPlan					plan;
+		bool					makeDesign = true;
+		PlanHull				hull;
+		QVector<QVector<bool> >	roomable;
+		AuScDesign*				design = 0;
+	};
+	static void	RunShapeJob(ShapeJob& job, const PlanProgress& progress);
+	void		ApplyShapeJob(ShapeJob& job);
+	void		ShapingDone();
+	// The plan changed: shape it after the pause, or mark the 3D view out of
+	// date when redrawing while drawing is off.
+	void		PlanEdited();
+	void		OnAutoRedraw(bool on);
+
+	// The task bar at the bottom of the window: what is being done, how far
+	// along, how long it has taken, and a Stop button where it can stop.
+	// SetTask may be called from any thread.
+	void		BeginTask(const QString& title, bool canStop);
+	void		SetTask(const QString& step, int done, int total);
+	void		EndTask(const QString& finalText = QString());
+	void		RefreshTask();
+
 	TriPlan			m_plan;
 	QString			m_planFile;
 	bool			m_dirty = false;
@@ -118,6 +153,29 @@ private:
 	QTabWidget*		m_steps = 0;
 	QTimer*			m_shapeTimer = 0;
 	QLabel*			m_status = 0;
+	bool			m_autoRedraw = true;
+	bool			m_shapeStale = false;		// The 3D view does not show the plan as it is.
+	QThread*		m_shapeWorker = 0;
+	std::shared_ptr<ShapeJob>	m_shapeJob;
+	bool			m_shapeAgain = false;		// Edited while shaping.
+	bool			m_frameAfterShape = false;
+	bool			m_designIsBlueprint = false;	// m_design is the built blueprint, not the hull.
+	int				m_shapeGeneration = 0;
+
+	QWidget*		m_taskBox = 0;
+	QLabel*			m_taskLabel = 0;
+	QProgressBar*	m_taskBar = 0;
+	QToolButton*	m_taskStop = 0;
+	QTimer*			m_taskTimer = 0;
+	QElapsedTimer	m_taskClock;
+	QString			m_taskTitle;
+	QMutex			m_taskLock;
+	QString			m_taskStep;
+	int				m_taskDone = 0;
+	int				m_taskTotal = 0;
+	int				m_taskSteps = 0;			// Steps seen so far.
+	std::atomic<bool>	m_taskStopAsked{false};
+	QCheckBox*		m_autoRedrawBox = 0;
 
 	// The ship page.
 	QLineEdit*		m_name = 0;

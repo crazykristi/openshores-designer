@@ -77,6 +77,50 @@ surface effects. The kit's looks (`KitLookNamed`):
 
 Slot 1 is left alone: it is the construction material's texture.
 
+## What buildings need from the engine (2026-11-01)
+
+What the building generator knows about the engine (`src/building.cpp`):
+
+* **Power plants carry their fuel's generator module in the blueprint**
+  (`AuBdDesign::SetPowerPlantModule`; codes 62 and 63). The building
+  generator now fits the right one (coal, gasoline, hydroelectric,
+  hydrogen, natural gas, nuclear, solar, wind) whenever the industry is a
+  power plant.
+* **Fields** are site areas paved with cracked earth
+  (`WORLDTEX_DirtCrackedSmooth`), one per 4,000 square meters. A brief's
+  `volumes.field` now adds that much behind the building (about 216 ft
+  square each).
+* **Surgery and teleporters** need their stations: a brief's
+  `volumes.surgery` and `volumes.transporters` now place a medic station
+  (surgery module) and a teleporter station.
+* **The spacecraft factory and the airport terminal need a spacecraft
+  berth** (`DbIndustry::ParkSpacecraft`; every other industry forbids one).
+  It is a 238 ft square; a brief's new `spacecraftParking` puts it beside
+  the building, on the +X side, and widens the site to cover it.
+* **A street light is a structure of its own** (`BD_StreetLight`), which
+  needs no hull but a light bulb.
+
+Still to check:
+
+* **The industry table is a stand-in** (the game's own is in its database):
+  the rows for wind and gas power, orchard, well, refinery, fire, mass
+  media, church, the factories, the airport buildings and the street light
+  are guesses, and the smelter now needs a workshop and cargo rather than a
+  generator. The game may want more.
+* **Battery space** in a brief now gets the battery module with it. Storing
+  a generator's whole output takes 540 to 1,420 terajoules (one terajoule
+  takes 256 cubic feet of battery, so 3,900 to 10,300 cubic meters); with
+  less the engine warns.
+* **Rooms are not joined by inside doors** in generated buildings; the
+  generator makes one entrance only, so most warn of no doors.
+* **Teleporter stations have no pads yet** (`docs/BUILDING_TODO.md`).
+* **Not yet seen in the game.**
+
+The kit can also take extra recipes from a local `src/prototypes.cpp` and
+`src/prototypes.h`, which are not part of this repository; without them it
+holds the items above (`SHIPGEN_HAVE_PROTOTYPES` in `src/aether.cpp`). After
+adding or removing them, touch `src/aether.cpp` so that it is compiled again.
+
 ## How a blueprint is put together
 
 * **Shapes** (`KitBox`, `KitFrustum`, `KitFrustumY`, `KitTorus`, `KitGear`,

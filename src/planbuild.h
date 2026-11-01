@@ -50,7 +50,11 @@ struct PlanHull
 	QStringList		notes;
 };
 
-PlanHull	BuildPlanHull(const TriPlan& plan);
+// Told the step being done and how far along it is (total 0: no count);
+// returns false to stop (BuildPlanHull goes on regardless).
+typedef std::function<bool(const QString& step, int done, int total)> PlanProgress;
+
+PlanHull	BuildPlanHull(const TriPlan& plan, const PlanProgress& progress = PlanProgress());
 
 // A design holding only the painted hull, for showing it quickly.
 AuScDesign*	BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull);
@@ -76,6 +80,7 @@ struct PlanBuildReport
 	int				doors = 0;
 	int				windows = 0;
 	int				ladders = 0;
+	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
 	int				stairs = 0;
 	int				parking = 0;			// Vehicle parking spots.
 	int				contrails = 0;			// Contrail emitters.

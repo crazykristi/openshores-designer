@@ -31,6 +31,7 @@
 
 #include "auscface.h"
 #include "aupoint.h"
+#include "audef.h"
 
 class AuDesign;
 class AuScPart;
@@ -163,6 +164,10 @@ quint16 HullPartAt(const AuDesign& design, const AuPoint& p);
 // not a room of its own.
 const char* LadderGroupPrefix();
 bool AddShaft(AuDesign& design, const QString& groupName, const AuPoint& mn, const AuPoint& mx, quint16& voidId);
+// A room void of any closed shape, with no mesh to see.
+bool AddVoid(AuDesign& design, const QString& groupName, const AuScFaceList& faces, quint16& voidId);
+// Sets the gravity of a room void (G_Zero for a zero-G shaft).
+bool SetVoidGravity(AuDesign& design, quint16 voidId, GRAVITY gravity);
 
 // A ladder path from 'bottom' up to 'top'; 'facing' is the way a climber faces.
 bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing);
@@ -173,6 +178,8 @@ bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, 
 // of two rails and rungs is put in front of the climber, from 'bottom' to
 // 3 ft above 'top' (a handhold), facing along 'facing' (X or Y).
 bool CutLadderOpening(AuDesign& design, const AuPoint& mn, const AuPoint& mx, quint16 lowerRoomId, quint16 upperRoomId);
+// The same through a closed jig of any shape.
+bool CutOpening(AuDesign& design, const AuScFaceList& jig, quint16 lowerRoomId, quint16 upperRoomId);
 bool AddLadderMesh(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing,
 		const QString& groupName);
 

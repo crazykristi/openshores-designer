@@ -1,5 +1,64 @@
 # Changes and known issues
 
+## 1 November 2026: release 0.3.5-alpha
+
+* **Version 0.3.5-alpha** (`src/version.h`, `RELEASE_NOTES.md`): everything
+  below from 1 November, and the macOS build from upstream. There was no
+  0.3.4.
+* **Private building designs stay out of the repository and the downloads**;
+  the program builds with or without them (`docs/AETHER_KIT.md`).
+
+## 1 November 2026: zero-G shafts, the designer's task bar
+
+* **Zero-G shafts**: the room type *Gravity Well* is now called *Zero-G
+  Shaft* (old plans still open) and actually is one: its room void has no
+  gravity (`G_Zero`). Zero-G shafts stacked on neighbouring decks are
+  joined into one space: the ceiling and floor between them are cut away
+  and a zero-G void fills the structure (`Zero-G joins` in the build
+  report; `shipgen parts` marks such voids `zero-G`). Checked with the
+  engine's own floor test; not yet tried in the game.
+* **Redraw while drawing can be turned off** in the designer (bottom right,
+  or the View menu; F5 redraws). The hull is now shaped in the background,
+  so the window no longer freezes while it is.
+* **A task bar** at the bottom of the designer replaces the progress window:
+  the task, the numbered step, a progress bar with a percentage where the
+  step can be counted, the seconds so far, and Stop when reading a model.
+  Shaping a hull from a model now reports its steps too (reading and
+  slicing the model when a plan is opened, filling the grid, finding the
+  surface, placing the corners), and slicing reports every 1% instead of
+  every 200,000 faces.
+* **Paint reaches the whole model hull**: with the model as the hull (and
+  the angular hull), a face took the paint of the plan triangle it lies in;
+  the surface lies partly in triangles next to the drawn hull (the skin, a
+  deck's top, model parts the grid missed, the grid's edge), which cannot be
+  painted, so those faces kept the base coat. They now take the paint of the
+  nearest hull triangle, straight out along x, y or z first so colour edges
+  carry straight on (`HullPaintNear`). The LOGH battleship's four engine
+  nozzles were speckled with base coat; now they are wholly painted. The
+  paint edges are kept when the hull is simplified, so the hull comes out a
+  little different (its volume by 2.5%).
+* **macOS** (from upstream, pull request #1): native build with Homebrew Qt 5
+  and the GUI tests on macOS.
+* **A plan from a model is shaped once, not twice**: changing tabs shaped
+  the hull again although nothing had changed. The Cyclops at 400 ft as its
+  own hull: 314 s to 170 s, most of it taking the slivers out of 3.3
+  million faces (about 100 s; now shown as its own step).
+
+## 1 November 2026: the building generator
+
+* **The building generator** fits a power plant's generator module, lays
+  out fields, places medic and teleporter stations, and spacecraft berths
+  (new brief field `spacecraftParking`). It also says why a building does
+  not suit its industry, in the engine's words. See `docs/AETHER_KIT.md`.
+* **Battery space works**: the building generator fits the battery module
+  whenever a brief asks for battery space (before, the space was allocated
+  with no module).
+* **The stand-in industry table** has rows for more building types
+  (guesses). The smelter now needs a workshop and cargo instead of a
+  generator.
+* **`SHIPGEN_DUMP_KIT=<dir>`** writes each kit blueprint's outside as an
+  .obj file, for viewing (debugging only).
+
 ## 31 October 2026: release 0.3.3-alpha, hull styles
 
 * **Version 0.3.3-alpha** (`src/version.h`, `RELEASE_NOTES.md`).

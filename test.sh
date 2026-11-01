@@ -672,6 +672,50 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		"$SHIPGEN" plan-flip "$WORK/plan/once.json" "$WORK/plan/twice.json" $how > /dev/null 2>&1
 		cmp -s "$WORK/plan/example.json" "$WORK/plan/twice.json" || twice="not the same after $how twice"
 	done
+	# A zero-G shaft over both decks (written with its old name, "Gravity
+	# Well"): the two rooms and the structure between them are zero-G, and
+	# the floor between them is opened.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/zerog.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); W = d['width']
+def dec(s):
+    out = []
+    for p in s.split(','):
+        if p:
+            n, v = p.split('*'); out += [int(v)] * int(n)
+    return out
+def enc(a):
+    o = []; i = 0
+    while i < len(a):
+        j = i
+        while j < len(a) and a[j] == a[i]: j += 1
+        o.append("%d*%d" % (j - i, a[i])); i = j
+    return ','.join(o)
+d['rooms'].append({'colour': '#40e0d0', 'label': 'Drop Shaft 1', 'type': 'Gravity Well'})
+ri = len(d['rooms']) - 1
+for L in d['layers']:
+    r = dec(L['room']); h = dec(L['hull'])
+    for cy in range(6, 9):
+        for cx in range(20, 23):
+            for k in range(4):
+                i = (cy * W + cx) * 4 + k
+                if h[i]: r[i] = ri
+    L['room'] = enc(r)
+d['ladders'] = []
+json.dump(d, open(sys.argv[2], 'w'))
+PY
+	if "$SHIPGEN" build-plan "$WORK/plan/zerog.json" --out "$WORK/plan/zerog.SoH" > "$WORK/plan/zerog.txt" 2>&1 &&
+			grep -q '^Zero-G joins : 1$' "$WORK/plan/zerog.txt" &&
+			[ "$("$SHIPGEN" parts "$WORK/plan/zerog.SoH" 2>&1 | grep -c 'Room Void .*Drop Shaft.*zero-G')" = 3 ]; then
+		pass=$((pass+1))
+		echo "  ok    zero-G shafts on two decks are one zero-G space"
+		check "the zero-G shaft plan" "$WORK/plan/zerog.SoH"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  zero-G shafts on two decks were not joined"
+		grep -E '^(Zero-G|Rooms)' "$WORK/plan/zerog.txt"
+	fi
+
 	if [ "$twice" = ok ]; then
 		pass=$((pass+1))
 		echo "  ok    a plan turned, mirrored or turned upside down twice is the same plan"

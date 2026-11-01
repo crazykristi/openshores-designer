@@ -56,8 +56,8 @@ jobs:
       - name: Package
         run: packaging/build-macos-app.sh
 
+      # An app that will not start must not reach the release.
       - name: Start the designer from the app
-        continue-on-error: true
         env:
           QT_DEBUG_PLUGINS: 1  # Says why a plugin would not load.
         run: |

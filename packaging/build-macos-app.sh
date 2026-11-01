@@ -77,9 +77,60 @@ find "$APP/Contents/PlugIns/sqldrivers" -type f ! -name 'libqsqlite*' -delete 2>
 for p in $PROGRAMS; do
 	install_name_tool -delete_rpath "$QT_LIBS" "$APP/Contents/MacOS/$p" 2>/dev/null || true
 done
+# macdeployqt follows absolute paths only. A Homebrew library that finds its
+# partner relative to itself (brotli: @loader_path/../lib/...) comes along
+# without that partner, and then the platform plugin will not load. So: bring in
+# what such a library wants, and point it at the copy, until nothing is missing.
+FRAMEWORKS="$APP/Contents/Frameworks"
+BREW_LIB="$(brew --prefix)/lib"
+# Where a dependency of file $2 really is; empty if the path cannot be worked out.
+resolve_dep() {
+	case "$1" in
+		@loader_path/*) echo "$(dirname "$2")/${1#@loader_path/}" ;;
+		@executable_path/*) echo "$APP/Contents/MacOS/${1#@executable_path/}" ;;
+		@rpath/*) echo "$FRAMEWORKS/${1#@rpath/}" ;;
+		*) echo "$1" ;;
+	esac
+}
+changed=1
+while [ "$changed" = 1 ]; do
+	changed=0
+	while IFS= read -r -d '' file; do
+		file -b "$file" | grep -q 'Mach-O' || continue
+		own="$(otool -D "$file" | tail -n +2)"
+		while IFS= read -r dep; do
+			[ "$dep" != "$own" ] || continue
+			case "$dep" in @*.dylib) ;; *) continue ;; esac
+			[ ! -e "$(resolve_dep "$dep" "$file")" ] || continue
+			base="$(basename "$dep")"
+			if [ ! -e "$FRAMEWORKS/$base" ]; then
+				[ -e "$BREW_LIB/$base" ] || die "$file needs $dep, which is not in $BREW_LIB"
+				cp -L "$BREW_LIB/$base" "$FRAMEWORKS/$base"
+				chmod u+w "$FRAMEWORKS/$base"
+				install_name_tool -id "@executable_path/../Frameworks/$base" "$FRAMEWORKS/$base"
+				echo "  brought in $base, for $(basename "$file")"
+			fi
+			install_name_tool -change "$dep" "@executable_path/../Frameworks/$base" "$file"
+			changed=1
+		done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
+	done < <(find "$APP/Contents" -type f -print0)
+done
+
 bad=0
 while IFS= read -r -d '' file; do
 	if file -b "$file" | grep -q 'Mach-O'; then
+		# Every library a relative path names has to be there.
+		own="$(otool -D "$file" | tail -n +2)"
+		while IFS= read -r dep; do
+			[ "$dep" != "$own" ] || continue
+			case "$dep" in
+				@*)
+					if [ ! -e "$(resolve_dep "$dep" "$file")" ]; then
+						echo "  $dep is missing, for $file" >&2
+						bad=1
+					fi ;;
+			esac
+		done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
 		# A library's own install name is listed too; it is only a label, and
 		# a plugin keeps the one it was built with.
 		own="$(otool -D "$file" | tail -n +2)"

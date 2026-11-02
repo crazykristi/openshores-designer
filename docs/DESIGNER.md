@@ -76,7 +76,7 @@ The steps are the tabs of the side panel:
 |---|---|
 | 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, adding or removing decks, turning one deck around or mirroring it, and turning the whole ship around (fore and aft), mirroring it (port and starboard) or turning it upside down, for a 3D model that came in the wrong way round (also in the Edit menu; `shipgen plan-flip` on the command line). Everything drawn goes with it, and so does the 3D model when it is the hull; a ladder or stairs that no longer meet after a one-deck flip are taken away, and stairs go when the ship is turned upside down (they would climb down). |
 | 2 Hull | Draw the hull. The deck below shows faintly. Hull style (smooth, angular or classic, below), skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15, smooth style only) and the face budget (5,000). For a plan from a 3D model: whether the model is the hull, and whether that hull is sharp or smooth. The 3D view follows the drawing after a short pause. |
-| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; click near the grid corner the spot is centred on; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue arrow pointing aft) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
+| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; an outline of the spot's size follows the mouse, snapped to the nearest grid corner: green fits, red does not, orange means a click takes that spot away; R turns it a quarter turn; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue ball where it ends up on the hull, with an arrow the way the trail goes and a dotted line back to the triangle it was put in from; click the ball or the triangle to take it away; the 3D view shows the same ball and arrow) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
 | 4 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. |
 | 5 Build | Build the blueprint and see the engine's report; save it as `.SoH`. Stations, berths and systems, and walk paths, can be switched off. |
 
@@ -214,10 +214,15 @@ room triangle that is not inside the shaped hull is reported.
 
 **Doors, windows, ladders and paths** are made as `docs/SOH_FORMAT.md`
 sections 5 and 5a describe (`src/interior.h`). A door is as wide as a cell
-less half a foot (at most 10 ft) and up to 8 ft high. Doors on neighbouring
-edges of one wall, between the same two rooms (or a room and the outside),
-make one **bay door**: as wide as the edges less a foot, and as tall as the
-room less half a foot, for vehicles. Doors are cut through
+less half a foot (at most 10 ft) and up to 8 ft high. Doors in one row
+on neighbouring edges of one wall, between the same two rooms (or a room and
+the outside), make one **bay door**: as wide as the edges less a foot, and as
+tall as the room less half a foot, for vehicles. With the door tool, dragging
+along a wall makes such a row, and dragging over separate doors joins them; a
+single click makes a door of its own, and a click on a door takes it away. A
+right click gives a door and the rest of its row the texture picked under
+*Door texture*. Plans from before rows existed have no row numbers, and there
+every neighbour joins. Doors are cut through
 the room walls (and the hull, for a hull door) with the engine's own door
 jig, so the openings are real; the door is the piece that was cut out. A hull
 door's switches (where it is opened and closed) are set 1 ft in front of it
@@ -261,9 +266,43 @@ gravity is working; without it the room has the gravity around the ship).
 Where a zero-G shaft has a zero-G shaft directly above it on the next deck,
 the lower one's ceiling and the upper one's floor are cut away over the
 triangles they share, and a zero-G void fills the structure between them,
-so the two are one space to float through, with no ladder needed. Each
-such join is counted in the build report (`Zero-G joins` in
+so the two are one space to float through, with no ladder needed. The cut
+stays .05 ft inside the walls, which keeps the walls whole, and the crew get a
+path up the shaft. Each such join is counted in the build report (`Zero-G joins` in
 `build-plan`).
+
+**Open to Deck Below** rooms are the top of a tall room, as in the game's old
+designer: the room below reaches up into this deck. Wherever a triangle of
+one has a triangle of any room under it, the ceiling and floor between them
+are cut away and a void fills the structure, with the gravity of the room
+below, so people fall to the lower floor. The shape need not match; only the
+overlap opens. With no room under it at all the floor stays and the build
+warns. The upper part gets no stations or berths, as a zero-G shaft doesn't.
+Each join is counted in the build report (`Open to below` in `build-plan`).
+
+**Ceiling windows** (experimental; `"skylights"` in the plan) go in a whole
+cell of a room with no room on any deck above it, straight up through the
+hull. The room and hull are turned so the ceiling is a wall, cut as a wall
+window is, and turned back. *Join windows side by side* makes neighbouring
+cells of one room one rectangular pane. Deep ones warn that they look down a
+tunnel. A plan turned upside down makes them windows in the floor.
+
+**Bridge styles** (`"bridgeStyle"` in the plan, on the Build page) choose how
+stations look. `hazeron`, the default, is the game's swivel chairs, as before.
+`desks` (experimental) uses the engine's integrated stations (`AuScStation`):
+a desk with a sloping top, the station's screen on it and a stool. In each
+room, curved rows wrap round the captain, against the fore wall, then straight
+rows for what the curves could not hold. Stations with no room of their own go
+on the bridge. Desks keep clear of doors, ladders and stairs. Medic and
+transporter stations stay chairs, because their integrated versions need more
+setting up, and a station no desk fits gets a chair and a note in the report.
+Desks do not block walking; a walk path may pass through one.
+
+With desks, the Build page also sets, for the whole ship, whether operators sit
+on a stool or stand with no stool (`"deskStanding"`), and how high the desks'
+top edge is above the floor (`"deskHeight"`, in feet: 2.2 to 4.5 sitting, 2.8 to
+5.5 standing). Left unset, it is 3.0 ft sitting and 4.2 ft standing. The screen
+follows the desk. Lower suits short characters.
 
 **Stairs** climb one deck over `StairCells()` cells (deck height times 1.4,
 rounded up to whole cells: 3 cells of 5 ft for 10 ft decks, about 34
@@ -316,6 +355,13 @@ stand out from the walls. Shields, the weapon bay and the transporter can be
 left out on the Ship page (`leaveOut` in the plan file: `shield`,
 `firecontrol`, `transporter`); the example Wedge leaves all three out.
 
+**Fire control** on the Ship page chooses what the fire control station runs
+(`fireControlModule` in the plan, a commodity id; left out, it is 252): Energy
+Weapon Bay (252), Ballistic Weapon Bay (261), Weapon Launcher Bay (254), Weapon
+Deployment Bay (319), Tractor Beam Bay (258), Prospector Bay (257), Wildcatter
+Bay (291), Siphon Bay (289), Particle Collector Bay (283) or Atmosphere
+Condenser Bay (256), the same list as the game's own station dialog.
+
 **Vehicle parking spots** are the game's own (`GroundVehicleParkingSpot`,
 6 by 12 m; `SpaceVehicleParkingSpot`, 12 by 17 m), flat on the floor 0.3 ft
 up as in the Atlantis' hold, long side fore and aft unless `across`. A spot
@@ -326,6 +372,26 @@ berths, service panels, weapons and the hull volume of the systems, exactly
 as the generator does after it has placed its own rooms. It needs a box in
 each room for the stations to stand in, which is the largest rectangle of
 whole cells of that room. A room with no whole cell gets nothing.
+
+**Room and door textures.** A room can have its own wall, floor and ceiling
+texture from the game's library (*The room picked* on the Rooms page; in the
+plan file `wallTexture`, `floorTexture` and `ceilingTexture`, library ids from
+`docs/TEXTURE_LIBRARY.md`), and a door its own (`texture`). A ship has one
+palette of 15 textures: one already in it is reused, a new one takes a slot
+nothing uses, and when none is free the build warns and the rest keep their
+usual look. A chosen texture is shown unpainted.
+
+**Flat windows.** With *Join windows* on, windows that follow a wall zigzagging
+over the triangles are one flat pane on a straight line across the teeth, if
+the teeth stay within one cell of that line. The pane sits at the furthest hull
+at the window's middle and top, so a ledge below it does not push it out. The
+hull is cut directly here, because the engine's jig did not finish on an
+opening this wide across a zigzag hull. Turn off *One flat pane across a zigzag
+wall* (`"flatWindows": false`) to cut tooth by tooth.
+
+**Crew routes.** The build warns when the rooms' walking paths fall into
+separate parts, naming the rooms in each. `shipgen sight` shows what is seen
+along a line of sight, leaving out faces seen from behind, as the game does.
 
 ## The plan file
 
@@ -342,10 +408,11 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "width": 36, "depth": 16, "decks": 2,
   "rooms":   [ { "type": "Bridge", "label": "Bridge 1", "colour": "#5a8cdc" } ],
   "ftl": "wormhole-p",
-  "doors":   [ { "deck": 0, "x": 7, "y": 7, "side": 1 } ],
+  "doors":   [ { "deck": 0, "x": 7, "y": 7, "side": 1, "row": 1, "texture": 111 } ],
   "windows": [ { "deck": 1, "x": 12, "y": 13, "side": 2 } ],
   "ladders": [ { "deck": 0, "x": 13, "y": 7 } ],
   "parking": [ { "deck": 0, "x": 4, "y": 8, "kind": "ground", "across": true } ],
+  "skylights": [ { "deck": 1, "x": 12, "y": 8 } ],
   "stairs":  [ { "deck": 0, "x": 14, "y": 8, "side": 1 } ],
   "emitters": [ { "deck": 0, "x": 2, "y": 8, "side": 3, "kind": "contrail", "size": 6.56 } ],
   "palette": [ { "colour": "#969ba5", "theme": -1, "name": "Hull" } ],

@@ -37,6 +37,11 @@ class AuDesign;
 class AuScPart;
 
 // How far a doorway void reaches into the room on each side of the wall.
+// How far above a floor a ladder path begins and ends. A climber has reached
+// the end of a ladder when their centre of gravity is within a foot of it, so
+// a ladder that ends at the floor is never finished: the crew stand at its foot
+// for ever. (The Atlantis's ladders end 3.25 ft above the floor.)
+#define SHIPGEN_LADDER_HOLD 3.25
 #define SHIPGEN_DOORWAY_REACH 2.0
 // How far below the bottom of the hull the ladder from a hull door reaches,
 // as in the working designs (2 to 3 ft): the ground under a landed ship.
@@ -108,6 +113,36 @@ bool AddBoxRoom(AuDesign& design, const QString& groupName, const AuPoint& mn, c
 // wants it.
 bool AddMeshRoom(AuDesign& design, const QString& groupName, const AuScFaceList& faces,
 		quint16& voidId, quint16& meshId, bool naturalGravity = false, const QColor& wallTint = QColor());
+
+// How a room's faces should look, once every cut is made. A slot of -1 keeps
+// the usual texture. A slot that is given replaces the texture, unpainted;
+// otherwise only faces with no look yet change: the linings cuts leave.
+struct RoomLook
+{
+	int		wallSlot = -1;
+	int		floorSlot = -1;
+	int		ceilingSlot = -1;
+	QColor	wallTint;
+};
+void RestyleRoom(AuDesign& design, quint16 meshId, const RoomLook& look);
+
+// A door in another texture of the palette, in all its states, unpainted.
+void RestyleDoor(AuScPart* part, int slot);
+
+// The window panes as in the game's own designs: no paint, only the opacity.
+// The jig gives each the paint of the hull it replaced.
+void ClearWindowGlass(AuDesign& design);
+
+// Makes a window part one flat pane at constant x, seen from both sides.
+void SetFlatPane(AuScPart* window, double x, double width, double z0, double z1);
+
+// One flat window, where 'toWall' turns the design so that the wall is at x 0
+// with the outside towards +x and 'back' undoes it: a rectangular hole in the
+// hull out to 'depth', a frame round it reaching the hull surface and a pane at
+// its end. The engine's own jig cut does not finish (it was still going after
+// several minutes) on a hole this wide across a zigzag hull.
+bool CutFlatWindow(AuDesign& design, const AuMatrix4x4& toWall, const AuMatrix4x4& back, double depth, double width,
+		double sill, double top, const QString& groupName);
 
 // A light wall colour for a room, by the words in its name (bridge, engine,
 // quarters and so on), so that rooms can be told apart.
@@ -195,6 +230,17 @@ bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, d
 // A rail on a floor from 'from' to 'to' (along X or Y, at the floor's
 // height): an invisible Barrier that nobody walks through, and a rail on
 // posts to see, 3.5 ft high. Round the opening of a flight of stairs.
+// A desk with a sloping top, and a stool if 'withStool', for an integrated
+// station. The operator is at 'floorLoc' (on the floor) and faces along 'yaw',
+// radians from +x about z. 'topFeet' is the desk's top edge above the floor.
+// 'plane', 'corner1' and 'corner2' are the station's screen on the desk top, for
+// AuScStation::MakeStation.
+extern const double kDeskWidth, kDeskReach, kDeskBehind;	// Feet: across, operator to far edge, room behind the operator.
+bool AddStationDesk(AuDesign& design, const AuPoint& floorLoc, double yaw, const QString& groupName,
+		AuMatrix4x4& plane, AuPoint& corner1, AuPoint& corner2,
+		const QColor& deskPaint = QColor(150, 155, 160), const QColor& stoolPaint = QColor(90, 95, 100),
+		double topFeet = 3.0, bool withStool = true);
+
 bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QString& groupName);
 
 // A walk path segment. With a door id it is only walkable while that door is open.

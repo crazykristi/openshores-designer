@@ -18,6 +18,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include <QHash>
+#include "auscface.h"
 #include "triplan.h"
 
 class PlanView : public QWidget
@@ -25,8 +27,9 @@ class PlanView : public QWidget
 	Q_OBJECT
 
 public:
+	void	SetDoorTexture(int texture) { m_doorTexture = texture; }
 	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, StairMode,
-			ContrailMode, WeaponMode };
+			ContrailMode, WeaponMode, SkylightMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
 
 	explicit PlanView(QWidget* parent = 0);
@@ -47,6 +50,9 @@ public:
 	void	SetRoomable(const QVector<QVector<bool> >& roomable);
 	void	ClearRoomable();
 
+	// The shaped hull, to show contrail emitters where they end up on it.
+	void	SetHullTris(const AuScTriList& tris);
+
 	void	FitToWindow();
 
 signals:
@@ -59,8 +65,11 @@ protected:
 	void	mousePressEvent(QMouseEvent* event) override;
 	void	mouseMoveEvent(QMouseEvent* event) override;
 	void	mouseReleaseEvent(QMouseEvent* event) override;
+	bool	PlaceDoorInRow(int deck, int cx, int cy, int side);
 	void	wheelEvent(QWheelEvent* event) override;
 	void	resizeEvent(QResizeEvent* event) override;
+	void	keyPressEvent(QKeyEvent* event) override;
+	void	leaveEvent(QEvent* event) override;
 
 private:
 	QPointF	ToScreen(const QPointF& world) const;
@@ -72,6 +81,10 @@ private:
 	// Says why a click did nothing. The text stays until the mouse leaves
 	// the triangle, rather than being replaced by the hover text at once.
 	void	Notice(const TriRef& t, const QString& text);
+	// The grid corner nearest a point of the plan.
+	void	NearestCorner(const QPointF& world, int& ix, int& iy) const;
+	// Where a contrail emitter is drawn: where it ends up on the hull.
+	QPointF	ContrailSpot(const PlanEmitter& e) const;
 
 	TriPlan*	m_plan = 0;
 	int			m_deck = 0;
@@ -83,6 +96,12 @@ private:
 	double		m_emitterFeet = 6.5616798;
 
 	QVector<QVector<bool> >	m_roomable;
+	AuScTriList	m_hullTris;
+	mutable QHash<qint64, QPointF>	m_contrailSpots;
+
+	bool		m_parkingAcross = false;	// Spots placed from now on lie across the ship (R turns them).
+	bool		m_hovering = false;
+	QPointF		m_hoverWorld;
 
 	double		m_scale = 12.0;			// Pixels per foot.
 	QPointF		m_offset;				// Screen position of the world origin.
@@ -95,6 +114,16 @@ private:
 	bool		m_haveLast = false;
 	QString		m_notice;
 	TriRef		m_noticeTri;
+
+	// A door being dragged along a wall into a row.
+	bool	m_doorDrag = false;
+	bool	m_doorMoved = false;
+	bool	m_doorHadOne = false;
+	TriRef	m_doorStart;
+	int		m_doorAlong = 0;
+	int		m_doorRow = 0;
+	int		m_doorMirrorRow = 0;
+	int		m_doorTexture = -1;
 };
 
 #endif

@@ -18,10 +18,10 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.5-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.5-alpha),
-a pre-release: zero-G shafts, a progress bar and background shaping in the
-designer, paint over the whole model hull, macOS from source) are an AppImage holding the designer, `shipgen-gui` and the
-command line; see *Release: the AppImage* below. **Code, git and making a release:**
+is [0.3.6-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.6-alpha),
+a pre-release: crew can get around big ships, integrated desks, fixes from trying
+a battleship in the game, a Mac download) are an AppImage holding the designer, `shipgen-gui` and the
+command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
 The generator from the command line, for example:
@@ -511,9 +511,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in

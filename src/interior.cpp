@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "interior.h"
+#include "austation.h"
 
 #include <QMap>
 #include <QSet>
@@ -94,6 +95,45 @@ static AuScFaceList WithoutDuplicates(const AuScFaceList& faces)
 	return out;
 }
 
+// Four thin boxes round an opening (three for a door, which has no sill): 'a'
+// along its axis, 'c' across it. A hull part, not a mesh: the game wants every
+// mesh part of a ship inside its hull, and the frame reaches its surface.
+static quint16 AddOpeningFrame(AuDesign& design, int axis, double a0, double a1, double c0, double c1, double z0, double z1,
+		bool frameBottom, const AuScFace* hullLook, const AuMatrix4x4& place)
+{
+	const double t = .3;
+	auto box = [&](double b0, double b1, double zb, double zt) {
+		return axis == 0 ? BoxFaces(AuPoint(a0, b0, zb), AuPoint(a1, b1, zt))
+				: BoxFaces(AuPoint(b0, a0, zb), AuPoint(b1, a1, zt));
+	};
+	AuScFaceList frameFaces;
+	frameFaces.AddFaces(box(c0 - t, c0, z0 - (frameBottom ? t : 0), z1 + t));
+	frameFaces.AddFaces(box(c1, c1 + t, z0 - (frameBottom ? t : 0), z1 + t));
+	frameFaces.AddFaces(box(c0, c1, z1, z1 + t));
+	if(frameBottom)
+		frameFaces.AddFaces(box(c0, c1, z0 - t, z0));
+	frameFaces.Transform(place);
+	OrientAsHull(frameFaces);
+	AuScSelectInfo all;
+	for(int i = 0; i < frameFaces.size(); ++i)
+		all.m_Faces.insert(i);
+	const quint8 slot = hullLook ? hullLook->TextureIndex() : 0;
+	frameFaces.TextureUnwrap(all, slot, 4.0, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0, AuMatrix4x4::IdentityMatrix());
+	if(hullLook)
+		for(AuScFace* f : frameFaces)
+		{
+			f->SetPaint(hullLook->Paint());
+			if(hullLook->ColorTheme() != AuScFace::THEME_Count)
+				f->SetPaint(hullLook->ColorTheme(), quint8(hullLook->Paint().alpha()));
+			f->SetShine(hullLook->Shine());
+			f->SetReflectivity(hullLook->Reflectivity());
+		}
+	AuScHull framePart;
+	framePart.AddFaces(frameFaces);
+	framePart.SetGroupName("Frame");
+	return framePart.IsValid() ? design.Parts().AddPart(framePart) : 0;
+}
+
 bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16 hullId, quint16 roomId,
 		QList<quint16>* added, int axis, bool frameBottom, double sleeveTo)
 {
@@ -176,11 +216,15 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 				}
 			}
 			hull->SetFaces(kept);
-			// The frame takes the look of a hull face by the opening.
+			// The frame takes the look of a painted hull face by the opening.
+			// (Linings of earlier cuts have no paint, and a frame without any
+			// shows bare, in the palette's first texture.)
 			const AuPoint middle = (cmn + cmx) / 2.0;
 			double best = 1e30;
 			for(AuScFace* f : faces)
 			{
+				if(f->Paint().alpha() == 0 && f->ColorTheme() == AuScFace::THEME_Count)
+					continue;
 				const double d = (AuPoint(f->Vertex(0)) - middle).Length();
 				if(d < best)
 				{
@@ -204,9 +248,9 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 	if(frame && liningMin.x < 1e29)
 	{
 		// Four thin boxes round the opening (three for a door, which has no
-		// sill), from where the lining began to where it ended, standing a
-		// little proud at both ends.
-		const double t = .3, lip = .15;
+		// sill), from where the lining began to where it ended: flush with the
+		// hull surface, proud only by enough not to flicker against it.
+		const double lip = .03;
 		double a0 = (axis == 0 ? liningMin.x : liningMin.y) - lip;
 		double a1 = (axis == 0 ? liningMax.x : liningMax.y) + lip;
 		if(!qIsNaN(sleeveTo))
@@ -215,42 +259,9 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 			a1 = qMax(a1, sleeveTo + lip);
 		}
 		const double c0 = axis == 0 ? cmn.y : cmn.x, c1 = axis == 0 ? cmx.y : cmx.x;
-		auto box = [&](double b0, double b1, double z0, double z1) {
-			return axis == 0 ? BoxFaces(AuPoint(a0, b0, z0), AuPoint(a1, b1, z1))
-					: BoxFaces(AuPoint(b0, a0, z0), AuPoint(b1, a1, z1));
-		};
-		AuScFaceList frameFaces;
-		frameFaces.AddFaces(box(c0 - t, c0, cmn.z - (frameBottom ? t : 0), cmx.z + t));
-		frameFaces.AddFaces(box(c1, c1 + t, cmn.z - (frameBottom ? t : 0), cmx.z + t));
-		frameFaces.AddFaces(box(c0, c1, cmx.z, cmx.z + t));
-		if(frameBottom)
-			frameFaces.AddFaces(box(c0, c1, cmn.z - t, cmn.z));
-		OrientAsHull(frameFaces);
-		AuScSelectInfo all;
-		for(int i = 0; i < frameFaces.size(); ++i)
-			all.m_Faces.insert(i);
-		const quint8 slot = hullLook ? hullLook->TextureIndex() : 0;
-		frameFaces.TextureUnwrap(all, slot, 4.0, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0, AuMatrix4x4::IdentityMatrix());
-		if(hullLook)
-			for(AuScFace* f : frameFaces)
-			{
-				f->SetPaint(hullLook->Paint());
-				if(hullLook->ColorTheme() != AuScFace::THEME_Count)
-					f->SetPaint(hullLook->ColorTheme(), quint8(hullLook->Paint().alpha()));
-				f->SetShine(hullLook->Shine());
-				f->SetReflectivity(hullLook->Reflectivity());
-			}
-		// A hull part, not a mesh: the game wants every mesh part of a ship
-		// inside its hull, and the frame stands a little proud of it.
-		AuScHull framePart;
-		framePart.AddFaces(frameFaces);
-		framePart.SetGroupName("Frame");
-		if(framePart.IsValid())
-		{
-			const quint16 frameId = design.Parts().AddPart(framePart);
-			if(added && frameId)
-				*added << frameId;
-		}
+		const quint16 frameId = AddOpeningFrame(design, axis, a0, a1, c0, c1, cmn.z, cmx.z, frameBottom, hullLook, AuMatrix4x4());
+		if(added && frameId)
+			*added << frameId;
 	}
 	delete hullLook;
 
@@ -340,6 +351,222 @@ static void StyleRoomFaces(AuScFaceList& faces, const QColor& wallTint)
 			faces[i]->SetPaint(part.paint);
 		}
 	}
+}
+
+void RestyleRoom(AuDesign& design, quint16 meshId, const RoomLook& look)
+{
+	AuScPart* part = design.Parts().value(meshId);
+	if(!part)
+		return;
+	AuScFaceList faces;
+	part->Faces(faces);
+	AuScSelectInfo floors, walls, ceilings;
+	for(int i = 0; i < faces.size(); ++i)
+	{
+		const AuScFace* f = faces.at(i);
+		const double nz = f->FaceNormal().z;
+		const int kind = nz > .7 ? 0 : nz < -.7 ? 2 : 1;
+		const int wanted = kind == 0 ? look.floorSlot : kind == 2 ? look.ceilingSlot : look.wallSlot;
+		if(wanted < 0 && f->Paint().alpha() != 0)
+			continue;
+		(kind == 0 ? floors : kind == 2 ? ceilings : walls).m_Faces.insert(i);
+	}
+	struct Part { AuScSelectInfo* sel; int slot, usual; double feet; QColor paint; };
+	const Part kinds[] = {
+		{ &floors, look.floorSlot, kSlotFloor, 6.0, QColor(150, 152, 158) },
+		{ &walls, look.wallSlot, kSlotWall, 8.0, look.wallTint },
+		{ &ceilings, look.ceilingSlot, kSlotCeiling, 8.0, QColor(225, 228, 232) },
+	};
+	bool changed = false;
+	for(const Part& kind : kinds)
+	{
+		if(kind.sel->m_Faces.isEmpty())
+			continue;
+		const int slot = kind.slot >= 0 ? kind.slot : kind.usual;
+		faces.TextureUnwrap(*kind.sel, quint8(slot), kind.feet, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0,
+				AuMatrix4x4::IdentityMatrix());
+		for(quint32 i : kind.sel->m_Faces)
+		{
+			faces[i]->SetTextureIndex(quint8(slot));
+			faces[i]->SetPaint(kind.slot >= 0 ? QColor(0, 0, 0, 0) : kind.paint);
+		}
+		changed = true;
+	}
+	if(changed)
+		part->SetFaces(faces);
+}
+
+void RestyleDoor(AuScPart* part, int slot)
+{
+	AuScStatePart* door = dynamic_cast<AuScStatePart*>(part);
+	if(!door)
+		return;
+	const quint8 was = door->State();
+	for(int state = 0; state < 256; ++state)
+	{
+		if(!door->HasState(quint8(state)))
+			continue;
+		door->SetState(quint8(state));
+		AuScFaceList faces;
+		door->Faces(faces);
+		AuScSelectInfo all;
+		for(int i = 0; i < faces.size(); ++i)
+			all.m_Faces.insert(i);
+		door->TextureUnwrap(all, SC_TEXTURE_INDEX(slot), 6.0, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0,
+				AuMatrix4x4::IdentityMatrix());
+		door->PaintFaces(all, QColor(0, 0, 0, 0));
+	}
+	door->SetState(was);
+}
+
+void ClearWindowGlass(AuDesign& design)
+{
+	for(AuScParts::iterator it = design.Parts().begin(); it != design.Parts().end(); ++it)
+	{
+		AuScPart* part = it.value();
+		if(!part || !part->IsWindow())
+			continue;
+		AuScFaceList faces;
+		part->Faces(faces);
+		for(AuScFace* f : faces)
+		{
+			f->SetPaint(QColor(0, 0, 0, 0));
+			f->SetTextureIndex(0);
+			f->SetShine(0);
+			f->SetReflectivity(0);
+		}
+		part->SetFaces(faces);
+	}
+}
+
+void SetFlatPane(AuScPart* window, double x, double width, double z0, double z1)
+{
+	const AuPoint a(x, -width / 2, z0), b(x, width / 2, z0), c(x, width / 2, z1), d(x, -width / 2, z1);
+	const AuPoint a2 = a + AuPoint(.02, 0, 0), b2 = b + AuPoint(.02, 0, 0), c2 = c + AuPoint(.02, 0, 0), d2 = d + AuPoint(.02, 0, 0);
+	auto tri = [](const AuPoint& p, const AuPoint& q, const AuPoint& r, const AuPoint& n) {
+		return AuScFaceTri(AuScPoint(p, 0.f, 0.f, n), AuScPoint(q, 0.f, 0.f, n), AuScPoint(r, 0.f, 0.f, n));
+	};
+	const AuPoint outward(1, 0, 0), inward(-1, 0, 0);
+	AuScFaceList faces;
+	faces.AddFace(tri(a2, b2, c2, outward));
+	faces.AddFace(tri(a2, c2, d2, outward));
+	faces.AddFace(tri(a, c, b, inward));
+	faces.AddFace(tri(a, d, c, inward));
+	window->SetFaces(faces);
+}
+
+bool CutFlatWindow(AuDesign& design, const AuMatrix4x4& toWall, const AuMatrix4x4& back, double depth, double width,
+		double sill, double top, const QString& groupName)
+{
+	const double y0 = -width / 2, y1 = width / 2, x0 = -.5;
+	// Planes to slice along, far bigger than the ship.
+	auto cutter = [&back](const AuPoint& a, const AuPoint& b, const AuPoint& c, const AuPoint& d) {
+		const AuPoint n(0, 0, 1);
+		return AuScFaceQuad(AuScPoint(back.Project(a), 0.f, 0.f, n), AuScPoint(back.Project(b), 0.f, 0.f, n),
+				AuScPoint(back.Project(c), 0.f, 0.f, n), AuScPoint(back.Project(d), 0.f, 0.f, n));
+	};
+	const double far_ = 5000;
+	QList<AuScFaceQuad> cutters;
+	for(double y : { y0, y1 })
+		cutters << cutter(AuPoint(-far_, y, -far_), AuPoint(far_, y, -far_), AuPoint(far_, y, far_), AuPoint(-far_, y, far_));
+	for(double z : { sill, top })
+		cutters << cutter(AuPoint(-far_, -far_, z), AuPoint(far_, -far_, z), AuPoint(far_, far_, z), AuPoint(-far_, far_, z));
+	// The hole ends a little past the pane (the hull can have a thin layer just
+	// beyond it, which would hide the pane from outside); a ledge further out stays.
+	const double x1 = depth + 2.0;
+	cutters << cutter(AuPoint(x1, -far_, -far_), AuPoint(x1, far_, -far_), AuPoint(x1, far_, far_), AuPoint(x1, -far_, far_));
+
+	const AuScFace* look = 0;
+	AuScFace* lookCopy = 0;
+	double best = 1e30;
+	const AuPoint middle = back.Project(AuPoint(depth, 0, (sill + top) / 2));
+	bool cutAny = false;
+	for(AuScParts::iterator it = design.Parts().begin(); it != design.Parts().end(); ++it)
+	{
+		AuScPart* part = it.value();
+		if(!part || !part->IsHullMesh() || part->GroupName() == "Frame")
+			continue;
+		AuScFaceList faces, kept;
+		part->Faces(faces);
+		bool changed = false;
+		for(const AuScFace* f : faces)
+		{
+			AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				const AuPoint p = toWall.Project(AuPoint(f->Vertex(v)));
+				mn = mn.Min(p);
+				mx = mx.Max(p);
+			}
+			if(mx.x < x0 || mn.x >= x1 || mx.y <= y0 || mn.y >= y1 || mx.z <= sill || mn.z >= top)
+			{
+				kept.AddFace(*f);
+				continue;
+			}
+			if(f->Paint().alpha() != 0 || f->ColorTheme() != AuScFace::THEME_Count)
+			{
+				const double d = (AuPoint(f->Vertex(0)) - middle).Length();
+				if(d < best)
+				{
+					best = d;
+					delete lookCopy;
+					lookCopy = f->Clone();
+				}
+			}
+			AuScFaceList pieces;
+			pieces.AddFace(*f);
+			for(const AuScFaceQuad& plane : cutters)
+			{
+				AuScFaceList next;
+				for(const AuScFace* piece : pieces)
+				{
+					AuScFaceList sliced;
+					if(piece->Slice(plane, sliced) && !sliced.isEmpty())
+						next.AddFaces(sliced);
+					else
+						next.AddFace(*piece);
+				}
+				pieces = next;
+			}
+			for(const AuScFace* piece : pieces)
+			{
+				AuPoint c(0, 0, 0);
+				for(int v = 0; v < piece->VertexCount(); ++v)
+					c += toWall.Project(AuPoint(piece->Vertex(v)));
+				c = c / double(piece->VertexCount());
+				if(c.x >= x0 && c.x < x1 && c.y > y0 && c.y < y1 && c.z > sill && c.z < top)
+				{
+					changed = true;
+					continue;
+				}
+				kept.AddFace(*piece);
+			}
+		}
+		if(changed)
+		{
+			part->SetFaces(kept);
+			cutAny = true;
+		}
+	}
+	look = lookCopy;
+	if(!cutAny)
+	{
+		delete lookCopy;
+		return false;
+	}
+	AddOpeningFrame(design, 0, -.03, depth + .03, y0, y1, sill, top, true, look, back);
+	delete lookCopy;
+
+	AuScPart* window = AuScPart::Create(AuScPart::Part_Window);
+	if(!window)
+		return false;
+	SetFlatPane(window, depth, width, sill, top);
+	window->SetOpacity(.25f);
+	window->Transform(back);
+	window->SetGroupName(groupName);
+	const bool ok = window->IsValid() && design.Parts().AddPart(*window) != 0;
+	delete window;
+	return ok;
 }
 
 void StyleDoor(AuScPart* part, bool hullDoor)
@@ -442,6 +669,11 @@ static bool AddDoorVoid(AuDesign& design, const AuPoint& mn, const AuPoint& mx, 
 	v.AddFaces(BoxFaces(mn, mx));
 	v.SetGroupName(groupName);
 	v.SetAssociatedPart(doorId, AuScDoor::Open);
+	// The rooms' gravity. Left to its default a doorway has natural gravity: near
+	// a planet that pulls towards the planet, whichever way the ship lies, which
+	// turned people round in the doorway and could trap them there. (A void for
+	// the hull has no gravity of its own to set.)
+	v.SetGravity(G_Artificial, AuPoint(0, 0, 1));
 	if(!v.IsValid())
 		return false;
 	return design.Parts().AddPart(v) != 0;
@@ -926,6 +1158,82 @@ bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, d
 	if(!barrier.IsValid() || !mesh.IsValid())
 		return false;
 	return design.Parts().AddPart(barrier) != 0 && design.Parts().AddPart(mesh) != 0;
+}
+
+const double kDeskWidth = 4.0, kDeskReach = 3.4, kDeskBehind = 1.2;
+
+bool AddStationDesk(AuDesign& design, const AuPoint& floorLoc, double yaw, const QString& groupName,
+		AuMatrix4x4& plane, AuPoint& corner1, AuPoint& corner2, const QColor& deskPaint, const QColor& stoolPaint,
+		double topFeet, bool withStool)
+{
+	// From the side: a sloping panel on a post, out of the way of the knees. In
+	// proportion to the stations of the Atlantis: its screen 1.4 ft to 4 ft ahead
+	// of the seat, 5.25 ft wide, half as high as wide (this one is narrower, to
+	// fit a bridge's rows). That one lies almost flat,
+	// and from a seat is seen at a slant; this one leans back to face the seated
+	// eye, and stays below it.
+	const double gap = 1.7, depth = 1.5, rise = 1.4, low = topFeet - rise, thick = .12, knee = .7;
+	AuPointArray profile;
+	profile.append(AuPoint(gap + knee, 0, 0));
+	profile.append(AuPoint(gap + depth, 0, 0));
+	profile.append(AuPoint(gap + depth, low - thick * .6 + rise * (depth - thick) / depth, 0));
+	profile.append(AuPoint(gap + depth + thick, low - thick * .6 + rise, 0));
+	profile.append(AuPoint(gap + depth, low + rise, 0));
+	profile.append(AuPoint(gap, low, 0));
+	profile.append(AuPoint(gap + thick, low - thick * .6, 0));
+	profile.append(AuPoint(gap + knee, low - thick * .6 + rise * (knee - thick) / depth, 0));
+	AuScFaceList desk;
+	desk.MakeExtrusion(profile, AuPoint(0, 0, kDeskWidth), AuMatrix4x4::IdentityMatrix(), 1, true);
+	AuMatrix4x4 t;
+	t.LoadIdentity();
+	t.Translate(floorLoc);
+	t.RotateAxis(yaw, 0, 0, 1);
+	AuMatrix4x4 standUp(t);
+	standUp.RotateAxis(M_PI/2, 1, 0, 0);
+	standUp.Translate(AuPoint(0, 0, -kDeskWidth / 2));
+	desk.Transform(standUp);
+	AuScFaceList stool = BoxFaces(AuPoint(-.3, -.3, 0), AuPoint(.3, .3, AuStation::SeatHeight() - .1));
+	stool.Transform(t);
+	OrientAsHull(desk);
+	OrientAsHull(stool);
+	auto paint = [](AuScFaceList& faces, const QColor& colour) {
+		AuScSelectInfo all;
+		for(int i = 0; i < faces.size(); ++i)
+			all.m_Faces.insert(i);
+		faces.TextureUnwrap(all, quint8(kSlotWall), 6.0, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0, AuMatrix4x4::IdentityMatrix());
+		for(AuScFace* f : faces)
+		{
+			f->SetTextureIndex(quint8(kSlotWall));
+			f->SetPaint(colour);
+		}
+	};
+	paint(desk, deskPaint);
+	paint(stool, stoolPaint);
+	AuScFaceList faces;
+	faces.AddFaces(desk);
+	if(withStool)
+		faces.AddFaces(stool);
+	AuScMesh mesh;
+	mesh.AddFaces(faces);
+	mesh.SetGroupName(groupName);
+	if(!mesh.IsValid() || !design.Parts().AddPart(mesh))
+		return false;
+
+	// The screen lies on the slope, a little clear of it. The plane's x runs to
+	// the operator's right and its y up the slope: MakeScreen puts the image's
+	// lower left at the lowest x and y, so that way it reads the right way round.
+	// (Every station of the Atlantis has its lower left corner on the operator's
+	// left. This had it on the right, and showed the image mirrored.)
+	const AuPoint f(cos(yaw), sin(yaw), 0);
+	const double slope = atan2(rise, depth), along = sqrt(rise * rise + depth * depth);
+	const AuPoint right(f.y, -f.x, 0);
+	const AuPoint up = f * cos(slope) + AuPoint(0, 0, 1) * sin(slope);
+	const AuPoint middle = floorLoc + f * (gap + depth / 2) + AuPoint(0, 0, low + rise / 2)
+			+ right.Cross(up) * .08;
+	plane = AuMatrix4x4(middle, right, up);
+	corner1 = plane.Project(AuPoint(-1.7, -(along / 2 - .08), 0));
+	corner2 = plane.Project(AuPoint(1.7, along / 2 - .08, 0));
+	return true;
 }
 
 bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QString& groupName)

@@ -120,6 +120,11 @@ void TriPlan::Resize(int width, int depth)
 		ladder.cx += ox;
 		ladder.cy += oy;
 	}
+	for(PlanSkylight& window : skylights)
+	{
+		window.cx += ox;
+		window.cy += oy;
+	}
 	for(PlanParking& spot : parking)
 	{
 		spot.cx += ox;
@@ -154,6 +159,8 @@ void TriPlan::AddDeck(bool below)
 			++window.deck;
 		for(PlanLadder& ladder : ladders)
 			++ladder.deck;
+		for(PlanSkylight& window : skylights)
+			++window.deck;
 		for(PlanParking& spot : parking)
 			++spot.deck;
 		for(PlanStair& stair : stairs)
@@ -209,6 +216,17 @@ void TriPlan::RemoveDeck(int deck)
 		keptLadders << ladder;
 	}
 	ladders = keptLadders;
+
+	QList<PlanSkylight> keptSkylights;
+	for(PlanSkylight window : skylights)
+	{
+		if(window.deck == deck)
+			continue;
+		if(window.deck > deck)
+			--window.deck;
+		keptSkylights << window;
+	}
+	skylights = keptSkylights;
 
 	QList<PlanParking> keptParking;
 	for(PlanParking spot : parking)
@@ -342,6 +360,35 @@ TriRef TriPlan::Mirror(const TriRef& t) const
 	return TriRef(t.deck, t.cx, m_depth - 1 - t.cy, k);
 }
 
+bool TriPlan::DoorsJoin(const PlanDoor& a, const PlanDoor& b) const
+{
+	if(a.deck != b.deck || a.row != b.row)
+		return false;
+	const bool xWall = a.side == TRI_E || a.side == TRI_W;
+	if(xWall != (b.side == TRI_E || b.side == TRI_W))
+		return false;
+	// The line of the wall, the same whichever cell names the door.
+	auto line = [](const PlanDoor& d) {
+		return d.side == TRI_E ? d.cx + 1 : d.side == TRI_W ? d.cx : d.side == TRI_N ? d.cy + 1 : d.cy;
+	};
+	if(line(a) != line(b) || abs(xWall ? a.cy - b.cy : a.cx - b.cx) != 1)
+		return false;
+	auto rooms = [this](const PlanDoor& d) {
+		const int p = Room(TriRef(d.deck, d.cx, d.cy, d.side));
+		const int q = Room(AcrossCellEdge(d.deck, d.cx, d.cy, d.side));
+		return qMakePair(qMin(p, q), qMax(p, q));
+	};
+	return rooms(a) == rooms(b);
+}
+
+int TriPlan::NewDoorRow() const
+{
+	int most = 0;
+	for(const PlanDoor& d : doors)
+		most = qMax(most, d.row);
+	return most + 1;
+}
+
 int TriPlan::DoorAt(int deck, int cx, int cy, int side) const
 {
 	// A door can be named from either cell.
@@ -442,13 +489,33 @@ int TriPlan::LadderAt(int deck, int cx, int cy) const
 	return -1;
 }
 
+int TriPlan::SkylightAt(int deck, int cx, int cy) const
+{
+	for(int i = 0; i < skylights.size(); ++i)
+		if(skylights.at(i).deck == deck && skylights.at(i).cx == cx && skylights.at(i).cy == cy)
+			return i;
+	return -1;
+}
+
+bool TriPlan::SkylightFits(const PlanSkylight& window) const
+{
+	if(CellRoom(window.deck, window.cx, window.cy) < 0)
+		return false;
+	const int step = window.floor ? -1 : 1;
+	for(int d = window.deck + step; d >= 0 && d < m_decks; d += step)
+		for(int k = 0; k < 4; ++k)
+			if(Room(TriRef(d, window.cx, window.cy, k)) >= 0)
+				return false;
+	return true;
+}
+
 int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 {
 	if(deck >= 0)
 		upsideDown = false;
 	if(!foreAft && !portStarboard && !upsideDown)
 		return 0;
-	const int before = ladders.size() + stairs.size() + parking.size();
+	const int before = ladders.size() + skylights.size() + stairs.size() + parking.size();
 	// Upside down is a half turn about x: y is mirrored as well as z.
 	const bool my = portStarboard != upsideDown;
 	auto flipped = [&](int d) { return deck < 0 || d == deck; };
@@ -518,6 +585,17 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 	// A ladder or a flight joins a deck and the one above it: flipped with a
 	// whole plan; with one deck it no longer meets the other, and goes unless
 	// it happens to fit (Tidy).
+	for(PlanSkylight& window : skylights)
+	{
+		if(deck >= 0 && window.deck != deck)
+			continue;
+		if(deck < 0 && upsideDown)
+			window.deck = m_decks - 1 - window.deck;
+		if(upsideDown)
+			window.floor = !window.floor;
+		window.cx = cellX(window.cx);
+		window.cy = cellY(window.cy);
+	}
 	if(deck < 0)
 	{
 		for(PlanLadder& ladder : ladders)
@@ -548,7 +626,7 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 		}
 	}
 	Tidy();
-	return before - (ladders.size() + stairs.size() + parking.size());
+	return before - (ladders.size() + skylights.size() + stairs.size() + parking.size());
 }
 
 int TriPlan::StairCells() const
@@ -677,6 +755,12 @@ void TriPlan::Tidy()
 			keptLadders << ladder;
 	ladders = keptLadders;
 
+	QList<PlanSkylight> keptSkylights;
+	for(const PlanSkylight& window : skylights)
+		if(SkylightFits(window))
+			keptSkylights << window;
+	skylights = keptSkylights;
+
 	QList<PlanParking> keptParking;
 	for(const PlanParking& spot : parking)
 		if(ParkingFits(spot))
@@ -705,6 +789,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["template"] = templateKey;
 	root["ftl"] = ftlDrive;
 	root["leaveOut"] = QJsonArray::fromStringList(leaveOut);
+	if(fireControlModule != 252)
+		root["fireControlModule"] = fireControlModule;
 	root["cellFeet"] = cellFeet;
 	root["deckFeet"] = deckFeet;
 	root["floorFeet"] = floorFeet;
@@ -735,6 +821,14 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["windowSill"] = windowSillFeet;
 	root["windowTop"] = windowTopFeet;
 	root["joinWindows"] = joinWindows;
+	if(!flatWindows)
+		root["flatWindows"] = false;
+	if(bridgeStyle != "hazeron")
+		root["bridgeStyle"] = bridgeStyle;
+	if(deskStanding)
+		root["deskStanding"] = true;
+	if(deskHeightFeet > 0)
+		root["deskHeight"] = deskHeightFeet;
 	if(hullDoorExit != "auto")
 		root["hullDoorExit"] = hullDoorExit;
 	if(hullStyle != "smooth")
@@ -751,6 +845,12 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["type"] = r.type;
 		o["label"] = r.label;
 		o["colour"] = ColourName(r.colour);
+		if(r.wallTex >= 0)
+			o["wallTexture"] = r.wallTex;
+		if(r.floorTex >= 0)
+			o["floorTexture"] = r.floorTex;
+		if(r.ceilingTex >= 0)
+			o["ceilingTexture"] = r.ceilingTex;
 		roomArray.append(o);
 	}
 	root["rooms"] = roomArray;
@@ -763,6 +863,10 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["x"] = d.cx;
 		o["y"] = d.cy;
 		o["side"] = d.side;
+		if(d.row)
+			o["row"] = d.row;
+		if(d.tex >= 0)
+			o["texture"] = d.tex;
 		doorArray.append(o);
 	}
 	root["doors"] = doorArray;
@@ -791,6 +895,20 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		ladderArray.append(o);
 	}
 	root["ladders"] = ladderArray;
+
+	QJsonArray skylightArray;
+	for(const PlanSkylight& window : skylights)
+	{
+		QJsonObject o;
+		o["deck"] = window.deck;
+		o["x"] = window.cx;
+		o["y"] = window.cy;
+		if(window.floor)
+			o["floor"] = true;
+		skylightArray.append(o);
+	}
+	if(!skylightArray.isEmpty())
+		root["skylights"] = skylightArray;
 
 	QJsonArray parkingArray;
 	for(const PlanParking& p : parking)
@@ -890,6 +1008,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.name = root["name"].toString(plan.name);
 	plan.templateKey = root["template"].toString(plan.templateKey);
 	plan.ftlDrive = root["ftl"].toString(plan.ftlDrive);
+	plan.fireControlModule = root["fireControlModule"].toInt(252);
 	plan.leaveOut.clear();
 	for(const QJsonValue& v : root["leaveOut"].toArray())
 		plan.leaveOut << v.toString();
@@ -923,6 +1042,10 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.windowSillFeet = root["windowSill"].toDouble(plan.windowSillFeet);
 	plan.windowTopFeet = root["windowTop"].toDouble(plan.windowTopFeet);
 	plan.joinWindows = root["joinWindows"].toBool(plan.joinWindows);
+	plan.flatWindows = root["flatWindows"].toBool(true);
+	plan.bridgeStyle = root["bridgeStyle"].toString("hazeron");
+	plan.deskStanding = root["deskStanding"].toBool(false);
+	plan.deskHeightFeet = root["deskHeight"].toDouble(0);
 	plan.hullDoorExit = root["hullDoorExit"].toString("auto");
 	if(plan.hullDoorExit != "ladder" && plan.hullDoorExit != "none")
 		plan.hullDoorExit = "auto";
@@ -944,6 +1067,9 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 			r.type = ZeroGRoomType();		// Plans from before 0.3.5-alpha say "Gravity Well".
 		r.label = o["label"].toString();
 		r.colour = QColor(o["colour"].toString("#808080"));
+		r.wallTex = o["wallTexture"].toInt(-1);
+		r.floorTex = o["floorTexture"].toInt(-1);
+		r.ceilingTex = o["ceilingTexture"].toInt(-1);
 		plan.rooms << r;
 	}
 	plan.doors.clear();
@@ -955,6 +1081,8 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		d.cx = o["x"].toInt();
 		d.cy = o["y"].toInt();
 		d.side = o["side"].toInt();
+		d.row = o["row"].toInt();
+		d.tex = o["texture"].toInt(-1);
 		plan.doors << d;
 	}
 	plan.windows.clear();
@@ -978,6 +1106,17 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		l.cx = o["x"].toInt();
 		l.cy = o["y"].toInt();
 		plan.ladders << l;
+	}
+	plan.skylights.clear();
+	for(const QJsonValue& v : root["skylights"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanSkylight window;
+		window.deck = o["deck"].toInt();
+		window.cx = o["x"].toInt();
+		window.cy = o["y"].toInt();
+		window.floor = o["floor"].toBool();
+		plan.skylights << window;
 	}
 	plan.parking.clear();
 	for(const QJsonValue& v : root["parking"].toArray())

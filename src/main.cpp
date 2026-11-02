@@ -6,9 +6,12 @@
 // complete internal layout.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "auscroute.h"
+#include "auquad.h"
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
+#include <QHash>
 #include <QElapsedTimer>
 
 #include <cstdio>
@@ -306,6 +309,245 @@ int cmdCut(const QStringList& args)
 
 // How the faces look: texture slot, colour theme, paint, opacity, light,
 // effect and glow, counted per part. This is where a blueprint's look lives.
+// What is seen along a line of sight, as the game draws it: the first face
+// looking back at the eye (a face seen from behind is not drawn).
+int cmdSight(const QStringList& args)
+{
+	if(args.size() < 7)
+	{
+		out() << "usage: shipgen sight <design.SoH> x y z dx dy dz\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	if(!design)
+	{
+		out() << "could not read " << args[0] << "\n";
+		return 1;
+	}
+	AuScDesign* ship = dynamic_cast<AuScDesign*>(design);
+	if(!ship)
+	{
+		out() << "not a ship\n";
+		delete design;
+		return 1;
+	}
+	const AuPoint eye(args[1].toDouble(), args[2].toDouble(), args[3].toDouble());
+	AuPoint dir(args[4].toDouble(), args[5].toDouble(), args[6].toDouble());
+	dir.Unit();
+	double best = 1e30;
+	QString seen = "nothing";
+	for(AuScParts::const_iterator it = ship->Parts().constBegin(); it != ship->Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsRoomVoid() || part->IsHullVoid())
+			continue;
+		AuScFaceList faces;
+		part->Faces(faces);
+		for(const AuScFace* f : faces)
+		{
+			AuPoint hit;
+			if(!f->IntersectRay(eye, dir, hit) || f->FaceNormal().Dot(dir) >= 0)
+				continue;
+			const double d = eye.Distance(hit);
+			if(d < best)
+			{
+				best = d;
+				seen = QString("%1 ft: part %2 %3 [%4]").arg(d, 0, 'f', 2).arg(it.key()).arg(part->PartName(), part->GroupName());
+			}
+		}
+	}
+	out() << seen << "\n";
+	delete design;
+	return 0;
+}
+
+// Whether people can get about a ship, by the game's own route finding: every
+// room to every other with the doors open, following each route as the game's
+// crew do. Also what turns people round: a doorway with natural gravity, and
+// what shows an image mirrored: a screen whose lower left is on the operator's right.
+int cmdCrewCheck(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		out() << "usage: shipgen crew-check <design.SoH>\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	AuScDesign* ship = dynamic_cast<AuScDesign*>(design);
+	if(!ship)
+	{
+		out() << "not a ship\n";
+		delete design;
+		return 1;
+	}
+	AuScParts& parts = ship->Parts();
+	const double standing = 3.0;		// Height of the centre of gravity of someone standing.
+	AuDoorStateHash doors;
+	AuLandingGearStateHash gear;
+	AuLiftHash lifts;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(dynamic_cast<const AuScDoor*>(it.value()))
+		{
+			AuScDoorState state;
+			state.SetState(AuScDoor::Open);
+			doors.insert(it.key(), state);
+		}
+	AuPoint hit, normal;
+	auto floorUnder = [&](const AuPoint& at, double reach, double& z) {
+		for(z = at.z + .5; z > at.z - reach; z -= .05)
+			if(parts.IsPathBlocked(AuPoint(at.x, at.y, z), AuPoint(at.x, at.y, z - .05), hit, normal, doors, gear, lifts))
+				return true;
+		return false;
+	};
+	auto text = [](const AuPoint& p) { return QString("(%1 %2 %3)").arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1).arg(p.z, 0, 'f', 1); };
+
+	// A spot to stand in each room: a walk's end there, off any ladder.
+	AuScPathSegList walks, ladders;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(it.value()->IsPath())
+			(it.value()->IsLadderPath() ? ladders : walks).append(it.value()->PathSegment(0));
+	QList<AuPoint> spots;
+	QStringList names;
+	int naturalDoorways = 0;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part->IsRoomVoid())
+			continue;
+		if(part->AssociatedPartId())
+		{
+			if(part->GravityType() == G_Natural)
+				++naturalDoorways;
+			continue;
+		}
+		AuPoint mn, mx;
+		part->ModelExtents(mn, mx);
+		for(const AuScPathSeg& walk : walks)
+		{
+			bool found = false;
+			for(const AuPoint& end : { walk.Loc1(), walk.Loc2() })
+			{
+				bool onLadder = false;
+				for(const AuScPathSeg& ladder : ladders)
+					onLadder = onLadder || ladder.IsAt(end);
+				if(onLadder || !part->IsInsideVoid(end))
+					continue;
+				double z;
+				if(!floorUnder(end, 8, z) || z < mn.z - .1)
+					continue;
+				spots << AuPoint(end.x, end.y, z + standing);
+				names << part->GroupName();
+				found = true;
+				break;
+			}
+			if(found)
+				break;
+		}
+	}
+
+	int routes = 0, good = 0;
+	QMap<QString, int> problems;
+	for(int a = 0; a < spots.size(); ++a)
+		for(int b = 0; b < spots.size(); ++b)
+		{
+			if(a == b)
+				continue;
+			++routes;
+			AuScRoute route;
+			if(!parts.Route(route, spots[a], spots[b], LORI_Belly, true, doors, gear, lifts))
+			{
+				++problems[QString("no way from %1 to %2").arg(names[a], names[b])];
+				continue;
+			}
+			bool ok = true, climbing = false;
+			AuPoint at = spots[a];
+			for(int i = 0; i < route.size() && ok; ++i)
+			{
+				const AuScRouteLoc& step = route[i];
+				if(climbing)
+				{
+					at = step;
+					climbing = step.IsLadder();
+					AuPoint floorLoc, up(0, 0, 1), terrain;
+					if(climbing || parts.QueryGravity(step, floorLoc, up, terrain) == G_Zero)
+						continue;
+					// Off the ladder: there must be a floor under them, or right beside them.
+					bool floored = false;
+					for(const AuPoint& nearby : { AuPoint(0, 0, 0), AuPoint(.6, 0, 0), AuPoint(-.6, 0, 0), AuPoint(0, .6, 0), AuPoint(0, -.6, 0) })
+					{
+						double z;
+						floored = floored || (floorUnder(step + nearby, 8, z) && fabs(step.z - z - standing) < 1.0);
+					}
+					if(!floored)
+					{
+						++problems[QString("lets go of the ladder over a drop at %1").arg(text(step))];
+						ok = false;
+					}
+					continue;
+				}
+				if(parts.IsPathBlocked(at, step, hit, normal, doors, gear, lifts))
+				{
+					++problems[QString("walked into something between %1 and %2").arg(text(at), text(step))];
+					ok = false;
+					continue;
+				}
+				at = step;
+				if(!step.IsLadder())
+					continue;
+				// Comes up to the ladder on the floor beside it (over a hole they
+				// reach out for it from the edge, as they can up to a metre away).
+				double top = -1e30;
+				const AuPoint around[5] = { AuPoint(0, 0, 0), AuPoint(3, 0, 0), AuPoint(-3, 0, 0), AuPoint(0, 3, 0), AuPoint(0, -3, 0) };
+				for(const AuPoint& offset : around)
+				{
+					double z;
+					if(!parts.IsPathBlocked(step + offset, step + offset, hit, normal, doors, gear, lifts) &&
+							floorUnder(step + offset, 6, z) && z > top)
+						top = z;
+				}
+				AuPoint standAt = step;
+				standAt.z = (top > -1e29 ? top : step.z - standing) + standing;
+				AuMatrix4x4 onLadder;
+				if(!parts.FindLadderToGrabAt(standAt, step, onLadder, doors, gear, lifts))
+				{
+					++problems[QString("cannot get hold of the ladder at %1").arg(text(step))];
+					ok = false;
+				}
+				else if(onLadder.Translation().Distance(step) >= 1.0)
+				{
+					++problems[QString("never reaches the end of the ladder at %1").arg(text(step))];
+					ok = false;
+				}
+				climbing = true;
+			}
+			if(ok)
+				++good;
+		}
+
+	int mirrored = 0;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(const AuScStation* station = dynamic_cast<const AuScStation*>(it.value()))
+		{
+			AuQuad screen;
+			if(!station->ScreenQuad(screen))
+				continue;
+			const AuMatrix4x4 seat = station->OperatorStation(AuPoint(0, 0, 1)).OpM();
+			if(seat.UnProject(screen.vll).x > seat.UnProject(screen.vlr).x)
+				++mirrored;
+		}
+
+	out() << "Rooms           : " << spots.size() << "\n";
+	out() << "Crew routes     : " << good << " of " << routes << " can be followed\n";
+	out() << "Natural doorways: " << naturalDoorways << "\n";
+	out() << "Mirrored screens: " << mirrored << "\n";
+	int shown = 0;
+	for(QMap<QString, int>::const_iterator it = problems.constBegin(); it != problems.constEnd(); ++it)
+		if(shown++ < 20)
+			out() << "  " << it.value() << " x " << it.key() << "\n";
+	delete design;
+	return good == routes && !naturalDoorways && !mirrored ? 0 : 1;
+}
+
 int cmdFaces(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -670,8 +912,10 @@ int cmdBuildPlan(const QStringList& args)
 	out() << "Rooms        : " << report.rooms << "\n";
 	out() << "Doors        : " << report.doors << "\n";
 	out() << "Windows      : " << report.windows << "\n";
+	out() << "Ceiling wind.: " << report.skylights << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
 	out() << "Zero-G joins : " << report.zeroGJoins << "\n";
+	out() << "Open to below: " << report.openJoins << "\n";
 	out() << "Parking      : " << report.parking << "\n";
 	out() << "Ramps        : " << report.ramps << "\n";
 	out() << "Stairs       : " << report.stairs << "\n";
@@ -1825,6 +2069,8 @@ void usage()
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";
 	out() << "  shipgen faces     <design.SoH> [<part>]  how the faces look: texture slot, paint, opacity, glow, effect\n";
+	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
+	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
 	out() << "  shipgen cut       <in.SoH> <out.SoH> window|door <hull part> <room part|0> x0 y0 z0 x1 y1 z1\n";
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
 	out() << "  shipgen resave    <in.SoH> <out.SoH>  read and write back, keeping parts this build cannot read\n";
@@ -2142,6 +2388,11 @@ int cmdSetBrief(const QStringList& args)
 
 int main(int argc, char* argv[])
 {
+	// The engine keeps a ship's parts in a QHash and cuts them in its order, and
+	// Qt picks a new order for every run. A fixed order makes the same plan build
+	// to the same blueprint.
+	qSetGlobalQHashSeed(0);
+
 	// The engine's obstruction-cache warning does not apply to an offline
 	// tool; see logging.h. Everything else is reported as usual.
 	InstallShipgenMessageHandler();
@@ -2177,6 +2428,8 @@ int main(int argc, char* argv[])
 	if(command == "parts")				return cmdParts(rest);
 	if(command == "cut")				return cmdCut(rest);
 	if(command == "faces")				return cmdFaces(rest);
+	if(command == "sight")				return cmdSight(rest);
+	if(command == "crew-check")			return cmdCrewCheck(rest);
 	if(command == "kit")				return cmdKit(rest);
 	if(command == "plan-example")		return cmdPlanExample(rest);
 	if(command == "plan-flip")			return cmdPlanFlip(rest);

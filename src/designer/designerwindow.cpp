@@ -288,6 +288,12 @@ QWidget* DesignerWindow::MakeShipPage()
 		box->setToolTip("Leave this out of what the template puts in: its station and the system it runs.");
 		form->addRow(box);
 	}
+	m_fireControl = new QComboBox;
+	for(const QPair<int, QString>& choice : FireControlModules())
+		m_fireControl->addItem(choice.second, choice.first);
+	m_fireControl->setToolTip("What the fire control station runs. It is harder to change in the game's designer.");
+	form->addRow("Fire control", m_fireControl);
+	connect(m_fireControl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	m_cellFeet = new QDoubleSpinBox;
 	m_cellFeet->setRange(2, 20);
 	m_cellFeet->setSingleStep(0.5);
@@ -476,8 +482,9 @@ QWidget* DesignerWindow::MakeRoomPage()
 						   "rooms, or between a room and the outside for a hull door: click the triangle that "
 						   "stands on that edge. A ladder goes up from a cell into the room above it. Windows go on the "
 						   "edge between a room and the outside; they are cut through the room wall and the hull. "
-						   "Doors on neighbouring edges of one wall make one wide door, as tall as the room: a bay "
-						   "door for vehicles. Vehicle parking spots go on the floor of a room, centred on the "
+						   "Drag along a wall for one wide door, as tall as the room: a bay door for vehicles; drag over "
+						   "separate doors to join them. A click makes a door of its own, and a click on a door takes it "
+						   "away. A right click on a door gives its row the door texture picked below. Vehicle parking spots go on the floor of a room, centred on the "
 						   "grid corner you click. Stairs climb to the deck above over a few cells of one room: click the "
 						   "triangle of the first cell on the side they climb towards. On the deck above, the cells "
 						   "over them and the cell they come out on have to be in one room."));
@@ -490,17 +497,22 @@ QWidget* DesignerWindow::MakeRoomPage()
 		{ "Place ladders", "Click a cell of a room; the ladder goes up into the room above it." },
 		{ "Place windows", "Click the triangle on the edge between a room and the outside." },
 		{ "Place ground vehicle parking", "A 6 by 12 m spot on the floor of a room, centred on the grid corner "
-										  "nearest the click. The room needs a bay door to get vehicles out." },
+										  "nearest the click; its outline follows the mouse, and R turns it. The room "
+										  "needs a bay door to get vehicles out." },
 		{ "Place space vehicle parking", "A 12 by 17 m spot for a shuttle or fighter, centred on the grid "
-										 "corner nearest the click." },
+										 "corner nearest the click; its outline follows the mouse, and R turns it." },
 		{ "Place stairs", "Click the triangle of the first cell on the side the stairs climb towards." },
 		{ "Place contrail emitters", "Click a hull triangle: a contrail emitter goes on the hull straight aft of "
-									 "it at mid-deck height, where the engine trail comes out (an arrow on the "
-									 "plan). Click again to take it away." },
+									 "it at mid-deck height, where the engine trail comes out (a ball on the "
+									 "plan at that spot, and on the 3D view, with an arrow the way the trail goes). "
+									 "Click the triangle or the ball again to take it away." },
 		{ "Place weapon emitters", "Click a hull triangle: the ship's guns fire from the nearest point of the "
 								   "hull (a ring with a cross). The game keeps one on each fire control station, "
 								   "so the first goes to the first station; a ship without fire control (see the "
 								   "Ship page) has nowhere to put one." },
+		{ "Place ceiling windows (experimental)", "Click a whole cell of a room with no room on any deck above it: a window "
+												  "goes straight up through the hull. With Join windows, neighbouring "
+												  "cells make one pane. Try these in the game before relying on them." },
 	};
 	for(const auto& tool : tools)
 	{
@@ -546,6 +558,30 @@ QWidget* DesignerWindow::MakeRoomPage()
 	m_roomType->setToolTip("The type of the room picked in the list (the engine's own room types). Changing it "
 						   "changes that room. The stations of the ship go into rooms of the right type.");
 	form->addRow("Type", m_roomType);
+	auto textureBox = [](const QString& tip) {
+		QComboBox* box = new QComboBox;
+		box->addItem("Usual", -1);
+		for(const QPair<int, QString>& texture : InteriorTextures())
+			box->addItem(texture.second, texture.first);
+		box->setToolTip(tip);
+		return box;
+	};
+	const QString textureTip = "A texture from the game's library for this room. A ship's palette holds 15 textures "
+			"between its hull, rooms and doors.";
+	m_roomWallTex = textureBox(textureTip);
+	m_roomFloorTex = textureBox(textureTip);
+	m_roomCeilingTex = textureBox(textureTip);
+	form->addRow("Walls", m_roomWallTex);
+	form->addRow("Floor", m_roomFloorTex);
+	form->addRow("Ceiling", m_roomCeilingTex);
+	for(QComboBox* box : { m_roomWallTex, m_roomFloorTex, m_roomCeilingTex })
+		connect(box, QOverload<int>::of(&QComboBox::activated), this, &DesignerWindow::OnRoomEdited);
+	m_doorTex = textureBox("The texture for doors you place from now on. With the door tool, a right click on a door "
+			"gives it and the rest of its row this texture.");
+	form->addRow("Door texture", m_doorTex);
+	connect(m_doorTex, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		m_view->SetDoorTexture(m_doorTex->currentData().toInt());
+	});
 	m_roomLabel = new QLineEdit;
 	m_roomLabel->setToolTip("The name of the room picked in the list, as the blueprint has it. Every room needs "
 							"its own.");
@@ -562,6 +598,10 @@ QWidget* DesignerWindow::MakeRoomPage()
 	m_joinWindows = new QCheckBox("Join windows side by side");
 	m_joinWindows->setToolTip("Windows next to each other on one straight wall of a room become one long window.");
 	windowForm->addRow(m_joinWindows);
+	m_flatWindows = new QCheckBox("One flat pane across a zigzag wall");
+	m_flatWindows->setToolTip("Joined windows along a wall that zigzags over the triangles become one flat pane on a "
+			"straight line. Off, each tooth is cut by itself, with its own frame, and the panes follow the hull.");
+	windowForm->addRow(m_flatWindows);
 	m_hullDoorExit = new QComboBox;
 	m_hullDoorExit->addItem("A ramp or a ladder down", "auto");
 	m_hullDoorExit->addItem("A ladder down", "ladder");
@@ -580,6 +620,7 @@ QWidget* DesignerWindow::MakeRoomPage()
 	connect(m_windowSill, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_windowTop, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_joinWindows, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
+	connect(m_flatWindows, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_hullDoorExit, QOverload<int>::of(&QComboBox::activated), this, [this](int) { OnSettingsChanged(); });
 	connect(add, &QPushButton::clicked, this, &DesignerWindow::OnAddRoom);
 	connect(remove, &QPushButton::clicked, this, &DesignerWindow::OnRemoveRoom);
@@ -648,6 +689,31 @@ QWidget* DesignerWindow::MakeBuildPage()
 	m_walkPaths->setToolTip("Paths the crew and passengers walk along through the doors, ladders and stairs. "
 							"Without them people in the game cannot find their way round the ship.");
 	layout->addWidget(m_walkPaths);
+	QHBoxLayout* bridgeRow = new QHBoxLayout;
+	bridgeRow->addWidget(new QLabel("Bridge style"));
+	m_bridgeStyle = new QComboBox;
+	for(const QPair<QString, QString>& style : BridgeStyles())
+		m_bridgeStyle->addItem(style.second, style.first);
+	m_bridgeStyle->setToolTip("How the stations look. Hazeron default: the game's swivel chairs. Integrated desks: "
+			"curved rows of desks with built-in screens and the captain behind them; try it in the game first.");
+	bridgeRow->addWidget(m_bridgeStyle, 1);
+	layout->addLayout(bridgeRow);
+	connect(m_bridgeStyle, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
+	QHBoxLayout* deskRow = new QHBoxLayout;
+	deskRow->addWidget(new QLabel("Desks"));
+	m_deskPosture = new QComboBox;
+	m_deskPosture->addItem("Sitting", false);
+	m_deskPosture->addItem("Standing", true);
+	m_deskPosture->setToolTip("Whether the operator of an integrated desk sits on a stool or stands. For the whole ship.");
+	deskRow->addWidget(m_deskPosture, 1);
+	deskRow->addWidget(new QLabel("Height"));
+	m_deskHeight = new QDoubleSpinBox;
+	m_deskHeight->setToolTip("How high the top edge of the desks is above the floor, for the whole ship. "
+			"Lower suits short characters. Up to 4.5 ft sitting; from 2.8 ft standing.");
+	deskRow->addWidget(m_deskHeight);
+	layout->addLayout(deskRow);
+	connect(m_deskPosture, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
+	connect(m_deskHeight, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	QHBoxLayout* buttons = new QHBoxLayout;
 	QPushButton* build = new QPushButton("Build the blueprint");
 	build->setToolTip("Makes the blueprint and asks the game's own engine whether it would take it. The report "
@@ -711,6 +777,8 @@ void DesignerWindow::RefreshAll()
 	m_ftl->setCurrentIndex(qMax(0, m_ftl->findData(m_plan.ftlDrive)));
 	m_noShields->setChecked(m_plan.leaveOut.contains("shield"));
 	m_noWeapons->setChecked(m_plan.leaveOut.contains("firecontrol"));
+	m_fireControl->setCurrentIndex(qMax(0, m_fireControl->findData(m_plan.fireControlModule)));
+	m_fireControl->setEnabled(!m_noWeapons->isChecked());
 	m_noTransporter->setChecked(m_plan.leaveOut.contains("transporter"));
 	ApplyUnits();
 	m_cellFeet->setValue(Shown(m_plan.cellFeet));
@@ -736,6 +804,12 @@ void DesignerWindow::RefreshAll()
 	m_windowSill->setValue(Shown(m_plan.windowSillFeet));
 	m_windowTop->setValue(Shown(m_plan.windowTopFeet));
 	m_joinWindows->setChecked(m_plan.joinWindows);
+	m_flatWindows->setChecked(m_plan.flatWindows);
+	m_bridgeStyle->setCurrentIndex(qMax(0, m_bridgeStyle->findData(m_plan.bridgeStyle)));
+	m_deskPosture->setCurrentIndex(m_plan.deskStanding ? 1 : 0);
+	m_deskHeight->setValue(Shown(m_plan.DeskTopFeet()));
+	m_deskPosture->setEnabled(m_plan.bridgeStyle == "desks");
+	m_deskHeight->setEnabled(m_plan.bridgeStyle == "desks");
 	m_updating = false;
 	RefreshDecks();
 	RefreshRooms();
@@ -802,7 +876,8 @@ void DesignerWindow::ApplyDrawMode()
 				m_roomTool->currentIndex() == 5 ? PlanView::SpaceParkingMode :
 				m_roomTool->currentIndex() == 6 ? PlanView::StairMode :
 				m_roomTool->currentIndex() == 7 ? PlanView::ContrailMode :
-				m_roomTool->currentIndex() == 8 ? PlanView::WeaponMode : PlanView::RoomMode);
+				m_roomTool->currentIndex() == 8 ? PlanView::WeaponMode :
+				m_roomTool->currentIndex() == 9 ? PlanView::SkylightMode : PlanView::RoomMode);
 		m_emitterRow->setVisible(m_roomTool->currentIndex() == 7);
 		break;
 	case StepPaint:
@@ -947,7 +1022,7 @@ void DesignerWindow::ApplyUnits()
 	struct Box { QDoubleSpinBox* box; double lo, hi, step; };
 	const Box boxes[] = {
 		{ m_cellFeet, 2, 20, .5 }, { m_deckFeet, 8, 40, 1 }, { m_floorFeet, .5, 4, .5 }, { m_skin, .5, 10, .5 },
-		{ m_windowSill, 0, 6, .5 }, { m_windowTop, 3, 20, .5 }, { m_emitterSize, 1, 200, .5 },
+		{ m_windowSill, 0, 6, .5 }, { m_deskHeight, 2.2, 5.5, .1 }, { m_windowTop, 3, 20, .5 }, { m_emitterSize, 1, 200, .5 },
 	};
 	const bool wasUpdating = m_updating;
 	m_updating = true;
@@ -1257,6 +1332,8 @@ void DesignerWindow::OnSettingsChanged()
 		m_plan.leaveOut << "shield";
 	if(m_noWeapons->isChecked())
 		m_plan.leaveOut << "firecontrol";
+	m_plan.fireControlModule = m_fireControl->currentData().toInt();
+	m_fireControl->setEnabled(!m_noWeapons->isChecked());
 	if(m_noTransporter->isChecked())
 		m_plan.leaveOut << "transporter";
 	// Only what was changed: a length shown in meters and read back would
@@ -1281,6 +1358,16 @@ void DesignerWindow::OnSettingsChanged()
 	read(m_windowSill, m_plan.windowSillFeet);
 	read(m_windowTop, m_plan.windowTopFeet);
 	m_plan.joinWindows = m_joinWindows->isChecked();
+	m_plan.flatWindows = m_flatWindows->isChecked();
+	m_plan.bridgeStyle = m_bridgeStyle->currentData().toString();
+	// A height is the plan's own only once it is changed: until then it follows
+	// the usual height for sitting or standing.
+	if(fabs(m_deskHeight->value() - Shown(m_plan.DeskTopFeet())) > 1e-9)
+		m_plan.deskHeightFeet = Feet(m_deskHeight->value());
+	m_plan.deskStanding = m_deskPosture->currentData().toBool();
+	m_deskHeight->setValue(Shown(m_plan.DeskTopFeet()));
+	m_deskPosture->setEnabled(m_plan.bridgeStyle == "desks");
+	m_deskHeight->setEnabled(m_plan.bridgeStyle == "desks");
 	if(m_plan.deckFeet - m_plan.floorFeet < 7.0)
 		m_status->setText(m_metric ? "A room needs 2.1 m of headroom: the deck height less the floor is less than that."
 				: "A room needs 7 feet of headroom: the deck height less the floor is less than that.");
@@ -1386,6 +1473,9 @@ void DesignerWindow::OnRoomSelected(int row)
 	m_updating = true;
 	m_roomType->setCurrentText(m_plan.rooms.at(row).type);
 	m_roomLabel->setText(m_plan.rooms.at(row).label);
+	m_roomWallTex->setCurrentIndex(qMax(0, m_roomWallTex->findData(m_plan.rooms.at(row).wallTex)));
+	m_roomFloorTex->setCurrentIndex(qMax(0, m_roomFloorTex->findData(m_plan.rooms.at(row).floorTex)));
+	m_roomCeilingTex->setCurrentIndex(qMax(0, m_roomCeilingTex->findData(m_plan.rooms.at(row).ceilingTex)));
 	m_updating = was;
 	m_view->SetRoom(row);
 }
@@ -1406,6 +1496,9 @@ void DesignerWindow::OnRoomEdited()
 		}
 	OnAboutToChange();
 	m_plan.rooms[row].type = m_roomType->currentText();
+	m_plan.rooms[row].wallTex = m_roomWallTex->currentData().toInt();
+	m_plan.rooms[row].floorTex = m_roomFloorTex->currentData().toInt();
+	m_plan.rooms[row].ceilingTex = m_roomCeilingTex->currentData().toInt();
 	if(!label.isEmpty())
 		m_plan.rooms[row].label = label;
 	RefreshRooms();
@@ -1498,6 +1591,7 @@ void DesignerWindow::ApplyShapeJob(ShapeJob& job)
 	m_hullShaped = !m_hull.tris.isEmpty();
 	// The roomable triangles fit the plan they were found for; after a
 	// resize while shaping they wait for the next round.
+	m_view->SetHullTris(m_hull.tris);
 	if(m_hullShaped && job.plan.Width() == m_plan.Width() && job.plan.Depth() == m_plan.Depth() &&
 			job.plan.Decks() == m_plan.Decks())
 		m_view->SetRoomable(job.roomable);
@@ -1711,6 +1805,7 @@ bool DesignerWindow::BuildNow()
 	lines << QString("Hull: %1 faces, about %2 cubic meters").arg(m_report.hullFaces).arg(qRound(m_report.hullVolumeM3));
 	lines << QString("Rooms: %1   Doors: %2   Windows: %3   Ladders: %4   Parking: %5   Ramps: %6   Stairs: %7").arg(m_report.rooms).arg(m_report.doors)
 			.arg(m_report.windows).arg(m_report.ladders).arg(m_report.parking).arg(m_report.ramps).arg(m_report.stairs);
+	lines << QString("Zero-G joins: %1   Open to the deck below: %2").arg(m_report.zeroGJoins).arg(m_report.openJoins);
 	lines << QString("Stations: %1   Berths: %2   Contrail emitters: %3   Weapon emitters: %4").arg(m_report.stations)
 			.arg(m_report.berths).arg(m_report.contrails).arg(m_report.weaponEmitters);
 	lines << "";

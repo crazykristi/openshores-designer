@@ -209,11 +209,17 @@ private:
 	QDoubleSpinBox*	m_windowSill = 0;
 	QDoubleSpinBox*	m_windowTop = 0;
 	QCheckBox*		m_joinWindows = 0;
+	QCheckBox*		m_flatWindows = 0;
+	QComboBox*		m_roomWallTex = 0;
+	QComboBox*		m_roomFloorTex = 0;
+	QComboBox*		m_roomCeilingTex = 0;
+	QComboBox*		m_doorTex = 0;
 	QCheckBox*		m_slopedDecks = 0;
 	QComboBox*		m_hullStyle = 0;
 	QComboBox*		m_hullDoorExit = 0;
 	QCheckBox*		m_noShields = 0;
 	QCheckBox*		m_noWeapons = 0;
+	QComboBox*		m_fireControl = 0;
 	QCheckBox*		m_noTransporter = 0;
 	QLabel*			m_hullInfo = 0;
 
@@ -232,6 +238,9 @@ private:
 	QPlainTextEdit*	m_reportText = 0;
 	QCheckBox*		m_furnish = 0;
 	QCheckBox*		m_walkPaths = 0;
+	QComboBox*		m_bridgeStyle = 0;
+	QComboBox*		m_deskPosture = 0;
+	QDoubleSpinBox*	m_deskHeight = 0;
 };
 
 #endif

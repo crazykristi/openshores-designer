@@ -59,6 +59,10 @@ PlanHull	BuildPlanHull(const TriPlan& plan, const PlanProgress& progress = PlanP
 // A design holding only the painted hull, for showing it quickly.
 AuScDesign*	BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull);
 
+// Where a contrail emitter ends up, in plan space (feet): on the hull's
+// aftmost surface straight aft of its triangle. False when no hull is aft of it.
+bool	ContrailEmitterAt(const TriPlan& plan, const AuScTriList& hullTris, const PlanEmitter& e, AuPoint& at);
+
 // Which triangles of each deck could hold a room inside the shaped hull:
 // the room prism over the triangle is inside the hull's closed surface.
 QVector<QVector<bool> >	RoomableTriangles(const TriPlan& plan, const PlanHull& hull);
@@ -79,8 +83,11 @@ struct PlanBuildReport
 	int				rooms = 0;
 	int				doors = 0;
 	int				windows = 0;
+	int				walkAreas = 0;			// Parts of the ship the crew can walk between.
+	int				skylights = 0;			// Windows in a ceiling.
 	int				ladders = 0;
 	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
+	int				openJoins = 0;		// "Open to Deck Below" rooms opened into the room below.
 	int				stairs = 0;
 	int				parking = 0;			// Vehicle parking spots.
 	int				contrails = 0;			// Contrail emitters.

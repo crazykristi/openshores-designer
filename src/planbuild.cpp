@@ -23,6 +23,7 @@
 
 #include "audit.h"
 #include "mesh.h"
+#include <functional>
 #include "auscdesign.h"
 #include "auscparts.h"
 #include "generate.h"
@@ -1838,11 +1839,67 @@ AuScDesign* NewPlanDesign(const TriPlan& plan)
 
 }	// namespace
 
+static double RayHitsTriangle(const AuPoint& from, const AuPoint& dir, const AuPoint& a, const AuPoint& b, const AuPoint& c);
+
+bool ContrailEmitterAt(const TriPlan& plan, const AuScTriList& hullTris, const PlanEmitter& e, AuPoint& at)
+{
+	const QPointF c = plan.TriCentre(TriRef(e.deck, e.cx, e.cy, e.k));
+	const AuPoint from(c.x(), c.y(), plan.DeckFloor(e.deck) + plan.deckFeet / 2);
+	const AuPoint aft(-1, 0, 0);
+	double farthest = -1;
+	for(const AuScTri& tri : hullTris)
+		farthest = qMax(farthest, RayHitsTriangle(from, aft, AuPoint(tri.V0()), AuPoint(tri.V1()), AuPoint(tri.V2())));
+	if(farthest < 0)
+		return false;
+	at = from + aft * (farthest + 0.2);		// A hand's breadth behind the hull.
+	return true;
+}
+
+// A contrail emitter on the hull's aftmost surface straight aft of its
+// triangle, facing aft.
+static bool AddContrailEmitter(AuScDesign& design, const TriPlan& plan, const AuScTriList& hullTris, const PlanEmitter& e)
+{
+	AuPoint spot;
+	if(!ContrailEmitterAt(plan, hullTris, e, spot))
+		return false;
+	// The icon is drawn in its own x-y plane, facing its +z: turned so that
+	// +z points aft (which way the turn goes is checked, not assumed).
+	AuMatrix4x4 facing;
+	facing.RotateY(-PI / 2);
+	if(facing.Project(AuPoint(0, 0, 1)).x - facing.Project(AuPoint(0, 0, 0)).x > 0)
+	{
+		facing = AuMatrix4x4();
+		facing.RotateY(PI / 2);
+	}
+	AuMatrix4x4 at;
+	at.Translate(spot);
+	bool added = false;
+	AuScPart* part = AuScPart::Create(AuScPart::Part_ContrailEmitter);
+	AuScIcon* icon = dynamic_cast<AuScIcon*>(part);
+	if(icon)
+	{
+		const double half = qMax(1.0, e.sizeFeet) / 2;
+		icon->MakeScreen(AuPoint(-half, -half), AuPoint(half, half), AuMatrix4x4());
+		icon->Transform(facing);
+		icon->Transform(at);
+		icon->SetFaceOpacity(.95f);
+		added = icon->IsValid() && design.Parts().AddPart(*icon);
+	}
+	delete part;
+	return added;
+}
+
 AuScDesign* BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull)
 {
 	AuScDesign* design = NewPlanDesign(plan);
 	if(!hull.tris.isEmpty())
+	{
 		AddPlanHullPart(*design, plan, hull);
+		// So that the 3D view shows them (DesignPreview draws a marker).
+		for(const PlanEmitter& e : plan.emitters)
+			if(!e.weapon)
+				AddContrailEmitter(*design, plan, hull.tris, e);
+	}
 	TurnToGameAxes(*design);
 	return design;
 }
@@ -3638,6 +3695,8 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 	// two rooms (or a room and the outside), are one wide door: a bay door,
 	// as tall as the room, for vehicles.
 	PathSet paths;
+	QList<AuPoint> onTheGround;		// Where a path meets the ground outside the ship.
+	QList<QPair<quint16, int> > texturedDoors;		// Door part, library texture.
 	const double s = plan.cellFeet;
 	struct DoorRun { PlanDoor door; int count = 1; QPointF mid; };
 	QList<DoorRun> runs;
@@ -3649,10 +3708,6 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			plan.TriCorners(plan.Valid(a) ? a : b, c);
 			return (c[0] + c[1]) / 2.0;
 		};
-		auto rooms = [&](const PlanDoor& d) {
-			const TriRef a(d.deck, d.cx, d.cy, d.side);
-			return qMakePair(deckRoomOf(a), deckRoomOf(plan.AcrossCellEdge(d.deck, d.cx, d.cy, d.side)));
-		};
 		QList<PlanDoor> left = plan.doors;
 		while(!left.isEmpty())
 		{
@@ -3663,22 +3718,14 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			while(grew)
 			{
 				grew = false;
-				for(int i = 0; i < left.size(); ++i)
-				{
-					const PlanDoor& d = left[i];
-					if(d.deck != run[0].deck || d.side != run[0].side || rooms(d) != rooms(run[0])
-							|| (xWall ? d.cx != run[0].cx : d.cy != run[0].cy))
-						continue;
-					bool next = false;
+				for(int i = 0; i < left.size() && !grew; ++i)
 					for(const PlanDoor& r : run)
-						if(abs(xWall ? d.cy - r.cy : d.cx - r.cx) == 1)
-							next = true;
-					if(!next)
-						continue;
-					run << left.takeAt(i);
-					grew = true;
-					break;
-				}
+						if(plan.DoorsJoin(left[i], r))
+						{
+							run << left.takeAt(i);
+							grew = true;
+							break;
+						}
 			}
 			std::sort(run.begin(), run.end(), [xWall](const PlanDoor& p, const PlanDoor& q) {
 				return xWall ? p.cy < q.cy : p.cx < q.cx;
@@ -3730,7 +3777,15 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				continue;
 			}
 			++report.doors;
-			if(options.walkPaths)
+			if(door.tex >= 0)
+				texturedDoors << qMakePair(doorId, door.tex);
+			// Between two rooms with no gravity, the doorway has none either.
+			if(IsZeroGRoomType(ra->type) && IsZeroGRoomType(rb->type))
+				for(AuScParts::iterator it = design->Parts().begin(); it != design->Parts().end(); ++it)
+					if(it.value() && it.value()->IsRoomVoid() && it.value()->AssociatedPartId() == doorId)
+						it.value()->SetGravity(G_Zero, AuPoint(0, 0, 1));
+			// Nobody walks into a room with no floor: that door is for what flies.
+			if(options.walkPaths && !IsOpenToDeckBelowType(ra->type) && !IsOpenToDeckBelowType(rb->type))
 			{
 				const double pz = z0;
 				const QPointF ca = plan.TriCentre(a), cb = plan.TriCentre(b);
@@ -3793,12 +3848,13 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		{
 			double furthest = -1;
 			for(double h : { z0 + 1.0, (z0 + doorTop) / 2, doorTop - .5 })
-			{
-				const AuPoint eye(xWall ? roomWall + sgn * .3 : mid.x(), xWall ? mid.y() : roomWall + sgn * .3, h);
-				AuPoint hit = eye + outward * 80.0;
-				if(hullFaces.Sight(eye, hit))
-					furthest = qMax(furthest, xWall ? fabs(hit.x - roomWall) : fabs(hit.y - roomWall));
-			}
+				for(double across : { -width / 2 + .3, 0.0, width / 2 - .3 })
+				{
+					const AuPoint eye(xWall ? roomWall + sgn * .3 : mid.x() + across, xWall ? mid.y() + across : roomWall + sgn * .3, h);
+					AuPoint hit = eye + outward * 80.0;
+					if(hullFaces.Sight(eye, hit))
+						furthest = qMax(furthest, xWall ? fabs(hit.x - roomWall) : fabs(hit.y - roomWall));
+				}
 			if(furthest > 0)
 				surface = roomWall + sgn * furthest;
 		}
@@ -3840,6 +3896,8 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			continue;
 		}
 		++report.doors;
+		if(door.tex >= 0)
+			texturedDoors << qMakePair(doorId, door.tex);
 		// A ramp down to the ground where the door is low enough, as at the
 		// user's aircraft factory; otherwise a ladder (below).
 		AuPoint rampTop, rampFoot;
@@ -3861,21 +3919,25 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				to.x = surface + sgn * SHIPGEN_LADDER_OUTSIDE;
 			else
 				to.y = surface + sgn * SHIPGEN_LADDER_OUTSIDE;
+			const double foot = hullBottom - SHIPGEN_LADDER_BELOW_HULL;
+			const bool ladderDown = wayDown && !ramp && pz - foot > .5;
 			if(ramp)
 			{
 				// Out over the landing and down the ramp.
 				rampTop.z = pz;
 				AddWalkOnce(*design, from, rampTop, doorId, paths);
 				AddWalkOnce(*design, rampTop, rampFoot, 0, paths);
+				onTheGround << rampFoot;
 			}
 			else
 				AddWalkOnce(*design, from, to, doorId, paths);
-			// Down to the ground by a ladder, as in the working designs:
-			// straight down from outside the door to a little below the
-			// bottom of the hull.
-			const double foot = hullBottom - SHIPGEN_LADDER_BELOW_HULL;
-			if(wayDown && !ramp && pz - foot > .5)
+			// As in the working designs: straight down from outside the door to a
+			// little below the bottom of the hull.
+			if(ladderDown)
+			{
 				AddLadderPath(*design, AuPoint(to.x, to.y, foot), to, outward * -1.0);
+				onTheGround << AuPoint(to.x, to.y, foot);
+			}
 			const double depth = fabs(surface - roomWall) - plan.skinFeet;
 			if(depth > s * 1.5)
 				report.warnings << QString("The hull door of '%1' is %2 ft from the hull surface; the way out is a "
@@ -3888,7 +3950,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 	// the way the game's designer makes them, from sill height up. With
 	// joinWindows, windows side by side on one straight wall of a room are
 	// one long window.
-	struct WindowRun { PlanDoor window; QPointF p, q; int count = 1; };
+	struct WindowRun { PlanDoor window; QPointF p, q; int count = 1; const DeckRoom* room = 0; };
 	QList<WindowRun> windowRuns;
 	{
 		struct Edge { PlanDoor window; QPointF p, q, inward; const DeckRoom* room; };
@@ -3958,6 +4020,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			wr.p = run[0].p + unit * lo;
 			wr.q = run[0].p + unit * hi;
 			wr.count = run.size();
+			wr.room = run[0].room;
 			windowRuns << wr;
 		}
 	}
@@ -3969,8 +4032,162 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		top = qMin(z1 - .5, z0 + plan.windowTopFeet);
 		sill = qMin(z0 + qMax(0.0, plan.windowSillFeet), top - 1.0);
 	};
-	for(const WindowRun& run : windowRuns)
+	// Joined windows along a zigzag wall: one flat pane on a straight line
+	// across the teeth. Cut tooth by tooth, the frames of the teeth stand in
+	// the line of sight and the panes fold round the hull.
+	QSet<int> flatRuns;
+	if(plan.joinWindows && plan.flatWindows)
 	{
+		QList<QList<int> > chains;
+		QSet<int> placedRuns;
+		auto meet = [](const WindowRun& u, const WindowRun& v) {
+			auto close = [](const QPointF& a, const QPointF& b) { return (a - b).manhattanLength() < 1e-6; };
+			return close(u.p, v.p) || close(u.p, v.q) || close(u.q, v.p) || close(u.q, v.q);
+		};
+		for(int i = 0; i < windowRuns.size(); ++i)
+		{
+			if(placedRuns.contains(i) || !windowRuns[i].room)
+				continue;
+			QList<int> chain;
+			chain << i;
+			placedRuns << i;
+			for(int at = 0; at < chain.size(); ++at)
+				for(int j = 0; j < windowRuns.size(); ++j)
+					if(!placedRuns.contains(j) && windowRuns[j].room == windowRuns[i].room
+							&& windowRuns[j].window.deck == windowRuns[i].window.deck && meet(windowRuns[chain[at]], windowRuns[j]))
+					{
+						chain << j;
+						placedRuns << j;
+					}
+			if(chain.size() >= 2)
+				chains << chain;
+		}
+		for(const QList<int>& chain : chains)
+		{
+			const WindowRun& head = windowRuns[chain[0]];
+			const DeckRoom* room = head.room;
+			QList<QPointF> ends;
+			for(int r : chain)
+				ends << windowRuns[r].p << windowRuns[r].q;
+			QPointF p = ends[0], q = ends[0];
+			double widest = -1;
+			for(const QPointF& u : ends)
+				for(const QPointF& v : ends)
+					if(QPointF::dotProduct(u - v, u - v) > widest)
+					{
+						widest = QPointF::dotProduct(u - v, u - v);
+						p = u;
+						q = v;
+					}
+			const double length = sqrt(widest);
+			if(length < 1)
+				continue;
+			QPointF along = (q - p) / length;
+			QPointF out(-along.y(), along.x());
+			// Away from the room, judged at each window.
+			double side = 0;
+			double low = 0, high = 0;
+			for(int r : chain)
+			{
+				const WindowRun& w = windowRuns[r];
+				const TriRef a(w.window.deck, w.window.cx, w.window.cy, w.window.side);
+				const TriRef b = w.window.edge ? plan.Across(a, w.window.edge)
+						: plan.AcrossCellEdge(w.window.deck, w.window.cx, w.window.cy, w.window.side);
+				const TriRef inside = deckRoomOf(a) == room ? a : b;
+				side += QPointF::dotProduct(out, plan.TriCentre(inside) - (w.p + w.q) / 2.0);
+			}
+			if(side > 0)
+				out = -out;
+			for(const QPointF& e : ends)
+			{
+				const double off = QPointF::dotProduct(e - p, out);
+				low = qMin(low, off);
+				high = qMax(high, off);
+			}
+			// A real corner of the room is not a zigzag.
+			if(high - low > s * 1.01)
+				continue;
+			double sill, top;
+			windowHeights(head.window.deck, sill, top);
+			const QPointF mid = (p + q) / 2.0 + out * low;
+			AuScFaceList hullFaces;
+			for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+				if(it.value() && it.value()->IsHullMesh() && it.value()->GroupName() != "Frame")
+				{
+					AuScFaceList partFaces;
+					it.value()->Faces(partFaces);
+					hullFaces.AddFaces(partFaces);
+				}
+			// From a line just inside the deepest tooth, out to the hull, along
+			// the whole width: the pane goes at the furthest of it. Only from
+			// the middle of the window up: a ledge of the hull below it can reach
+			// many feet further, and a pane out there would be a box on the hull.
+			double gap = -1;
+			AuPoint hit;
+			const int looks = qMax(2, int(length / (s / 4)));
+			for(int i = 0; i < looks; ++i)
+				for(double h : { (sill + top) / 2, top - .2 })
+				{
+					const QPointF at = mid + along * (length * ((i + .5) / looks - .5));
+					const AuPoint eye(at.x() - out.x() * .5, at.y() - out.y() * .5, h);
+					AuPoint end = eye + AuPoint(out.x(), out.y(), 0) * 60.0;
+					if(!hullFaces.Sight(eye, end))
+						continue;
+					if((end - eye).Length() - .5 > gap)
+					{
+						gap = (end - eye).Length() - .5;
+						hit = end;
+					}
+				}
+			if(gap < 0)
+				continue;
+			const double width = length - .7;
+			const double angle = atan2(out.y(), out.x());
+			AuMatrix4x4 toWall, back;
+			toWall.RotateZ(-angle);
+			toWall.Translate(AuPoint(-mid.x(), -mid.y(), 0));
+			back.Translate(AuPoint(mid.x(), mid.y(), 0));
+			back.RotateZ(angle);
+			AuScPart* roomPart = design->Parts().value(room->meshId);
+			if(!roomPart)
+				continue;
+			// The room's wall goes with the engine's cut, which manages that;
+			// what the cut leaves as a window of its own is not wanted.
+			roomPart->Transform(toWall);
+			AuScFaceList jig = BoxFaces(AuPoint(-.5, -width / 2, sill), AuPoint(gap + 3.0, width / 2, top));
+			OrientAsHull(jig);
+			QList<quint16> added;
+			const bool cutRoom = JigCut(*design, AuScPart::Part_WindowJig, jig, 0, room->meshId, &added);
+			if(AuScPart* part = design->Parts().value(room->meshId))
+				part->Transform(back);
+			for(quint16 id : added)
+			{
+				AuScParts gone;
+				design->Parts().DeletePart(id, gone);
+			}
+			if(!cutRoom || !CutFlatWindow(*design, toWall, back, gap, width, sill, top, room->group))
+			{
+				report.warnings << QString("The window of '%1' could not be cut.").arg(room->group);
+				continue;
+			}
+			// The space out to the pane can be walked into: with no void there it
+			// would be a wall nobody can see.
+			{
+				AuScFaceList space = BoxFaces(AuPoint(-.5, -width / 2, sill), AuPoint(gap - .02, width / 2, top));
+				space.Transform(back);
+				quint16 spaceVoid = 0;
+				AddVoid(*design, room->group, space, spaceVoid);
+			}
+			for(int r : chain)
+				flatRuns << r;
+			++report.windows;
+		}
+	}
+	for(int runIndex = 0; runIndex < windowRuns.size(); ++runIndex)
+	{
+		if(flatRuns.contains(runIndex))
+			continue;
+		const WindowRun& run = windowRuns[runIndex];
 		const PlanDoor& window = run.window;
 		if(window.edge != 0 || run.count > 1)
 		{
@@ -4142,10 +4359,165 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 					.arg(room->group).arg(qRound(fabs(surface - roomWall) - plan.skinFeet));
 	}
 
-	// Zero-G shafts stacked on decks next to each other are one space: where
-	// a shaft's triangle has a shaft's triangle above it, the ceiling below
-	// and the floor above are cut away, and a zero-G void fills the
-	// structure between them, so people float straight through.
+	// Windows in a ceiling (experimental): the room and the hull are turned
+	// until the ceiling is a wall at constant x with the outside towards +x,
+	// cut as a wall window is, and turned back. With joinWindows, neighbouring
+	// cells of one room make one rectangle.
+	{
+		QSet<int> used;
+		const auto indexOf = [&plan](const PlanSkylight& w) { return plan.SkylightAt(w.deck, w.cx, w.cy); };
+		// Rectangles grow up and to the right, so each has to start at its
+		// lowest corner; in the order they were clicked, one starting in the
+		// middle of a block leaves a seam.
+		QList<int> order;
+		for(int i = 0; i < plan.skylights.size(); ++i)
+			order << i;
+		std::sort(order.begin(), order.end(), [&plan](int a, int b) {
+			const PlanSkylight& p = plan.skylights.at(a), &q = plan.skylights.at(b);
+			return p.deck != q.deck ? p.deck < q.deck : p.cy != q.cy ? p.cy < q.cy : p.cx < q.cx;
+		});
+		for(int i : order)
+		{
+			if(used.contains(i))
+				continue;
+			const PlanSkylight& first = plan.skylights.at(i);
+			const DeckRoom* room = deckRoomOf(TriRef(first.deck, first.cx, first.cy, 0));
+			if(!room || !plan.SkylightFits(first))
+			{
+				report.warnings << QString("A ceiling window on deck %1 was left out: it needs a whole cell of room with no "
+						"room beyond it.").arg(first.deck + 1);
+				continue;
+			}
+			auto joins = [&](int cx, int cy) {
+				if(cx < 0 || cy < 0 || cx >= plan.Width() || cy >= plan.Depth())
+					return false;
+				const int j = plan.SkylightAt(first.deck, cx, cy);
+				return j >= 0 && !used.contains(j) && plan.skylights.at(j).floor == first.floor && plan.SkylightFits(plan.skylights.at(j))
+						&& plan.CellRoom(first.deck, cx, cy) == plan.CellRoom(first.deck, first.cx, first.cy);
+			};
+			int x1 = first.cx, y1 = first.cy;
+			if(plan.joinWindows)
+			{
+				while(joins(x1 + 1, first.cy))
+					++x1;
+				for(bool grow = true; grow; )
+				{
+					for(int cx = first.cx; cx <= x1 && grow; ++cx)
+						grow = joins(cx, y1 + 1);
+					if(grow)
+						++y1;
+				}
+			}
+			for(int cy = first.cy; cy <= y1; ++cy)
+				for(int cx = first.cx; cx <= x1; ++cx)
+				{
+					PlanSkylight w = first;
+					w.cx = cx;
+					w.cy = cy;
+					used.insert(indexOf(w));
+				}
+			const QPointF c0 = plan.Corner(first.cx, first.cy), c1 = plan.Corner(x1 + 1, y1 + 1);
+			const double xa = qMin(c0.x(), c1.x()) + .5, xb = qMax(c0.x(), c1.x()) - .5;
+			const double ya = qMin(c0.y(), c1.y()) + .5, yb = qMax(c0.y(), c1.y()) - .5;
+			double z0, z1;
+			RoomHeights(plan, first.deck, z0, z1);
+			const double sgn = first.floor ? -1.0 : 1.0, plane = first.floor ? z0 : z1;
+
+			AuScFaceList hullFaces;
+			for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+				if(it.value() && it.value()->IsHullMesh() && it.value()->GroupName() != "Frame")
+				{
+					AuScFaceList partFaces;
+					it.value()->Faces(partFaces);
+					hullFaces.AddFaces(partFaces);
+				}
+			// Look out from the corners and the middle, and cut as deep as the
+			// furthest hull. On a sloping roof the near side cuts the air above.
+			double gap = -1;
+			AuPoint hit;
+			bool missed = false;
+			const QPointF looks[5] = { QPointF((xa + xb) / 2, (ya + yb) / 2), QPointF(xa, ya), QPointF(xb, ya), QPointF(xa, yb), QPointF(xb, yb) };
+			for(const QPointF& at : looks)
+			{
+				const AuPoint eye(at.x(), at.y(), plane - sgn * .5);
+				AuPoint h = eye + AuPoint(0, 0, sgn) * 400.0;
+				if(!hullFaces.Sight(eye, h))
+				{
+					missed = true;
+					continue;
+				}
+				if((h - eye).Length() - .5 > gap)
+				{
+					gap = (h - eye).Length() - .5;
+					hit = h;
+				}
+			}
+			if(gap < 0 || missed)
+			{
+				report.warnings << QString("A ceiling window of '%1' looks out at no hull.").arg(room->group);
+				continue;
+			}
+			const quint16 hullId = HullPartAt(*design, hit);
+			AuScPart* hullPart = design->Parts().value(hullId);
+			AuScPart* roomPart = design->Parts().value(room->meshId);
+			if(!hullPart || !roomPart)
+			{
+				report.warnings << QString("The ceiling window of '%1' could not be cut.").arg(room->group);
+				continue;
+			}
+			// A quarter turn about y that takes the way out to +x.
+			double angle = M_PI / 2;
+			AuMatrix4x4 toWall, back;
+			toWall.RotateY(angle);
+			toWall.Translate(AuPoint(0, 0, -plane));
+			if(toWall.Project(AuPoint(0, 0, plane + sgn)).x < 0)
+			{
+				angle = -angle;
+				toWall = AuMatrix4x4();
+				toWall.RotateY(angle);
+				toWall.Translate(AuPoint(0, 0, -plane));
+			}
+			back.Translate(AuPoint(0, 0, plane));
+			back.RotateY(-angle);
+			const AuPoint ja = toWall.Project(AuPoint(xa, ya, plane - sgn * .5));
+			const AuPoint jb = toWall.Project(AuPoint(xb, yb, plane + sgn * (gap + 3.0)));
+			hullPart->Transform(toWall);
+			roomPart->Transform(toWall);
+			AuScFaceList jig = BoxFaces(ja.Min(jb), ja.Max(jb));
+			OrientAsHull(jig);
+			QList<quint16> added;
+			const bool cut = JigCut(*design, AuScPart::Part_WindowJig, jig, hullId, room->meshId, &added, 0, true, 0.0);
+			for(quint16 id : { hullId, room->meshId })
+				if(AuScPart* part = design->Parts().value(id))
+					part->Transform(back);
+			for(quint16 id : added)
+				if(AuScPart* part = design->Parts().value(id))
+					part->Transform(back);
+			if(!cut || added.isEmpty())
+			{
+				report.warnings << QString("The ceiling window of '%1' could not be cut.").arg(room->group);
+				continue;
+			}
+			for(quint16 id : added)
+				if(AuScPart* part = design->Parts().value(id))
+					if(part->IsWindow())
+						part->SetGroupName(room->group);
+			++report.skylights;
+			if(gap - plan.skinFeet > s * 1.5)
+				report.warnings << QString("A ceiling window of '%1' is %2 ft from the hull surface; it looks down a tunnel.")
+						.arg(room->group).arg(qRound(gap - plan.skinFeet));
+		}
+	}
+
+	// Rooms that are one space over two decks, where a triangle of one has a
+	// triangle of the other above it: zero-G shafts stacked on neighbouring
+	// decks, and an "Open to Deck Below" room over any room (the room below
+	// reaches up into the deck above, as in the game's old designer). The
+	// ceiling below and the floor above are cut away, and a void with the
+	// gravity of the room below fills the structure between them.
+	auto opensDown = [](const DeckRoom& lower, const DeckRoom& upper) {
+		return IsOpenToDeckBelowType(upper.type) || (IsZeroGRoomType(lower.type) && IsZeroGRoomType(upper.type));
+	};
 	for(int d = 0; d + 1 < plan.Decks(); ++d)
 	{
 		QMap<QPair<int, int>, int> pairs;		// (lower deck room, upper deck room) -> triangles
@@ -4155,8 +4527,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				{
 					const DeckRoom* lower = deckRoomOf(TriRef(d, cx, cy, k));
 					const DeckRoom* upper = deckRoomOf(TriRef(d + 1, cx, cy, k));
-					if(lower && upper && lower->voidId && upper->voidId &&
-							IsZeroGRoomType(lower->type) && IsZeroGRoomType(upper->type))
+					if(lower && upper && lower->voidId && upper->voidId && opensDown(*lower, *upper))
 						++pairs[qMakePair(deckRoomIndex.value(qint64(lower->room) * 1000 + d),
 								deckRoomIndex.value(qint64(upper->room) * 1000 + d + 1))];
 				}
@@ -4171,9 +4542,56 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			auto shared = [&plan, d, lr, ur](const TriRef& t) {
 				return t.deck == d && plan.Room(t) == lr && plan.Room(TriRef(d + 1, t.cx, t.cy, t.k)) == ur;
 			};
-			auto facesBetween = [&](double z0, double z1) {
+			auto facesBetween = [&](double z0, double z1, double inset) {
 				IndexedMesh mesh = BuildPrisms(plan, shared, [d, z0, z1](int level) { return level == d ? z0 : z1; },
 						1, false, true, [](const TriRef&) { return 0; });
+				// Just inside the walls. A cut flush with a wall takes that wall
+				// away as far as the cut reaches into the room, and leaves a hole
+				// to look through into the rest of the ship. What can be walked
+				// through goes right up to the wall, though, or the rim left
+				// round it is a ledge nobody can see.
+				auto cornerKey = [](double x, double y) { return qMakePair(qRound(x * 500), qRound(y * 500)); };
+				QMap<QPair<int, int>, QList<QPointF> > inward;
+				for(int cy = 0; cy < plan.Depth(); ++cy)
+					for(int cx = 0; cx < plan.Width(); ++cx)
+						for(int k = 0; k < 4; ++k)
+						{
+							const TriRef t(d, cx, cy, k);
+							if(!shared(t))
+								continue;
+							for(int e = 0; e < 3; ++e)
+							{
+								if(shared(plan.Across(t, e)))
+									continue;
+								QPointF p, q;
+								plan.EdgeEnds(t, e, p, q);
+								const QPointF along = q - p;
+								QPointF n(-along.y(), along.x());
+								n /= sqrt(QPointF::dotProduct(n, n));
+								if(QPointF::dotProduct(n, plan.TriCentre(t) - p) < 0)
+									n = -n;
+								for(const QPointF& end : { p, q })
+								{
+									QList<QPointF>& at = inward[cornerKey(end.x(), end.y())];
+									bool known = false;
+									for(const QPointF& o : at)
+										known = known || QPointF::dotProduct(o, n) > .999;
+									if(!known)
+										at << n;
+								}
+							}
+						}
+				for(AuPoint& v : mesh.v)
+				{
+					const QList<QPointF> at = inward.value(cornerKey(v.x, v.y));
+					QPointF move(0, 0);
+					if(at.size() == 1)
+						move = at[0] * inset;
+					else if(at.size() == 2 && QPointF::dotProduct(at[0], at[1]) > -.99)
+						move = (at[0] + at[1]) * (inset / (1 + QPointF::dotProduct(at[0], at[1])));
+					v.x += move.x();
+					v.y += move.y();
+				}
 				CollapseFlat(mesh);
 				AuScFaceList faces;
 				for(int fi = 0; fi < mesh.Faces(); ++fi)
@@ -4185,18 +4603,69 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			const QString group = QString("%1 to %2").arg(lower.group, upper.group);
 			// The void spans the structure, overlapping both rooms a little.
 			quint16 gapVoid = 0;
-			if(!AddVoid(*design, group, facesBetween(lz1 - 1.0, uz0 + 1.0), gapVoid) ||
-					!SetVoidGravity(*design, gapVoid, G_Zero))
+			const bool zeroG = IsZeroGRoomType(lower.type);
+			if(!AddVoid(*design, group, facesBetween(lz1 - 1.0, uz0 + 1.0, 0), gapVoid) ||
+					(zeroG && !SetVoidGravity(*design, gapVoid, G_Zero)))
 			{
-				report.warnings << QString("The zero-G shafts '%1' and '%2' could not be joined.").arg(lower.group, upper.group);
+				report.warnings << QString("The rooms '%1' and '%2' could not be joined.").arg(lower.group, upper.group);
 				continue;
 			}
-			if(!CutOpening(*design, facesBetween(lz1 - 1.0, uz0 + 1.0), lower.meshId, upper.meshId))
-				report.warnings << QString("The floor between the zero-G shafts '%1' and '%2' could not be cut away.")
+			if(!CutOpening(*design, facesBetween(lz1 - 1.0, uz0 + 1.0, .05), lower.meshId, upper.meshId))
+				report.warnings << QString("The floor between the rooms '%1' and '%2' could not be cut away.")
 						.arg(lower.group, upper.group);
-			++report.zeroGJoins;
+			if(IsOpenToDeckBelowType(upper.type))
+				++report.openJoins;
+			else
+			{
+				++report.zeroGJoins;
+				// So that crew can use the shaft as well: a way up it, at the
+				// shared triangle nearest the lower room's middle.
+				if(options.walkPaths)
+				{
+					TriRef at;
+					bool found = false;
+					double best = 1e30;
+					const QPointF anchor = plan.TriCentre(lower.anchor);
+					for(int cy = 0; cy < plan.Depth(); ++cy)
+						for(int cx = 0; cx < plan.Width(); ++cx)
+							for(int k = 0; k < 4; ++k)
+							{
+								const TriRef t(d, cx, cy, k);
+								if(!shared(t))
+									continue;
+								const QPointF off = plan.TriCentre(t) - anchor;
+								const double dist = QPointF::dotProduct(off, off);
+								if(dist < best)
+								{
+									best = dist;
+									at = t;
+									found = true;
+								}
+							}
+					if(found)
+					{
+						const QPointF c = plan.TriCentre(at);
+						const TriRef above(d + 1, at.cx, at.cy, at.k);
+						AddWalk(*design, WalkPoints(plan, RoomWalk(plan, lower.room, lower.anchor, at), lz0), paths);
+						AddWalk(*design, WalkPoints(plan, RoomWalk(plan, upper.room, upper.anchor, above), uz0), paths);
+						AddLadderPath(*design, AuPoint(c.x(), c.y(), lz0), AuPoint(c.x(), c.y(), uz0), AuPoint(1, 0, 0));
+					}
+				}
+			}
 		}
 	}
+	for(const DeckRoom& dr : deckRooms)
+		if(IsOpenToDeckBelowType(dr.type))
+		{
+			bool over = false;
+			for(int cy = 0; cy < plan.Depth() && !over; ++cy)
+				for(int cx = 0; cx < plan.Width() && !over; ++cx)
+					for(int k = 0; k < 4 && !over; ++k)
+						over = dr.deck > 0 && plan.Room(TriRef(dr.deck, cx, cy, k)) == dr.room &&
+								deckRoomOf(TriRef(dr.deck - 1, cx, cy, k));
+			if(!over)
+				report.warnings << QString("'%1' is open to the deck below, but has no room under it: its floor stays.").arg(dr.group);
+		}
 
 	// The ladders: a shaft through the floor between the two rooms, and a
 	// ladder path up it.
@@ -4229,10 +4698,55 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		AddLadderMesh(*design, AuPoint(c.x(), c.y(), lz0), AuPoint(c.x(), c.y(), uz0), AuPoint(1, 0, 0), ladderGroup);
 		if(options.walkPaths)
 		{
-			AddWalk(*design, WalkPoints(plan, RoomWalk(plan, lower->room, lower->anchor,
-					TriRef(ladder.deck, ladder.cx, ladder.cy, 0)), lz0), paths);
-			AddWalk(*design, WalkPoints(plan, RoomWalk(plan, upper->room, upper->anchor,
-					TriRef(ladder.deck + 1, ladder.cx, ladder.cy, 0)), uz0), paths);
+			auto hasLadder = [&plan](int deck, int cx, int cy) {
+				for(const PlanLadder& other : plan.ladders)
+					if(other.deck == deck && other.cx == cx && other.cy == cy)
+						return true;
+				return false;
+			};
+			// Onto the ladder from the floor, unless there is a hole in the floor
+			// here for the ladder from the deck below; that one's way off is
+			// the way on to this one too.
+			if(!hasLadder(ladder.deck - 1, ladder.cx, ladder.cy))
+			{
+				AddWalk(*design, WalkPoints(plan, RoomWalk(plan, lower->room, lower->anchor,
+						TriRef(ladder.deck, ladder.cx, ladder.cy, 0)), lz0), paths);
+				const QPointF t0 = plan.TriCentre(TriRef(ladder.deck, ladder.cx, ladder.cy, 0));
+				AddWalkOnce(*design, AuPoint(t0.x(), t0.y(), lz0), AuPoint(c.x(), c.y(), lz0), 0, paths);
+			}
+			// Off at the top. Letting go over the hole would drop the climber back
+			// down it, so the ladder goes on, level, to over the floor beside the
+			// hole (as the Atlantis's does at its upper deck).
+			TriRef beside(ladder.deck + 1, ladder.cx, ladder.cy, 0);
+			bool found = false;
+			for(int k = 0; k < 4 && !found; ++k)
+				for(int e = 0; e < 3 && !found; ++e)
+				{
+					const TriRef t = plan.Across(TriRef(ladder.deck + 1, ladder.cx, ladder.cy, k), e);
+					if((t.cx == ladder.cx && t.cy == ladder.cy) || plan.Room(t) != upper->room ||
+							hasLadder(ladder.deck, t.cx, t.cy))
+						continue;
+					beside = t;
+					found = true;
+				}
+			AddWalk(*design, WalkPoints(plan, RoomWalk(plan, upper->room, upper->anchor, beside), uz0), paths);
+			const QPointF off = plan.TriCentre(beside);
+			if(found)
+			{
+				const QPointF d = off - c;
+				AddLadderPath(*design, AuPoint(c.x(), c.y(), uz0), AuPoint(off.x(), off.y(), uz0), AuPoint(-d.y(), d.x(), 0));
+			}
+			else
+			{
+				// A landing with nothing beside it: the hole is nearly all of its
+				// floor. Off to the edge of it, on whichever side the way on is.
+				for(int k = 0; k < 4; ++k)
+				{
+					const QPointF edge = plan.TriCentre(TriRef(ladder.deck + 1, ladder.cx, ladder.cy, k));
+					const QPointF d = edge - c;
+					AddLadderPath(*design, AuPoint(c.x(), c.y(), uz0), AuPoint(edge.x(), edge.y(), uz0), AuPoint(-d.y(), d.x(), 0));
+				}
+			}
 		}
 		++report.ladders;
 	}
@@ -4325,6 +4839,139 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		++report.stairs;
 	}
 
+	// The looks the plan asks for. Every texture takes a slot of the ship's one
+	// palette: the slot that already has it, or one nothing uses.
+	{
+		AuDesignTex palette[SCTEXI_Count];
+		design->TexturePalette(palette);
+		QSet<int> busy;
+		busy << SCTEXI_Material << 0 << 1 << 2 << 5;
+		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+		{
+			if(!it.value())
+				continue;
+			AuScFaceList faces;
+			it.value()->Faces(faces);
+			for(const AuScFace* f : faces)
+				busy << int(f->TextureIndex());
+		}
+		bool changedPalette = false, full = false;
+		auto slotFor = [&](int texture) {
+			if(texture < 0)
+				return -1;
+			for(int i = 0; i < SCTEXI_Count; ++i)
+				if(i != SCTEXI_Material && int(palette[i].TexLibId()) == texture)
+				{
+					busy << i;
+					return i;
+				}
+			for(int i = 0; i < SCTEXI_Count; ++i)
+				if(!busy.contains(i))
+				{
+					palette[i].SetTexLibId(quint16(texture));
+					busy << i;
+					changedPalette = true;
+					return i;
+				}
+			full = true;
+			return -1;
+		};
+		for(const DeckRoom& dr : deckRooms)
+		{
+			const PlanRoom& room = plan.rooms.at(dr.room);
+			RoomLook look;
+			look.wallSlot = slotFor(room.wallTex);
+			look.floorSlot = slotFor(room.floorTex);
+			look.ceilingSlot = slotFor(room.ceilingTex);
+			const QColor c = room.colour;
+			look.wallTint = QColor(c.red() + (255 - c.red()) * 6 / 10, c.green() + (255 - c.green()) * 6 / 10,
+					c.blue() + (255 - c.blue()) * 6 / 10);
+			RestyleRoom(*design, dr.meshId, look);
+		}
+		for(const QPair<quint16, int>& door : texturedDoors)
+		{
+			const int slot = slotFor(door.second);
+			if(slot >= 0)
+				RestyleDoor(design->Parts().value(door.first), slot);
+		}
+		if(changedPalette)
+			design->SetTexturePalette(palette);
+		if(full)
+			report.warnings << "A ship's palette holds 15 textures, and the rooms and doors ask for more: "
+					"the rest keep their usual look.";
+		ClearWindowGlass(*design);
+	}
+
+	// Can the crew get about? Everything that walks is one network of paths
+	// that meet end to end; a piece cut off from the rest strands whoever is in it.
+	if(options.walkPaths)
+	{
+		QHash<QString, QString> parent;
+		std::function<QString(const QString&)> root = [&](const QString& k) {
+			QString at = k;
+			while(parent.value(at, at) != at)
+				at = parent.value(at);
+			return at;
+		};
+		auto key = [](const AuPoint& p) { return QString("%1,%2,%3").arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1).arg(p.z, 0, 'f', 1); };
+		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+		{
+			if(!it.value() || (it.value()->Type() != AuScPart::Part_PathWalk && it.value()->Type() != AuScPart::Part_PathLadder))
+				continue;
+			const AuScPathSeg& seg = it.value()->PathSegment(0);
+			const QString ka = key(seg.Loc1()), kb = key(seg.Loc2());
+			if(!parent.contains(ka))
+				parent[ka] = ka;
+			if(!parent.contains(kb))
+				parent[kb] = kb;
+			const QString a = root(ka), b = root(kb);
+			if(a != b)
+				parent[a] = b;
+		}
+		QMap<QString, QStringList> pieces;
+		for(const DeckRoom& dr : deckRooms)
+		{
+			if(IsOpenToDeckBelowType(dr.type))
+				continue;
+			double z0, z1;
+			RoomHeights(plan, dr.deck, z0, z1);
+			const QPointF c = plan.TriCentre(dr.anchor);
+			const QString k = key(AuPoint(c.x(), c.y(), z0));
+			if(parent.contains(k))
+				pieces[root(k)] << dr.group;
+		}
+		if(pieces.size() > 1)
+		{
+			QStringList parts;
+			for(const QStringList& rooms : pieces)
+				parts << rooms.join(", ");
+			report.warnings << QString("The crew cannot walk between all the rooms: %1 separate parts (%2). "
+					"Join them with a door, a ladder or stairs.").arg(pieces.size()).arg(parts.join(" / "));
+		}
+		report.walkAreas = pieces.size();
+
+		// All of it at the height of someone standing on the floor, as a ladder
+		// has to be (see SHIPGEN_LADDER_HOLD). The game sends people to the path
+		// point nearest to where they are going: with the walks on the floor and
+		// the ladders above it, that was too often the top of a ladder, where
+		// they let go over the hole and fell back down it.
+		for(AuScParts::iterator it = design->Parts().begin(); it != design->Parts().end(); ++it)
+		{
+			AuScPath* path = dynamic_cast<AuScPath*>(it.value());
+			if(!path)
+				continue;
+			const AuScPathSeg seg = path->PathSegment(0);
+			auto raised = [&onTheGround](AuPoint p) {
+				for(const AuPoint& ground : onTheGround)
+					if(p.FuzzyEquals(ground))
+						return p;
+				p.z += SHIPGEN_LADDER_HOLD;
+				return p;
+			};
+			path->MakePath(raised(seg.Loc1()), raised(seg.Loc2()));
+		}
+	}
+
 	// Vehicle parking spots: the game's flat icons on the floor of the room,
 	// a little above it as in the working designs (the Atlantis' hold).
 	for(const PlanParking& spot : plan.parking)
@@ -4380,40 +5027,10 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			weaponEmitters << best;
 			continue;
 		}
-		const AuPoint aft(-1, 0, 0);
-		double farthest = -1;
-		for(const AuScTri& tri : hull.tris)
-			farthest = qMax(farthest, RayHitsTriangle(from, aft, AuPoint(tri.V0()), AuPoint(tri.V1()), AuPoint(tri.V2())));
-		if(farthest < 0)
-		{
+		if(AddContrailEmitter(*design, plan, hull.tris, e))
+			++report.contrails;
+		else
 			report.warnings << QString("A contrail emitter on deck %1 has no hull aft of it.").arg(e.deck + 1);
-			continue;
-		}
-		// The icon is drawn in its own x-y plane, facing its +z: turned so
-		// that +z points aft (which way the turn goes is checked, not
-		// assumed), a hand's breadth behind the hull.
-		AuMatrix4x4 facing;
-		facing.RotateY(-PI / 2);
-		if(facing.Project(AuPoint(0, 0, 1)).x - facing.Project(AuPoint(0, 0, 0)).x > 0)
-		{
-			facing = AuMatrix4x4();
-			facing.RotateY(PI / 2);
-		}
-		AuMatrix4x4 at;
-		at.Translate(from + aft * (farthest + 0.2));
-		AuScPart* part = AuScPart::Create(AuScPart::Part_ContrailEmitter);
-		AuScIcon* icon = dynamic_cast<AuScIcon*>(part);
-		if(icon)
-		{
-			const double half = qMax(1.0, e.sizeFeet) / 2;
-			icon->MakeScreen(AuPoint(-half, -half), AuPoint(half, half), AuMatrix4x4());
-			icon->Transform(facing);
-			icon->Transform(at);
-			icon->SetFaceOpacity(.95f);
-			if(icon->IsValid() && design->Parts().AddPart(*icon))
-				++report.contrails;
-		}
-		delete part;
 	}
 
 	// Everything so far was laid out in plan space. Turn it to the game's
@@ -4466,6 +5083,9 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				report.notes << QString("'%1' has no whole cell, so nothing was put in it.").arg(dr.group);
 				continue;
 			}
+			// No stations or berths where there is no floor to stand on.
+			if(IsZeroGRoomType(dr.type) || IsOpenToDeckBelowType(dr.type))
+				continue;
 			PlacedRoom pr;
 			pr.type = dr.type;
 			pr.label = dr.group;
@@ -4478,6 +5098,54 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			pr.meshId = dr.meshId;
 			pr.volumeM3 = (dr.boxMax.x - dr.boxMin.x) * (dr.boxMax.y - dr.boxMin.y) * (dr.boxMax.z - dr.boxMin.z) * 0.0283168466;
 			placed << pr;
+		}
+		// Desks stay out of the way of doors, ladders and stairs.
+		layout.bridgeStyle = plan.bridgeStyle;
+		{
+			bool known = false;
+			for(const QPair<int, QString>& choice : FireControlModules())
+				known = known || choice.first == plan.fireControlModule;
+			if(known)
+				layout.fireControlModule = plan.fireControlModule;
+			else
+				report.warnings << QString("Fire control module %1 is not one a station can run; it has an Energy Weapon Bay instead.").arg(plan.fireControlModule);
+		}
+		layout.deskStanding = plan.deskStanding;
+		layout.deskTopFeet = plan.DeskTopFeet();
+		// The desks in the ship's own colours.
+		if(!plan.palette.isEmpty())
+		{
+			layout.deskPaint = plan.palette.first().colour;
+			layout.deskSeatPaint = plan.palette.last().colour;
+		}
+		{
+			auto keepClear = [&](int deck, int x0, int y0, int x1, int y1) {
+				if(deck < 0 || deck >= plan.Decks())
+					return;
+				double z0, z1;
+				RoomHeights(plan, deck, z0, z1);
+				const QPointF a = plan.Corner(x0, y0), b = plan.Corner(x1 + 1, y1 + 1);
+				AuPoint mn(qMin(a.x(), b.x()) - s / 2, qMin(a.y(), b.y()) - s / 2, z0);
+				AuPoint mx(qMax(a.x(), b.x()) + s / 2, qMax(a.y(), b.y()) + s / 2, z1);
+				TurnBox(mn, mx);
+				layout.stationKeepOut << qMakePair(mn + originShift, mx + originShift);
+			};
+			for(const PlanDoor& door : plan.doors)
+				keepClear(door.deck, door.cx, door.cy, door.cx, door.cy);
+			for(const PlanLadder& ladder : plan.ladders)
+			{
+				keepClear(ladder.deck, ladder.cx, ladder.cy, ladder.cx, ladder.cy);
+				keepClear(ladder.deck + 1, ladder.cx, ladder.cy, ladder.cx, ladder.cy);
+			}
+			for(const PlanStair& stair : plan.stairs)
+			{
+				const int n = plan.StairCells();
+				const int dx = stair.side == TRI_E ? n : stair.side == TRI_W ? -n : 0;
+				const int dy = stair.side == TRI_N ? n : stair.side == TRI_S ? -n : 0;
+				for(int deck : { stair.deck, stair.deck + 1 })
+					keepClear(deck, qMin(stair.cx, stair.cx + dx), qMin(stair.cy, stair.cy + dy),
+							qMax(stair.cx, stair.cx + dx), qMax(stair.cy, stair.cy + dy));
+			}
 		}
 		const LayoutResult furnished = FurnishRooms(*design, brief, analysis, layout, placed);
 		report.stations = furnished.stationsPlaced;

@@ -62,6 +62,11 @@ struct PlanRoom
 	QString	type;			// An engine room type, such as "Bridge" (names.h, SpacecraftRoomTypes()).
 	QString	label;			// The room's name in the design, such as "Bridge 1".
 	QColor	colour;			// How it is drawn in the editor.
+	// Textures from the game's library (InteriorTextures in names.h), or -1
+	// for the usual look.
+	int		wallTex = -1;
+	int		floorTex = -1;
+	int		ceilingTex = -1;
 };
 
 // A door on the edge of a cell. The edge is the one triangle 'side' of the
@@ -76,6 +81,11 @@ struct PlanDoor
 	// diagonals of triangle 'side' (TriPlan::Across), where a room's wall runs
 	// across a cell.
 	int		edge = 0;
+	// Doors only. Neighbours on one wall with the same row are one wide door;
+	// a dragged row shares a number, a single click gets its own. 0 is for plans
+	// from before rows existed: every neighbour with 0 joins.
+	int		row = 0;
+	int		tex = -1;		// A texture from the game's library, or -1 for the usual look.
 };
 
 // A ladder up from a cell of one deck into the same cell of the deck above.
@@ -85,6 +95,18 @@ struct PlanLadder
 	int		deck = 0;		// The lower deck.
 	int		cx = 0;
 	int		cy = 0;
+};
+
+// A window in the ceiling of a cell of a room, straight out through the hull
+// above it (experimental). No room may be above it, on any deck. 'floor' is the
+// same in the floor: it is what a ceiling window becomes when a plan is turned
+// upside down.
+struct PlanSkylight
+{
+	int		deck = 0;
+	int		cx = 0;
+	int		cy = 0;
+	bool	floor = false;
 };
 
 // A flight of stairs up from one deck to the deck above. It starts at cell
@@ -185,6 +207,7 @@ public:
 	// "shield" (and the shields), "firecontrol" (and the weapon bay),
 	// "transporter".
 	QStringList	leaveOut;
+	int		fireControlModule = 252;	// What the fire control station runs (FireControlModules in names.h).
 	double	cellFeet = 5.0;			// The side of a cell.
 	double	deckFeet = 10.0;			// From one deck floor to the next.
 	double	floorFeet = 1.0;			// The structure between a room and the deck above or below it.
@@ -200,7 +223,18 @@ public:
 	bool	slopedDecks = false;
 	double	windowSillFeet = 3.0;		// Windows: from this high above the floor
 	double	windowTopFeet = 7.5;		// up to this high (less, in a low room).
+	QString	bridgeStyle = "hazeron";	// How stations look (BridgeStyles in names.h).
+	bool	deskStanding = false;		// Integrated desks: the operator stands, with no stool.
+	double	deskHeightFeet = 0;			// Their top edge above the floor. 0: the usual height for sitting or standing.
+	// The height of the desks' top edge, within what suits sitting or standing.
+	double DeskTopFeet() const
+	{
+		if(deskStanding)
+			return deskHeightFeet > 0 ? qBound(2.8, deskHeightFeet, 5.5) : 4.2;
+		return deskHeightFeet > 0 ? qBound(2.2, deskHeightFeet, 4.5) : 3.0;
+	}
 	bool	joinWindows = false;		// Windows side by side on one straight wall make one long window.
+	bool	flatWindows = true;			// Joined windows along a zigzag wall are one flat pane, not one per tooth.
 	// The way out of the hull doors: "auto" a ramp where the door is low
 	// enough, else a ladder down to the ground; "ladder" always a ladder;
 	// "none" no way down (a docking door, for a ship that stays in space).
@@ -217,6 +251,7 @@ public:
 	QList<PlanDoor>		doors;
 	QList<PlanDoor>		windows;		// On edges between a room and the outside.
 	QList<PlanLadder>	ladders;
+	QList<PlanSkylight>	skylights;
 	QList<PlanStair>	stairs;
 	QList<PlanParking>	parking;
 	QList<PlanEmitter>	emitters;
@@ -268,12 +303,18 @@ public:
 	// triangles that are not hull, doors whose edge has no room beside it.
 	void	Tidy();
 
-	int		DoorAt(int deck, int cx, int cy, int side) const;	// Index in doors, -1 if none.
+	int		DoorAt(int deck, int cx, int cy, int side) const;
+	// Whether two doors are next to each other on one wall, between the same
+	// rooms, in one row, however each happens to be named.
+	bool	DoorsJoin(const PlanDoor& a, const PlanDoor& b) const;
+	int		NewDoorRow() const;	// Index in doors, -1 if none.
 	int		WindowAt(int deck, int cx, int cy, int side, int edge = 0) const;	// Index in windows, -1 if none.
 	// The two ends of edge 'edge' of a triangle (0 the cell edge, 1 and 2 the
 	// diagonals, as Across numbers them).
 	void	EdgeEnds(const TriRef& t, int edge, QPointF& a, QPointF& b) const;
 	int		LadderAt(int deck, int cx, int cy) const;			// Index in ladders, -1 if none.
+	int		SkylightAt(int deck, int cx, int cy) const;			// Index in skylights, -1 if none.
+	bool	SkylightFits(const PlanSkylight& window) const;		// A whole cell of room with no room beyond it.
 	int		ParkingAt(int deck, int cx, int cy) const;			// Index in parking, -1 if none.
 	int		EmitterAt(const TriRef& t, bool weapon) const;		// Index in emitters, -1 if none.
 	// How many cells a flight of stairs runs over, for a slope of about 34

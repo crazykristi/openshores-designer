@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QHash>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <cstdio>
@@ -17,6 +18,11 @@
 
 int main(int argc, char* argv[])
 {
+	// The engine keeps a ship's parts in a QHash and cuts them in its order, and
+	// Qt picks a new order for every run. A fixed order makes the same plan build
+	// to the same blueprint.
+	qSetGlobalQHashSeed(0);
+
 	// The engine's obstruction-cache warning does not apply to an offline
 	// tool; see logging.h. Everything else is reported as usual.
 	InstallShipgenMessageHandler();

@@ -5,11 +5,13 @@
 #include "planview.h"
 
 #include <QHash>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
 #include <cmath>
+#include "planbuild.h"
 
 namespace {
 
@@ -75,7 +77,7 @@ void PlanView::FitToWindow()
 		return;
 	const double w = m_plan->Width() * m_plan->cellFeet;
 	const double d = m_plan->Depth() * m_plan->cellFeet;
-	m_scale = qMax(0.5, qMin(width() / w, height() / d) * 0.92);
+	m_scale = qMax(0.5, qMin(width() / w, height() / d) * 0.88);
 	m_offset = QPointF(width() / 2.0, height() / 2.0);
 	update();
 }
@@ -231,7 +233,16 @@ void PlanView::paintEvent(QPaintEvent*)
 			m_plan->TriCorners(a, c);
 			p.setPen(QPen(hullDoor ? kHullDoor : kInteriorDoor, qMax(3.0, cellPixels / 5), Qt::SolidLine, Qt::FlatCap));
 			const QPointF e0 = ToScreen(c[0]), e1 = ToScreen(c[1]);
-			p.drawLine(e0 + (e1 - e0) * 0.12, e1 + (e0 - e1) * 0.12);
+			// A row is one door: no gap where it meets its neighbour.
+			bool at0 = false, at1 = false;
+			for(const PlanDoor& other : m_plan->doors)
+				if(m_plan->DoorsJoin(door, other))
+				{
+					const QPointF o = m_plan->CellCentre(other.cx, other.cy);
+					const QPointF near0 = c[0] - o, near1 = c[1] - o;
+					(QPointF::dotProduct(near0, near0) < QPointF::dotProduct(near1, near1) ? at0 : at1) = true;
+				}
+			p.drawLine(at0 ? e0 : e0 + (e1 - e0) * 0.12, at1 ? e1 : e1 + (e0 - e1) * 0.12);
 		}
 		for(const PlanDoor& window : m_plan->windows)
 		{
@@ -242,6 +253,17 @@ void PlanView::paintEvent(QPaintEvent*)
 			p.setPen(QPen(kWindow, qMax(2.0, cellPixels / 8), Qt::DashLine, Qt::FlatCap));
 			const QPointF e0 = ToScreen(c0), e1 = ToScreen(c1);
 			p.drawLine(e0 + (e1 - e0) * 0.1, e1 + (e0 - e1) * 0.1);
+		}
+		for(const PlanSkylight& window : m_plan->skylights)
+		{
+			if(window.deck != m_deck)
+				continue;
+			const QRectF r = QRectF(ToScreen(m_plan->Corner(window.cx, window.cy)), ToScreen(m_plan->Corner(window.cx + 1, window.cy + 1)))
+					.normalized().adjusted(cellPixels * .15, cellPixels * .15, -cellPixels * .15, -cellPixels * .15);
+			p.setPen(QPen(kWindow, qMax(1.5, cellPixels / 10), Qt::DashLine));
+			p.setBrush(Qt::NoBrush);
+			p.drawRect(r);
+			p.drawLine(r.topLeft(), r.bottomRight());
 		}
 		for(const PlanParking& spot : m_plan->parking)
 		{
@@ -338,13 +360,48 @@ void PlanView::paintEvent(QPaintEvent*)
 			}
 			else
 			{
-				// Aft is to the left on the screen.
-				p.setPen(QPen(QColor(120, 200, 255), qMax(2.0, cellPixels / 10)));
-				const QPointF tip = c - QPointF(r * 1.6, 0);
-				p.drawLine(c + QPointF(r * 0.8, 0), tip);
-				p.drawLine(tip, tip + QPointF(r * .7, -r * .6));
-				p.drawLine(tip, tip + QPointF(r * .7, r * .6));
+				// A ball where the emitter ends up on the hull, with an arrow
+				// the way the trail goes (aft is to the left on the screen),
+				// and a faint line back to the triangle it was put in from.
+				const QPointF ball = ToScreen(ContrailSpot(e));
+				const QColor colour(120, 200, 255);
+				const double br = qMax(4.0, cellPixels * .22), length = qMax(16.0, cellPixels * 1.1), head = length * .28;
+				p.setPen(QPen(colour, 1, Qt::DotLine));
+				p.drawLine(c, ball);
+				p.setPen(QPen(colour, qMax(2.0, cellPixels / 10), Qt::SolidLine, Qt::RoundCap));
+				const QPointF tip = ball - QPointF(br + length, 0);
+				p.drawLine(ball, tip);
+				p.drawLine(tip, tip + QPointF(head, -head * .7));
+				p.drawLine(tip, tip + QPointF(head, head * .7));
+				p.setPen(Qt::NoPen);
+				p.setBrush(colour);
+				p.drawEllipse(ball, br, br);
+				p.setBrush(Qt::NoBrush);
 			}
+		}
+
+		// The outline of the parking spot the mouse would place.
+		if((m_mode == GroundParkingMode || m_mode == SpaceParkingMode) && m_hovering)
+		{
+			PlanParking spot;
+			spot.deck = m_deck;
+			NearestCorner(m_hoverWorld, spot.cx, spot.cy);
+			spot.space = m_mode == SpaceParkingMode;
+			spot.across = m_parkingAcross;
+			const bool taken = m_plan->ParkingAt(m_deck, spot.cx, spot.cy) >= 0;
+			const bool fits = m_plan->ParkingFits(spot);
+			const QColor colour = taken ? QColor(255, 160, 60) : fits ? QColor(90, 230, 120) : QColor(255, 90, 90);
+			const QPointF centre = m_plan->Corner(spot.cx, spot.cy), half = m_plan->ParkingSize(spot) / 2.0;
+			const QRectF r = QRectF(ToScreen(centre - half), ToScreen(centre + half)).normalized();
+			p.setPen(QPen(colour, qMax(1.5, cellPixels / 10)));
+			QColor fill = colour;
+			fill.setAlpha(45);
+			p.setBrush(fill);
+			p.drawRect(r);
+			p.setBrush(Qt::NoBrush);
+			p.drawText(QRectF(r.center().x() - 300, r.bottom() + 2, 600, 40), Qt::AlignHCenter | Qt::AlignTop,
+					taken ? "click takes this spot away" : fits ? "click to place, R turns it"
+					: "does not fit on one room's floor, R turns it");
 		}
 
 		// Room names in the middle of each room.
@@ -454,34 +511,70 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 
 	if(m_mode == DoorMode)
 	{
+		const int existing = m_plan->DoorAt(t.deck, t.cx, t.cy, t.k);
+		if(erase)
+		{
+			// The right button gives a door, and the rest of its row, the
+			// texture picked for doors.
+			if(existing < 0)
+				return;
+			emit AboutToChange();
+			QList<int> row;
+			row << existing;
+			for(int at = 0; at < row.size(); ++at)
+				for(int i = 0; i < m_plan->doors.size(); ++i)
+					if(!row.contains(i) && m_plan->DoorsJoin(m_plan->doors.at(i), m_plan->doors.at(row[at])))
+						row << i;
+			for(int i : row)
+				m_plan->doors[i].tex = m_doorTexture;
+			emit PlanChanged(false);
+			update();
+			return;
+		}
 		emit AboutToChange();
-		auto toggle = [this](int deck, int cx, int cy, int side) -> bool {
-			const int existing = m_plan->DoorAt(deck, cx, cy, side);
-			if(existing >= 0)
-			{
-				m_plan->doors.removeAt(existing);
-				return true;
-			}
-			const TriRef a(deck, cx, cy, side);
-			const TriRef b = m_plan->AcrossCellEdge(deck, cx, cy, side);
-			if((m_plan->Room(a) < 0 && m_plan->Room(b) < 0) || m_plan->Room(a) == m_plan->Room(b))
-				return false;
-			PlanDoor d;
-			d.deck = deck;
-			d.cx = cx;
-			d.cy = cy;
-			d.side = side;
-			m_plan->doors << d;
-			return true;
-		};
-		if(!toggle(t.deck, t.cx, t.cy, t.k))
+		m_doorDrag = true;
+		m_doorMoved = false;
+		m_doorStart = t;
+		m_doorAlong = (t.k == TRI_E || t.k == TRI_W) ? t.cy : t.cx;
+		m_doorHadOne = existing >= 0;
+		m_doorRow = m_plan->NewDoorRow();
+		m_doorMirrorRow = m_doorRow + 1;
+		if(existing < 0 && !PlaceDoorInRow(t.deck, t.cx, t.cy, t.k))
+		{
+			m_doorDrag = false;
 			Notice(t, "A door has to be on the edge between a room and another room, or the outside: click the "
 					"triangle of the room cell that stands on that edge.");
+		}
+		emit PlanChanged(false);
+		update();
+		return;
+	}
+	if(m_mode == SkylightMode)
+	{
+		emit AboutToChange();
+		auto toggle = [this](int deck, int cx, int cy) -> bool {
+			const int existing = m_plan->SkylightAt(deck, cx, cy);
+			if(existing >= 0)
+			{
+				m_plan->skylights.removeAt(existing);
+				return true;
+			}
+			PlanSkylight w;
+			w.deck = deck;
+			w.cx = cx;
+			w.cy = cy;
+			if(!m_plan->SkylightFits(w))
+				return false;
+			m_plan->skylights << w;
+			return true;
+		};
+		if(!toggle(t.deck, t.cx, t.cy))
+			Notice(t, "A ceiling window goes in a whole cell of room with no room on any deck above it.");
 		else if(m_mirror)
 		{
 			const TriRef m = m_plan->Mirror(t);
-			if(!(m == t) && (m_plan->DoorAt(m.deck, m.cx, m.cy, m.k) >= 0) != (m_plan->DoorAt(t.deck, t.cx, t.cy, t.k) >= 0))
-				toggle(m.deck, m.cx, m.cy, m.k);
+			if((m.cx != t.cx || m.cy != t.cy) && (m_plan->SkylightAt(m.deck, m.cx, m.cy) >= 0) != (m_plan->SkylightAt(t.deck, t.cx, t.cy) >= 0))
+				toggle(m.deck, m.cx, m.cy);
 		}
 		emit PlanChanged(false);
 		update();
@@ -575,11 +668,8 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	}
 	if(m_mode == GroundParkingMode || m_mode == SpaceParkingMode)
 	{
-		// The grid corner nearest the mouse.
-		const QPointF at = ToWorld(event->pos());
-		const QPointF origin = m_plan->Corner(0, 0);
-		const int ix = qBound(0, qRound((at.x() - origin.x()) / m_plan->cellFeet), m_plan->Width());
-		const int iy = qBound(0, qRound((at.y() - origin.y()) / m_plan->cellFeet), m_plan->Depth());
+		int ix, iy;
+		NearestCorner(ToWorld(event->pos()), ix, iy);
 		emit AboutToChange();
 		auto toggle = [this](int deck, int cx, int cy) -> bool {
 			const int existing = m_plan->ParkingAt(deck, cx, cy);
@@ -593,21 +683,16 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			spot.cx = cx;
 			spot.cy = cy;
 			spot.space = (m_mode == SpaceParkingMode);
-			for(int turn = 0; turn < 2; ++turn)
-			{
-				spot.across = (turn == 1);
-				if(m_plan->ParkingFits(spot))
-				{
-					m_plan->parking << spot;
-					return true;
-				}
-			}
-			return false;
+			spot.across = m_parkingAcross;
+			if(!m_plan->ParkingFits(spot))
+				return false;
+			m_plan->parking << spot;
+			return true;
 		};
 		const bool had = m_plan->ParkingAt(m_deck, ix, iy) >= 0;
 		if(!toggle(m_deck, ix, iy))
 			Notice(t, QString("A %1 parking spot (%2) has to lie on the floor of one room, centred on the grid corner "
-					"nearest the mouse. Make the room bigger, or click nearer its middle.")
+					"nearest the mouse. Press R to turn it, make the room bigger, or click nearer its middle.")
 					.arg(m_mode == SpaceParkingMode ? "space vehicle" : "ground vehicle")
 					.arg(m_mode == SpaceParkingMode ? "12 by 17 m, about 40 by 56 ft" : "6 by 12 m, about 20 by 40 ft"));
 		else if(m_mirror)
@@ -660,6 +745,21 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	{
 		emit AboutToChange();
 		const bool weapon = m_mode == WeaponMode;
+		// A click on a contrail's ball is a click on the triangle it came from.
+		if(!weapon)
+		{
+			const double reach = qMax(8.0, m_scale * m_plan->cellFeet * .3);
+			for(const PlanEmitter& e : m_plan->emitters)
+				if(!e.weapon && e.deck == m_deck)
+				{
+					const QPointF d = ToScreen(ContrailSpot(e)) - event->pos();
+					if(d.x() * d.x() + d.y() * d.y() <= reach * reach)
+					{
+						t = TriRef(e.deck, e.cx, e.cy, e.k);
+						break;
+					}
+				}
+		}
 		auto toggle = [this, weapon](const TriRef& at) -> bool {
 			const int existing = m_plan->EmitterAt(at, weapon);
 			if(existing >= 0)
@@ -734,6 +834,41 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	update();
 }
 
+bool PlanView::PlaceDoorInRow(int deck, int cx, int cy, int side)
+{
+	auto place = [this](int deck, int cx, int cy, int side, int row) {
+		const int existing = m_plan->DoorAt(deck, cx, cy, side);
+		if(existing >= 0)
+		{
+			m_plan->doors[existing].row = row;
+			return true;
+		}
+		const TriRef a(deck, cx, cy, side);
+		const TriRef b = m_plan->AcrossCellEdge(deck, cx, cy, side);
+		if((m_plan->Room(a) < 0 && m_plan->Room(b) < 0) || m_plan->Room(a) == m_plan->Room(b))
+			return false;
+		PlanDoor d;
+		d.deck = deck;
+		d.cx = cx;
+		d.cy = cy;
+		d.side = side;
+		d.row = row;
+		d.tex = m_doorTexture;
+		m_plan->doors << d;
+		return true;
+	};
+	if(!place(deck, cx, cy, side, m_doorRow))
+		return false;
+	if(m_mirror)
+	{
+		const TriRef t(deck, cx, cy, side);
+		const TriRef m = m_plan->Mirror(t);
+		if(!(m == t))
+			place(m.deck, m.cx, m.cy, m.k, m_doorMirrorRow);
+	}
+	return true;
+}
+
 void PlanView::mouseMoveEvent(QMouseEvent* event)
 {
 	if(m_panning)
@@ -742,6 +877,36 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 		m_lastMouse = event->pos();
 		update();
 		return;
+	}
+	if(m_doorDrag)
+	{
+		// Along the wall the door is on, however far the mouse strays from it.
+		const QPointF world = ToWorld(event->pos());
+		const bool xWall = m_doorStart.k == TRI_E || m_doorStart.k == TRI_W;
+		int to = m_doorAlong;
+		for(int i = 0; i < (xWall ? m_plan->Depth() : m_plan->Width()); ++i)
+		{
+			const QPointF c = xWall ? m_plan->CellCentre(m_doorStart.cx, i) : m_plan->CellCentre(i, m_doorStart.cy);
+			const QPointF at = xWall ? m_plan->CellCentre(m_doorStart.cx, to) : m_plan->CellCentre(to, m_doorStart.cy);
+			if(fabs((xWall ? c.y() : c.x()) - (xWall ? world.y() : world.x())) < fabs((xWall ? at.y() : at.x()) - (xWall ? world.y() : world.x())))
+				to = i;
+		}
+		if(to != m_doorAlong || m_doorMoved)
+		{
+			m_doorMoved = true;
+			for(int i = qMin(m_doorAlong, to); i <= qMax(m_doorAlong, to); ++i)
+				PlaceDoorInRow(m_doorStart.deck, xWall ? m_doorStart.cx : i, xWall ? i : m_doorStart.cy, m_doorStart.k);
+			emit PlanChanged(false);
+			update();
+		}
+		return;
+	}
+	if(m_mode == GroundParkingMode || m_mode == SpaceParkingMode)
+	{
+		m_hovering = true;
+		m_hoverWorld = ToWorld(event->pos());
+		setFocus();		// For R.
+		update();
 	}
 	TriRef t;
 	if(!TriangleAt(event->pos(), t))
@@ -771,6 +936,27 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 
 void PlanView::mouseReleaseEvent(QMouseEvent*)
 {
+	if(m_doorDrag)
+	{
+		m_doorDrag = false;
+		// A click on a door, not a drag from it, takes it away.
+		if(m_doorHadOne && !m_doorMoved)
+		{
+			const TriRef t = m_doorStart;
+			const int existing = m_plan->DoorAt(t.deck, t.cx, t.cy, t.k);
+			if(existing >= 0)
+				m_plan->doors.removeAt(existing);
+			if(m_mirror)
+			{
+				const TriRef m = m_plan->Mirror(t);
+				const int other = m_plan->DoorAt(m.deck, m.cx, m.cy, m.k);
+				if(!(m == t) && other >= 0)
+					m_plan->doors.removeAt(other);
+			}
+			emit PlanChanged(false);
+			update();
+		}
+	}
 	if(m_drawing)
 		emit PlanChanged(m_hullTouched || m_mode == HullMode);
 	m_drawing = false;
@@ -792,4 +978,50 @@ void PlanView::wheelEvent(QWheelEvent* event)
 void PlanView::resizeEvent(QResizeEvent*)
 {
 	FitToWindow();
+}
+
+void PlanView::NearestCorner(const QPointF& world, int& ix, int& iy) const
+{
+	const QPointF origin = m_plan->Corner(0, 0);
+	ix = qBound(0, qRound((world.x() - origin.x()) / m_plan->cellFeet), m_plan->Width());
+	iy = qBound(0, qRound((world.y() - origin.y()) / m_plan->cellFeet), m_plan->Depth());
+}
+
+void PlanView::SetHullTris(const AuScTriList& tris)
+{
+	m_hullTris = tris;
+	m_contrailSpots.clear();
+	update();
+}
+
+QPointF PlanView::ContrailSpot(const PlanEmitter& e) const
+{
+	const qint64 key = ((qint64(e.deck) * m_plan->Depth() + e.cy) * m_plan->Width() + e.cx) * 4 + e.k;
+	QHash<qint64, QPointF>::const_iterator it = m_contrailSpots.constFind(key);
+	if(it != m_contrailSpots.constEnd())
+		return it.value();
+	QPointF spot = m_plan->TriCentre(TriRef(e.deck, e.cx, e.cy, e.k));
+	AuPoint at;
+	if(ContrailEmitterAt(*m_plan, m_hullTris, e, at))
+		spot = QPointF(at.x, at.y);
+	m_contrailSpots.insert(key, spot);
+	return spot;
+}
+
+void PlanView::keyPressEvent(QKeyEvent* event)
+{
+	if(event->key() == Qt::Key_R && (m_mode == GroundParkingMode || m_mode == SpaceParkingMode))
+	{
+		m_parkingAcross = !m_parkingAcross;
+		update();
+		return;
+	}
+	QWidget::keyPressEvent(event);
+}
+
+void PlanView::leaveEvent(QEvent* event)
+{
+	m_hovering = false;
+	update();
+	QWidget::leaveEvent(event);
 }

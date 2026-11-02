@@ -16,6 +16,8 @@
 #include "aufilever.h"
 #include "auscface.h"
 #include "interior.h"
+#include "austation.h"
+#include <algorithm>
 #include "mesh.h"
 #include "auscreport.h"
 #include "aubdreport.h"
@@ -770,9 +772,14 @@ static void PlaceWalkPaths(AuScDesign& design, const QList<PlacedRoom>& rooms, c
 				AddWalkPath(design, link.rampTop, link.rampFoot);
 				continue;
 			}
-			AddWalkPath(design, link.centre, link.outside, link.doorId);
-			if(link.outside.z - link.ground.z > .5)
-				AddLadderPath(design, link.ground, link.outside, link.facing);
+			// The top of the ladder is at the height of someone standing in the
+			// doorway, or they could not finish climbing it.
+			AuPoint top = link.outside;
+			if(top.z - link.ground.z > .5)
+				top.z += SHIPGEN_LADDER_HOLD;
+			AddWalkPath(design, link.centre, top, link.doorId);
+			if(top.z - link.ground.z > .5)
+				AddLadderPath(design, link.ground, top, link.facing);
 			continue;
 		}
 		const PlacedRoom& a = rooms[link.roomA];
@@ -1472,6 +1479,192 @@ void AllocateSystemVolumes(AuScDesign& design, const Brief& brief, QStringList& 
 	AllocateVolumes(design, brief, ftlParts, weaponParts, placedStationTypes, notes);
 }
 
+// The integrated station that does a console's work, or the console's own type
+// when there is none (a medic or transporter station needs more setting up).
+static AuScPart::PART_TYPE DeskStationType(AuScPart::PART_TYPE console)
+{
+	switch(console)
+	{
+	case AuScPart::Part_ConsoleHelm:		return AuScPart::Part_StationHelm;
+	case AuScPart::Part_ConsoleNavigator:	return AuScPart::Part_StationNavigator;
+	case AuScPart::Part_ConsoleCommand:		return AuScPart::Part_StationCommand;
+	case AuScPart::Part_ConsoleEngineer:	return AuScPart::Part_StationEngineer;
+	case AuScPart::Part_ConsoleFireControl:	return AuScPart::Part_StationFireControl;
+	case AuScPart::Part_ConsoleSensor:		return AuScPart::Part_StationSensor;
+	case AuScPart::Part_ConsoleShield:		return AuScPart::Part_StationShield;
+	case AuScPart::Part_ConsolePowerRelay:	return AuScPart::Part_StationPowerRelay;
+	default:								return console;
+	}
+}
+
+struct DeskSpot
+{
+	double	x = 0, y = 0;		// Where the operator sits, from above.
+	double	yaw = 0;			// The way they face.
+};
+
+// Where the desks of a room go. Curved rows face fore and out towards the walls,
+// on circles round the captain, who sits behind them looking fore. The rows are
+// as tight as the number of desks allows, against the fore wall, so a big room
+// keeps its space aft; each next row goes further in. A room too shallow for
+// that gets one nearly straight row, the captain in the middle of it. Spots that
+// leave the room or meet a door, ladder or stairs are skipped.
+struct DeskLayout
+{
+	bool			hasCaptain = false;
+	DeskSpot		captain;
+	QList<DeskSpot>	crew;
+	QList<QRectF>	taken;
+};
+
+static DeskLayout MakeDeskLayout(const PlacedRoom& room, int crewCount, bool wantCaptain, const LayoutOptions& opts)
+{
+	DeskLayout layout;
+	QList<QRectF> keepOut;
+	for(const QPair<AuPoint, AuPoint>& k : opts.stationKeepOut)
+		if(k.first.z < room.max.z && room.min.z < k.second.z)
+			keepOut << QRectF(QPointF(k.first.x, k.first.y), QPointF(k.second.x, k.second.y)).normalized();
+	auto footprint = [](const DeskSpot& d) {
+		const double c = cos(d.yaw), sn = sin(d.yaw);
+		QRectF r;
+		for(double u : { -kDeskBehind, kDeskReach })
+			for(double w : { -kDeskWidth / 2, kDeskWidth / 2 })
+			{
+				const QPointF p(d.x + u * c - w * sn, d.y + u * sn + w * c);
+				r = r.isNull() ? QRectF(p, QSizeF(1e-6, 1e-6)) : r.united(QRectF(p, QSizeF(1e-6, 1e-6)));
+			}
+		return r;
+	};
+	// The desk and the operator's place as they really stand, so that desks in a
+	// curve can sit side by side: boxes round them would keep them far apart.
+	QList<DeskSpot> placed;
+	auto corners = [](const DeskSpot& d, QPointF out[4]) {
+		const double c = cos(d.yaw), sn = sin(d.yaw), w = kDeskWidth / 2 + .4;
+		const double us[4] = { -kDeskBehind, kDeskReach, kDeskReach, -kDeskBehind };
+		const double ws[4] = { -w, -w, w, w };
+		for(int i = 0; i < 4; ++i)
+			out[i] = QPointF(d.x + us[i] * c - ws[i] * sn, d.y + us[i] * sn + ws[i] * c);
+	};
+	auto overlap = [&corners](const DeskSpot& a, const DeskSpot& b) {
+		QPointF pa[4], pb[4];
+		corners(a, pa);
+		corners(b, pb);
+		for(const DeskSpot* d : { &a, &b })
+			for(double angle : { d->yaw, d->yaw + M_PI / 2 })
+			{
+				const QPointF axis(cos(angle), sin(angle));
+				double a0 = 1e30, a1 = -1e30, b0 = 1e30, b1 = -1e30;
+				for(int i = 0; i < 4; ++i)
+				{
+					const double u = QPointF::dotProduct(pa[i], axis), v = QPointF::dotProduct(pb[i], axis);
+					a0 = qMin(a0, u);
+					a1 = qMax(a1, u);
+					b0 = qMin(b0, v);
+					b1 = qMax(b1, v);
+				}
+				if(a1 <= b0 || b1 <= a0)
+					return false;
+			}
+		return true;
+	};
+	auto fits = [&](const DeskSpot& d) {
+		const QRectF r = footprint(d);
+		if(r.left() < room.min.x + .3 || r.right() > room.max.x - .3 || r.top() < room.min.y + .3 || r.bottom() > room.max.y - .3)
+			return false;
+		for(const QRectF& o : keepOut)
+			if(o.intersects(r))
+				return false;
+		for(const DeskSpot& o : placed)
+			if(overlap(d, o))
+				return false;
+		return true;
+	};
+	auto take = [&](const DeskSpot& d) {
+		placed << d;
+		layout.taken << footprint(d);
+	};
+
+	const double middle = (room.min.x + room.max.x) / 2;
+	const double frontY = room.max.y - .4 - kDeskReach;
+	const double wanted = qBound(10.0, crewCount * (kDeskWidth + 1.0) / 2.0, 20.0);
+	const double most = frontY - (room.min.y + kDeskBehind + .3);
+	const bool roomy = most >= kDeskReach + 5.0;
+	const double radius = roomy ? qMin(wanted, most) : 40.0;
+	const double centreY = frontY - radius;
+	// The captain sits on the centre line, behind every row: as far aft as they
+	// fit, further forward when a door or the wall is in the way. The front row
+	// only if nothing is left.
+	if(wantCaptain)
+		for(double y = qMax(centreY, room.min.y + kDeskBehind + .3); y <= frontY - (kDeskReach + kDeskBehind + .5); y += .5)
+		{
+			DeskSpot captain;
+			captain.x = middle;
+			captain.y = y;
+			captain.yaw = M_PI / 2;
+			if(!fits(captain))
+				continue;
+			layout.captain = captain;
+			layout.hasCaptain = true;
+			take(captain);
+			break;
+		}
+	int left = crewCount + (wantCaptain && !layout.hasCaptain ? 1 : 0);
+	const double limit = 80.0 * M_PI / 180;
+	for(double r = radius; r >= 6.0 && left > 0; r -= 6.0)
+	{
+		const double step = (kDeskWidth + 1.0) / (r - kDeskBehind);		// So that the inner corners just clear.
+		int slotCount = 1 + 2 * int(limit / step);		// Odd: one in the middle.
+		if(left % 2 == 0)
+			slotCount = qMax(2, 2 * int((limit + step / 2) / step));
+		QList<double> angles;
+		for(int i = 0; i < slotCount; ++i)
+			angles << (i - (slotCount - 1) / 2.0) * step;
+		std::sort(angles.begin(), angles.end(), [](double a, double b) {
+			return fabs(a) != fabs(b) ? fabs(a) < fabs(b) : a < b;
+		});
+		QList<DeskSpot> row;
+		for(double a : angles)
+		{
+			if(left <= 0)
+				break;
+			DeskSpot d;
+			d.x = middle + r * sin(a);
+			d.y = centreY + r * cos(a);
+			d.yaw = M_PI / 2 - a;
+			if(!fits(d))
+				continue;
+			take(d);
+			row << d;
+			--left;
+		}
+		layout.crew << row;
+	}
+	// Whatever the curves had no room for: straight rows, facing fore, from the
+	// fore wall back.
+	for(double y = frontY; y >= room.min.y + kDeskBehind && left > 0; y -= kDeskReach + kDeskBehind + 1.0)
+		for(int n = 0; n < 200 && left > 0; ++n)
+		{
+			DeskSpot d;
+			d.x = middle + ((n + 1) / 2) * (n % 2 ? 1 : -1) * (kDeskWidth + 1.0);
+			d.y = y;
+			d.yaw = M_PI / 2;
+			if(fabs(d.x - middle) > (room.max.x - room.min.x) / 2)
+				break;
+			if(!fits(d))
+				continue;
+			take(d);
+			layout.crew << d;
+			--left;
+		}
+	// Too shallow for a captain's place of their own: the middle of the row.
+	if(wantCaptain && !layout.hasCaptain && !layout.crew.isEmpty())
+	{
+		layout.captain = layout.crew.takeFirst();
+		layout.hasCaptain = true;
+	}
+	return layout;
+}
+
 static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnalysis& hull, const LayoutOptions& opts,
 		LayoutResult& result, const QList<DoorLink>& doorLinks)
 {
@@ -1505,6 +1698,8 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 		result.warnings << QString("the hull is too small for an FTL drive, so the ship is fitted without one.");
 
 	QMap<QString, int> consoleCount;
+	QMap<QString, DeskLayout> deskLayouts;
+	QMap<QString, int> desksUsed;
 	QMap<QString, QList<QRectF> > chairSpots;		// Where the chairs of each room stand, from above.
 	QMap<QString, int> stationCount;		// Per room type.
 	QSet<QString> placedStationTypes;
@@ -1520,6 +1715,8 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			result.warnings << QString("unknown station type '%1' was skipped.").arg(s.type);
 			continue;
 		}
+		if(partType == AuScPart::Part_ConsoleFireControl && opts.fireControlModule)
+			module = COMMODITYID(opts.fireControlModule);
 
 		// Find a room for it. Rooms of the wanted type come first, and among
 		// those the one with the fewest stations already in it.
@@ -1556,6 +1753,18 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 				}
 			}
 		}
+		// With desks, a station with no room of its own goes on the bridge
+		// rather than in whatever room has the fewest.
+		if(!found && opts.bridgeStyle == "desks" && DeskStationType(partType) != partType)
+		{
+			for(const PlacedRoom& r : result.rooms)
+				if(r.type == "Bridge" && (!found || stationCount[r.type] < bestCount))
+				{
+					target = r;
+					bestCount = stationCount[r.type];
+					found = true;
+				}
+		}
 		if(!found)
 		{
 			for(const PlacedRoom& r : result.rooms)
@@ -1580,6 +1789,82 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			continue;
 		}
 		stationCount[target.type] = bestCount + 1;
+
+		// As an integrated station on a desk, where the style asks for it and
+		// this station has one; otherwise it is a chair below.
+		const AuScPart::PART_TYPE deskType = DeskStationType(partType);
+		if(opts.bridgeStyle == "desks" && deskType != partType)
+		{
+			const QString deskKey = QString("%1,%2,%3").arg(target.min.x).arg(target.min.y).arg(target.min.z);
+			if(!deskLayouts.contains(deskKey))
+			{
+				int crew = 0;
+				bool captain = false;
+				for(const StationSpec& o : brief.ExpandedStations())
+				{
+					AuScPart::PART_TYPE otherType;
+					COMMODITYID otherModule;
+					if(!FindStationType(o.type, otherType, otherModule) || DeskStationType(otherType) == otherType)
+						continue;
+					// The room it will go to: its own type if there is one, or the bridge.
+					bool ownRoom = false;
+					for(const PlacedRoom& r : result.rooms)
+						ownRoom = ownRoom || (!o.roomType.isEmpty() && r.type == o.roomType);
+					if((ownRoom ? o.roomType : QString("Bridge")) != target.type)
+						continue;
+					if(o.type == "engineer" && FtlDriveModule(brief.ftlDrive) == CID_Invalid)
+						continue;
+					if(otherType == AuScPart::Part_ConsoleCommand)
+						captain = true;
+					else
+						++crew;
+				}
+				deskLayouts.insert(deskKey, MakeDeskLayout(target, crew, captain, opts));
+				chairSpots[QString("%1,%2,%3").arg(target.min.x).arg(target.min.y).arg(target.min.z)] = deskLayouts.value(deskKey).taken;
+			}
+			const DeskLayout& desks = deskLayouts[deskKey];
+			const bool isCaptain = partType == AuScPart::Part_ConsoleCommand;
+			const int used = desksUsed.value(deskKey);
+			if(isCaptain ? desks.hasCaptain : used < desks.crew.size())
+			{
+				const DeskSpot spot = isCaptain ? desks.captain : desks.crew.at(used);
+				if(!isCaptain)
+					desksUsed[deskKey] = used + 1;
+				const AuPoint floorLoc(spot.x, spot.y, target.min.z);
+				AuMatrix4x4 screenPlane;
+				AuPoint corner1, corner2;
+				AuScPart* part = AuScPart::Create(deskType);
+				AuScStation* station = dynamic_cast<AuScStation*>(part);
+				if(station && AddStationDesk(design, floorLoc, spot.yaw, target.label, screenPlane, corner1, corner2, opts.deskPaint, opts.deskSeatPaint,
+						opts.deskTopFeet, !opts.deskStanding))
+				{
+					// Someone standing is placed by their feet, as in the Atlantis and the
+					// Arnesh; someone sitting by the seat.
+					const AuPoint seat = opts.deskStanding ? floorLoc : floorLoc + AuPoint(0, 0, AuStation::SeatHeight());
+					station->MakeStation(opts.deskStanding ? AuScStation::Operator_StandStationary : AuScStation::Operator_SitStationary,
+							seat, seat + AuPoint(cos(spot.yaw), sin(spot.yaw), 0) * FeetPerMeter(), corner1, corner2, screenPlane);
+					station->SetModule(module);
+					if(deskType == AuScPart::Part_StationFireControl)
+						station->SetEmitLoc(floorLoc + AuPoint(0, 0, 3.0));
+					if(station->IsValid())
+					{
+						const quint16 partId = design.Parts().AddPart(*station);
+						if(station->ModuleSystem() == SYS_FTLDrive)
+							ftlParts << partId;
+						else if(station->ModuleSystem() == SYS_Weapon)
+							weaponParts << partId;
+						placedStationTypes.insert(s.type);
+						if(partType != AuScPart::Part_ConsoleCommand)
+							++crewStations;
+						++result.stationsPlaced;
+						delete part;
+						continue;
+					}
+				}
+				delete part;
+			}
+			result.warnings << QString("no room for a desk for the '%1' station in '%2'; it gets a swivel chair.").arg(s.type, target.label);
+		}
 
 		// A console is the game's swivel chair: a flat icon on the floor,
 		// 1 m wide and 1.7 m deep, facing its local +Y. In a room with

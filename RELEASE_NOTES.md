@@ -1,4 +1,4 @@
-# Shipgen Designer 0.3.5-alpha
+# Shipgen Designer 0.3.6-alpha
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
@@ -6,58 +6,66 @@ triangles, paint it, and build a blueprint the game loads. The download
 also holds `shipgen-gui` (the automatic generator's window) and the
 `shipgen` command line.
 
-0.3.5-alpha is a pre-release. It makes the designer nicer to work with on
-big ships, adds rooms without gravity, fixes paint on ships made from 3D
-models, and improves the buildings the generator makes. It can also be
-built on a Mac now.
+0.3.6-alpha is a pre-release. It comes from trying a large ship in the game:
+crew can now get around it, doors and door rows behave, and bridges can have
+real desks, for sitting or standing. There is also a Mac download now.
 
-## New in 0.3.5-alpha
+## New in 0.3.6-alpha
 
-* **Zero-G shafts.** A new room type (it was listed as *Gravity Well*
-  before, but did nothing): a room without gravity, where your crew floats
-  and can move up and down freely. Draw zero-G shafts on top of each other
-  on neighbouring decks and they become one open shaft: the floor and
-  ceiling between them are left out, so no ladder is needed. They work
-  while the ship's gravity is on. Plans that used *Gravity Well* open as
-  zero-G shafts.
-* **See what the designer is doing.** A bar at the bottom of the window
-  now shows anything that takes a while (reading a 3D model, shaping the
-  hull, building the blueprint): what it is doing, which step it is on,
-  how far along that step is, and how long it has taken. Reading a model
-  can be stopped there. It replaces the old progress window.
-* **Drawing no longer freezes on big ships.** The hull is shaped in the
-  background while you keep drawing. And if redrawing the 3D view after
-  every change is too slow for your ship, untick *Redraw 3D while drawing*
-  (bottom right, or the View menu) and press **F5** when you want to see
-  your changes. The designer remembers your choice.
-* **Faster start from a 3D model.** A new plan from a model was shaped
-  twice; now it is shaped once. On a large ship that roughly halves the
-  wait.
-* **Paint now covers the whole hull of ships made from 3D models.** Paint
-  near the edges of the drawn hull did not always reach the model's
-  surface, which left patches in the base colour (engine nozzles, for
-  instance). The surface there now takes the colour of the nearest painted
-  triangle. The angular hull style gets the same fix.
-* **Better generated buildings** (`shipgen generate-building`): power
-  plants get the generator for their fuel, and a building's brief can now
-  ask for working battery space, fields for farms and orchards, medic and
-  teleporter stations, and a landing berth for spacecraft
-  (`spacecraftParking`). When a building does not suit its purpose, you are
-  told why in the game's own words.
-* **macOS** can now build and run the tools from source (with Qt 5 from
-  Homebrew), thanks to a contribution from yamamushi. There is no ready
-  Mac download yet.
-* **Windows:** a build problem with the Windows version is fixed.
+* **Integrated desks (experimental).** A choice on the Build page: stations on
+  desks in curved rows round the captain instead of the game's swivel chairs.
+  For the whole ship, operators can sit or stand, and you can set the desk's
+  height.
+* **Fire control** can run any of the ten modules the game's own station dialog
+  offers, chosen on the Ship page.
+* **Open to Deck Below** now does what it says: the room below reaches up into
+  it, and people fall to the lower floor.
+* **Ceiling windows (experimental):** a new room tool cuts a window straight up
+  through the hull.
+* **Textures per room and per door**, from the game's library.
+* **Door rows are your choice:** dragging along a wall makes one wide door, and
+  a click makes a separate one.
+* **Parking spots** show an outline that follows the mouse, coloured by whether
+  the spot fits, and R turns it. **Contrail emitters** are drawn where they end
+  up on the hull.
+* **`shipgen crew-check`** follows every room-to-room route with the game's own
+  route finding, and reports natural gravity in doorways and mirrored screens.
+  **`shipgen sight`** shows what is seen along a line of sight.
+* **A Mac download**, for Apple and Intel processors, built on GitHub. It starts
+  there and passes the tests, but nobody has tried it on a real Mac yet, so
+  please report how it goes.
+
+## Bug fixes
+
+* **Crew stuck at ladders.** Ladders ended too close to the floor for the game
+  to count the climb as finished. Crew routes on the test battleship that can
+  be followed went from 80 of 240 to all 240.
+* **Crew could not get around big ships.** Walking paths and ladders did not
+  meet, and zero-G shafts had no path. The build now warns when a ship's paths
+  fall into separate parts.
+* **Doorways turned people round near a planet.** They now have the rooms'
+  gravity.
+* **Mirrored console screens.** The image on an integrated desk's screen is now
+  the right way round.
+* **Hull and bay door rows split up:** a row of ten could come out as seven
+  doors.
+* **Holes in shaft walls** where rooms join across decks, and **phantom walls
+  and ledges** at flat window panes and joins between decks.
+* **Windows:** joined windows on a zigzag wall are one flat pane, panes no
+  longer take hull paint, and ceiling windows join whatever order the cells were
+  clicked in.
+* **The same plan now builds the same blueprint.** Two builds of one plan used
+  to differ.
 
 ## Running it
 
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.5-alpha-x86_64.AppImage
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.5-alpha-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.6-alpha-x86_64.AppImage
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.6-alpha-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -65,15 +73,19 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.5-alpha-windows-x86_64.zip` and start
+`shipgen-designer-0.3.6-alpha-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS:** no download yet; build it from the source with `./build.sh`
-(needs Homebrew's `qt@5`). See the README.
+**macOS (experimental):** use `shipgen-designer-0.3.6-alpha-macos-arm64.dmg`
+for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
+with an Apple Developer account, so macOS blocks it the first time: try to open
+it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The
+dmg holds a note with the details. The dmgs are added a little after the other
+downloads, once GitHub has built them.
 
 ## What the designer does
 
@@ -102,18 +114,26 @@ signed): *More info*, then *Run anyway*.
   emitters**.
 * Feet or meters (*View > Metric units*).
 
-## Not yet tried in the game
+## Tried in the game, and not yet
 
-New in this release and not yet tried in the game: zero-G shafts, the paint
-fix on model hulls, and the new parts of generated buildings. From before and still
-untried: ramps at hull doors, stairs, the sloped hull, joined windows, the
-smooth and sharp model hulls, the angular and classic hull styles, the hull
-door choices and the contrail and weapon emitters. Please report how they
-behave.
+A test battleship was tried in the game for this release, with sitting and with
+standing desks, and looked good. Everything else has only been measured from the
+built blueprints and the game's code. New in this release and not yet tried in
+the game: fire control modules other than the
+Energy Weapon Bay, Open to Deck Below and ceiling windows. From before and still
+untried: zero-G shafts, the paint fix on model hulls, the new parts of generated
+buildings, ramps at hull doors, stairs, the sloped hull, the smooth and sharp
+model hulls, the angular and classic hull styles, the hull door choices and the
+contrail and weapon emitters. Please report how they behave.
 
 ## Known limits
 
 * Rooms are one deck high; hull doors are one deck high.
+* The way down from hull doors is one choice for the whole ship.
+* Coming down a ladder from the top, crew may lie level for a moment.
+* Desks do not block walking, and at unusual heights a seated or standing
+  character's hands may not meet the desk. A bridge over several decks is not
+  staggered yet.
 * On big round hulls, rooms far from the skin get no windows.
 * A very detailed model loses fine detail at 5,000 faces; a higher face
   budget keeps more (the engine copes with about 15,000). The model hull is

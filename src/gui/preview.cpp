@@ -4,6 +4,9 @@
 
 #include "preview.h"
 
+#include <cmath>
+#include <functional>
+
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
@@ -244,6 +247,50 @@ void DesignPreview::resizeGL(int w, int h)
 	Q_UNUSED(h);
 }
 
+// A ball at 'at' and an arrow from it along 'dir'.
+static void AddContrailMarker(const AuPoint& at, const AuPoint& dir, double radius, const QColor&,
+		const std::function<void(const AuScPoint&)>& put)
+{
+	AuPoint w = dir;
+	w.Unit();
+	AuPoint u = fabs(w.z) < .9 ? w.Cross(AuPoint(0, 0, 1)) : w.Cross(AuPoint(1, 0, 0));
+	u.Unit();
+	const AuPoint v = w.Cross(u);
+	auto tri = [&put](const AuPoint& a, const AuPoint& b, const AuPoint& c, const AuPoint& na, const AuPoint& nb, const AuPoint& nc) {
+		put(AuScPoint(a, 0.f, 0.f, na));
+		put(AuScPoint(b, 0.f, 0.f, nb));
+		put(AuScPoint(c, 0.f, 0.f, nc));
+	};
+	const int around = 12, down = 8;
+	auto onBall = [&](int i, int j) {
+		const double a = 2 * M_PI * i / around, b = M_PI * j / down;
+		return (u * cos(a) + v * sin(a)) * sin(b) + w * cos(b);
+	};
+	for(int j = 0; j < down; ++j)
+		for(int i = 0; i < around; ++i)
+		{
+			const AuPoint n0 = onBall(i, j), n1 = onBall(i + 1, j), n2 = onBall(i + 1, j + 1), n3 = onBall(i, j + 1);
+			tri(at + n0 * radius, at + n3 * radius, at + n2 * radius, n0, n3, n2);
+			tri(at + n0 * radius, at + n2 * radius, at + n1 * radius, n0, n2, n1);
+		}
+	const double shaft = radius * .3, head = radius * .8, shaftEnd = radius * 3.2, tip = radius * 4.6;
+	auto ring = [&](int i) {
+		const double a = 2 * M_PI * i / around;
+		return u * cos(a) + v * sin(a);
+	};
+	for(int i = 0; i < around; ++i)
+	{
+		const AuPoint n0 = ring(i), n1 = ring(i + 1);
+		const AuPoint a0 = at + n0 * shaft, a1 = at + n1 * shaft;
+		const AuPoint b0 = a0 + w * shaftEnd, b1 = a1 + w * shaftEnd;
+		tri(a0, a1, b1, n0, n1, n1);
+		tri(a0, b1, b0, n0, n1, n0);
+		const AuPoint c0 = at + w * shaftEnd + n0 * head, c1 = at + w * shaftEnd + n1 * head, top = at + w * tip;
+		tri(c0, c1, top, n0, n1, w);
+		tri(at + w * shaftEnd, c1, c0, w * -1.0, w * -1.0, w * -1.0);
+	}
+}
+
 void DesignPreview::RebuildGeometry()
 {
 	// Everything is built again from scratch, so the old lists go first.
@@ -327,6 +374,7 @@ void DesignPreview::RebuildGeometry()
 			return slot;
 		};
 
+		QList<const AuScPart*> contrails;
 		for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
 		{
 			const AuScPart* part = it.value();
@@ -334,6 +382,11 @@ void DesignPreview::RebuildGeometry()
 				continue;
 			if(part->IsRoomVoid() || part->IsHullVoid() || part->IsEnvironmentVoid())
 				continue;
+			if(part->IsContrailEmitter() && !part->IsOmitted())
+			{
+				contrails << part;
+				continue;
+			}
 			if(part->IsRoomMesh() && !m_showRooms)
 				continue;
 			if(!part->IsVisibleInFinalModel() && !part->IsHullMesh() && !part->IsRoomMesh() &&
@@ -365,6 +418,40 @@ void DesignPreview::RebuildGeometry()
 				const AuScPoint* v[3] = { &t.V0(), &t.V1(), &t.V2() };
 				for(int i = 0; i < 3; ++i)
 					addVertex(blend[slot], *v[i], colour, 0.5f, slot);
+			}
+		}
+
+		// The contrail emitters are flat icons the game does not show: each
+		// is drawn as a ball with an arrow the way the trail goes, big enough
+		// to find on a big ship.
+		if(!contrails.isEmpty())
+		{
+			AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+			for(const QMap<int, QVector<Vertex> >* lists : { &opaque, &seeThroughHull })
+				for(const QVector<Vertex>& list : *lists)
+					for(const Vertex& v : list)
+					{
+						mn = mn.Min(AuPoint(v.x, v.y, v.z));
+						mx = mx.Max(AuPoint(v.x, v.y, v.z));
+					}
+			const AuPoint middle = (mn + mx) / 2.0;
+			const double longest = qMax(1.0, qMax(mx.x - mn.x, qMax(mx.y - mn.y, mx.z - mn.z)));
+			for(const AuScPart* part : contrails)
+			{
+				AuScFaceList faces;
+				part->Faces(faces);
+				AuScTriList tris;
+				faces.Triangles(tris);
+				if(tris.isEmpty())
+					continue;
+				const AuPoint at = part->SoundEmitLoc();
+				AuPoint dir = tris.first().Normal();
+				if(dir.Dot(at - middle) < 0)
+					dir = dir * -1.0;
+				const double radius = qMax(double(part->EmitterDiameter()) * .5, longest * .012);
+				AddContrailMarker(at, dir, radius, QColor(90, 190, 255), [&](const AuScPoint& p) {
+					addVertex(opaque[-1], p, QColor(90, 190, 255), 1.f, -1);
+				});
 			}
 		}
 	}

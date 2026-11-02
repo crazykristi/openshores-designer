@@ -20,6 +20,8 @@ export LD_LIBRARY_PATH=$HOME/.local/hazeron-toolchain/usr/lib64
 | `shipgen audit <design.SoH>` | The exact test: every room box against the hull triangles, for each closed hull part. |
 | `shipgen validate <design.SoH>` | The engine's own report (`AuScReport` / `AuBdReport`), as `Errors (n):` and `Warnings (n):`. |
 | `shipgen parts <design.SoH> [<type>] [--open-edges]` | Every part on one line: id, type, group, door tie (`tied to <door> state <n>`), module, a transporter's pad effect and pad locations, triangles, signed volume (hulls and voids negative, room meshes positive in a blueprint that works in the game), bounds. A type name part filters the list. `--open-edges` adds where a mesh's open edges are. |
+| `shipgen sight <design.SoH> x y z dx dy dz` | What is seen along a line of sight: the first face looking back at the eye, with its distance and part. For checking that a view is clear or a wall has no hole. |
+| `shipgen crew-check <design.SoH>` | Follows every room-to-room crew route with the game's own route finding (doors open), and reports doorways with natural gravity and mirrored screens. Exit code 1 if anything is wrong. |
 | `shipgen faces <design.SoH> [<part>]` | The texture palette (library texture ids, see [TEXTURE_LIBRARY.md](TEXTURE_LIBRARY.md), or images) and, per part, how its faces look: texture slot, colour theme, paint, opacity, self-illumination, shine, reflectivity, surface effect, vertex glow. |
 | `shipgen cut <in.SoH> <out.SoH> window\|door <hull part> <room part\|0> x0 y0 z0 x1 y1 z1` | Cuts a window or door through a hull part (and a room mesh) with a box-shaped jig, using the engine's own `JigCutParts`, as the game's designer does. The new parts are listed. |
 | `shipgen resave <in.SoH> <out.SoH>` | Reads a blueprint and writes it back. Parts of types this engine build does not know are kept byte for byte. Refuses to write a design that could not be read completely. |
@@ -153,7 +155,7 @@ do, with a 3D preview and the engine's report. For scripts:
 | `--screenshot <file.png>` | Save a picture of the window and quit. |
 | `--from-model <model>` | Start a new plan from a 3D model (STL, 3DS or OBJ), as *File > New plan from a 3D model* does, with a progress window. Prints "plan made from the model" or "no plan from the model". With `--screenshot` or `--export` nothing is asked and a failure exits with 1; without them, what went wrong is shown in a message box. |
 | `--length <ft>` | With `--from-model`: the length of the ship (default 150 ft). |
-| `--version` | The version (0.3.5-alpha). The window title shows it too. |
+| `--version` | The version (0.3.6-alpha). The window title shows it too. |
 
 ## build.sh and test.sh
 

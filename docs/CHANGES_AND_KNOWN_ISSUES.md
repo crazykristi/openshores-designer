@@ -1,5 +1,121 @@
 # Changes and known issues
 
+## 2 November 2026: release 0.3.6-alpha
+
+* **Version 0.3.6-alpha** (`src/version.h`, `RELEASE_NOTES.md`): everything below
+  from 1 and 2 November that came after 0.3.5-alpha.
+* **Tried in the game**: the user tried `alliance_battleship_fixes3` (sitting
+  desks) and `alliance_battleship_standing2` (standing desks) and found them
+  good. Notes below saying these fixes were "not yet tried" were true when
+  written.
+* **Still open**: a false floor in the Vehicle Bay (found by a scan, about 1 ft
+  below eye height), and 5 "rooms outside the hull" the audit reports on that
+  battleship, not looked into yet.
+
+## 2 November 2026: the same plan builds the same blueprint
+
+Building a plan twice gave different files: the battleship's hull came out
+anywhere from 96,122 to 97,876 cubic meters. The engine keeps a ship's parts in
+a `QHash` and takes them in that order when it cuts doors and windows, and Qt
+chooses a new order for every run. Both programs now fix that order when they
+start (`qSetGlobalQHashSeed(0)`), so the same plan gives the same file, from
+`shipgen` or the designer. A hull model is simplified the same way each time;
+the variation came from the cuts after it.
+
+This holds for one build on one machine. Another version of Qt or of the tool
+may give a different, equally repeatable, result.
+
+The game itself still reads a ship's parts in a different order each session.
+Where two room voids overlap, either may answer for gravity, which is why a
+door's void has the same gravity as the rooms beside it. Hull voids do not take
+part in that choice.
+
+## 2 November 2026: sitting or standing, desk height, and fire control
+
+* **Fire control** can run any of the ten modules the game's own station dialog
+  offers, chosen on the Ship page. It was always an Energy Weapon Bay.
+* **Integrated desks** can be for sitting or standing, at a height you choose,
+  for the whole ship (Build page). Standing desks have no stool and are 4.2 ft
+  high unless you say otherwise. **Known**: not yet tried in the game. The
+  game's poses are fixed, so at unusual heights the hands may not meet the desk.
+
+## 1 November 2026: after the second try in the game
+
+* **Consoles.** The screen's image was mirrored: its lower left corner was on
+  the operator's right, where every station of the Atlantis has it on the left.
+  Desks and screens are bigger, nearer the proportions of the Atlantis's stations
+  (a screen 3.4 ft wide, 1.9 ft tall), and the seat is further back: the screen's
+  middle is 2.4 ft from it, up from 1.5 ft. They take more room: the battleship's
+  17 ft deep bridge now holds six desks, and its seventh station is a swivel chair. The operator now sits fixed facing the
+  screen, as in those stations, and can still look around.
+* **Doorways turned people round.** A door's void had no gravity of its own, so
+  it defaulted to natural gravity: near a planet that pulls towards the planet,
+  whichever way the ship lies. Doorways now have the rooms' gravity.
+* **Crew stuck at ladders.** The game counts a climber as arrived when their
+  centre of gravity is within a foot of the ladder's end. Ladders ended at the
+  floor, about 3 ft below that, so crew stood at the foot for ever. Ladders and
+  walks now run 3.25 ft above the floor, as the Atlantis's ladders do, and a
+  ladder goes on level to over the floor beside the hole, so nobody lets go
+  over it. In the test battleship, routes that can be followed went from 80 of
+  240 to all 240.
+* **Phantom walls and ledges.** The space out to a flat window pane, and a rim
+  round a join between decks, looked open but could not be walked into.
+* **`shipgen crew-check`** follows every room-to-room route with the game's own
+  route finding, and reports natural gravity in doorways and mirrored screens.
+* **Known**: all this is measured from the built blueprint and the game's code;
+  not yet tried in the game. Coming down a ladder from the top, crew take hold of
+  its level piece and so may lie level for a moment.
+
+## 1 November 2026: after trying the battleship in the game
+
+* **Hull and bay door rows split up.** A door is stored from whichever cell was
+  clicked, and only doors stored from the same side joined, so a row of ten
+  came out as seven doors. They now join however they are named.
+* **Door rows are the player's choice.** Dragging along a wall makes one door,
+  a click makes a separate one, and dragging over doors joins them.
+* **Crew could not get around.** Ladders stood at a cell's middle and walking
+  paths ended in a triangle of it, so the two never met, and zero-G shafts had
+  no path at all. A battleship's paths were 14 separate pieces; now they are
+  one, and the build warns when they are not. Paths no longer lead into rooms
+  with no floor.
+* **Holes in shaft walls.** Joining two rooms across decks removed a foot of
+  wall on each side of the join, wherever the join ran along a wall, and that
+  showed the inside of the ship. The linings of these cuts are now textured too.
+* **Windows.** Joined windows on a zigzag wall are one flat pane with no frame
+  across the view (optional). Panes have no hull paint, as in the game's own
+  designs. Frames always take a painted hull colour and end at the hull surface.
+* **Ceiling windows** join into one pane whatever order the cells were clicked in.
+* **Desks** are lower and slimmer, with a steeper screen further from the seat,
+  painted in the plan's colours. The screen stands clear of the surface. The
+  captain sits on the centre line behind the rows, and desks have wider gaps.
+* **Textures** per room (walls, floor, ceiling) and per door, from the game's library.
+* **Known**: tested by measuring the built blueprints; not yet tried in the game.
+  The seated eye height (about 3.3 ft) is judged from a screenshot. A pane can
+  stand up to about 2 ft proud of a deep notch in the hull.
+
+## 1 November 2026: open rooms, contrail markers, parking outline
+
+* **Open to Deck Below** now does what the name says. It was only a name
+  before: the room got a floor like any other. The room below now reaches up
+  into it wherever the two overlap, with gravity, so people fall to the lower
+  floor (`docs/DESIGNER.md`). With no room under it the floor stays and the
+  build warns.
+* **Contrail emitters** are drawn where they end up on the hull, as a ball
+  with an arrow the way the trail goes, in the plan and in the 3D view.
+* **Parking spots**: an outline of the spot follows the mouse, coloured by
+  whether it fits, and R turns it. The orientation chosen is now the one
+  placed; the designer no longer tries the other one by itself.
+* **Ceiling windows (experimental)**: a new room tool cuts a window straight
+  up through the hull from a cell with no room above it.
+* **Bridge styles**: a per-plan choice on the Build page. *Hazeron default*
+  is unchanged; *Integrated desks (experimental)* puts stations on desks in
+  curved rows round the captain.
+* **Known**: the 3D view draws the contrail marker through the hull when it
+  is on the far side. Parking spots turn in quarter turns only.
+* **Known**: none of the experimental features has been tried in the game. In
+  particular the screens on desks may show mirrored, the desks do not block
+  walking, and a bridge over several decks is not staggered yet.
+
 ## 1 November 2026: a Mac download, built on GitHub
 
 * **`.github/workflows/macos.yml`** builds a dmg on GitHub's Macs, for Apple
@@ -7,8 +123,12 @@
   it to the release. `packaging/build-macos-app.sh` makes the app (Qt inside
   it, signed ad hoc, checked to need nothing from the build machine, and
   refusing to pack the private building designs).
-* **Known**: written on Linux; the workflow and script have not run yet, and
-  the app has not been tried on a real Mac.
+* **Fixed on the first runs**: libraries `macdeployqt` leaves behind are brought
+  in, because without brotli's partner the designer would not open on Apple's
+  processors. An app that does not start is no longer published. Walk paths
+  reported as blocked on those processors went away with `-ffp-contract=off`.
+* **Known**: both builds pass the tests and start on GitHub's Macs, but the app
+  has not been tried by a person on a real Mac.
 
 ## 1 November 2026: release 0.3.5-alpha
 

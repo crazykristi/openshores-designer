@@ -34,6 +34,16 @@ struct LayoutOptions
 	bool	placeBerths = true;
 	bool	placeWalkPaths = true;		// Connect the rooms with walk paths.
 	bool	placeWindows = true;		// Windows where a room's outer wall is against the hull.
+	// How stations look: "hazeron" for the game's swivel chairs, "desks" for
+	// integrated stations on desks in curved rows (BridgeStyles in names.h).
+	QColor	deskPaint = QColor(150, 155, 160);
+	QColor	deskSeatPaint = QColor(90, 95, 100);
+	QString	bridgeStyle = "hazeron";
+	int		fireControlModule = 0;		// What a fire control station runs. 0: the Energy Weapon Bay.
+	bool	deskStanding = false;		// The operator of a desk stands, with no stool.
+	double	deskTopFeet = 3.0;			// The top edge of a desk above the floor.
+	// Boxes kept clear of desks: doors, ladders and stairs, in the blueprint's coordinates.
+	QList<QPair<AuPoint, AuPoint> > stationKeepOut;
 };
 
 // What the generator found out about the hull it has to work with.

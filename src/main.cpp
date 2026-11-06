@@ -365,6 +365,127 @@ int cmdSight(const QStringList& args)
 // room to every other with the doors open, following each route as the game's
 // crew do. Also what turns people round: a doorway with natural gravity, and
 // what shows an image mirrored: a screen whose lower left is on the operator's right.
+// What the ways down from the hull doors do with the doors closed and open,
+// asked of the game's own code: can a ladder be taken hold of, can a ramp be
+// stood on, and where does someone on the ground go in.
+int cmdDoorCheck(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		out() << "usage: shipgen door-check <design.SoH>\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	AuScDesign* ship = dynamic_cast<AuScDesign*>(design);
+	if(!ship)
+	{
+		out() << "not a ship\n";
+		delete design;
+		return 1;
+	}
+	AuScParts& parts = ship->Parts();
+	AuLandingGearStateHash gear;
+	AuLiftHash lifts;
+	const AuPoint zero;
+	auto doorStates = [&](quint8 state) {
+		AuDoorStateHash doors;
+		for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+			if(const AuScDoor* door = dynamic_cast<const AuScDoor*>(it.value()))
+				doors.insert(it.key(), AuScDoorState(door->IsHullDoor() ? AuScDoorState::DOOR_Hull : AuScDoorState::DOOR_Interior,
+						zero, zero, 0, state, false, false, false));
+		return doors;
+	};
+	const AuDoorStateHash closed = doorStates(AuScDoor::Closed), open = doorStates(AuScDoor::Open);
+	auto tie = [](const AuScPart* part) {
+		return part->AssociatedPartId() ? QString("tied to door %1").arg(part->AssociatedPartId()) : QString("always");
+	};
+	auto text = [](const AuPoint& p) { return QString("(%1 %2 %3)").arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1).arg(p.z, 0, 'f', 1); };
+
+	AuPoint hullMin, hullMax;
+	parts.HullExtents(hullMin, hullMax, gear);
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(const AuScDoor* door = dynamic_cast<const AuScDoor*>(it.value()))
+			if(door->IsHullDoor())
+				out() << "hull door " << it.key() << "\n";
+
+	QList<AuPoint> ladderFeet;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(part->IsLadderPath())
+		{
+			// Only the ladders that reach down outside the hull.
+			const AuScPathSeg seg = part->PathSegment(0);
+			const AuPoint bottom = seg.Loc1().z < seg.Loc2().z ? seg.Loc1() : seg.Loc2();
+			if(bottom.z > hullMin.z || fabs(seg.Loc1().z - seg.Loc2().z) < .5)
+				continue;
+			// Along its length: the hull's margin can keep a hand off part of it.
+			auto holding = [&](const AuDoorStateHash& doors) {
+				int on = 0;
+				for(int i = 0; i < 5; ++i)
+				{
+					const AuPoint at = seg.Loc1() + (seg.Loc2() - seg.Loc1()) * ((i + .5) / 5);
+					AuMatrix4x4 m;
+					on += parts.FindLadderToGrab(at, m, doors, gear, lifts) ? 1 : 0;
+				}
+				return on;
+			};
+			out() << "ladder " << it.key() << " " << tie(part) << " at " << text(bottom)
+				  << ": hold closed " << holding(closed) << " of 5 points, open " << holding(open) << " of 5\n";
+			ladderFeet << bottom;
+		}
+		else if(part->GroupName() == "Hull Door" && (part->IsBarrier()
+				|| (part->IsHullVoid() && part->AssociatedPartId() && part->AssociatedPartState() == AuScDoor::Closed)))
+		{
+			// Stand on it at points along its length, the foot too.
+			AuPoint mn, mx;
+			part->ModelExtents(mn, mx);
+			auto standing = [&](const AuDoorStateHash& doors) {
+				int on = 0;
+				const bool alongX = mx.x - mn.x > mx.y - mn.y;
+				for(int i = 1; i <= 5; ++i)
+				{
+					const double f = (i - .5) / 5;
+					const AuPoint c(alongX ? mn.x + (mx.x - mn.x) * f : (mn.x + mx.x) / 2,
+							alongX ? (mn.y + mx.y) / 2 : mn.y + (mx.y - mn.y) * f, 0);
+					AuPoint hit, normal;
+					for(double z = mx.z + 1; z > mn.z - 1; z -= .1)
+						if(parts.IsPathBlocked(AuPoint(c.x, c.y, z), AuPoint(c.x, c.y, z - .1), hit, normal, doors, gear, lifts))
+						{
+							++on;
+							break;
+						}
+				}
+				return on;
+			};
+			out() << "ramp " << it.key() << " " << tie(part) << ", " << QString::number(mx.x - mn.x, 'f', 1) << " x "
+				  << QString::number(mx.y - mn.y, 'f', 1) << " ft: stand closed " << standing(closed) << " of 5 points, open "
+				  << standing(open) << " of 5\n";
+		}
+	}
+	// Where the game sends someone on the ground to go in.
+	auto entrance = [&](const AuPoint& from, const AuDoorStateHash& doors) {
+		AuPoint at;
+		quint16 doorId = 0, ladderId = 0;
+		if(!parts.ClosestEntrance(at, doorId, ladderId, from, LORI_Belly, true, true, doors, gear, lifts))
+			return QString("none");
+		return QString("%1 door %2 ladder %3").arg(text(at)).arg(doorId).arg(ladderId);
+	};
+	// The foot of a ramp is a walk that ends on the ground.
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(it.value()->IsPath() && !it.value()->IsLadderPath())
+		{
+			const AuScPathSeg seg = it.value()->PathSegment(0);
+			const AuPoint low = seg.Loc1().z < seg.Loc2().z ? seg.Loc1() : seg.Loc2();
+			if(low.z <= hullMin.z + 1.5)
+				ladderFeet << low;
+		}
+	for(const AuPoint& foot : ladderFeet)
+		out() << "from the ground at " << text(foot) << ": closed " << entrance(foot, closed) << "; open " << entrance(foot, open) << "\n";
+	delete design;
+	return 0;
+}
+
 int cmdCrewCheck(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -2070,6 +2191,7 @@ void usage()
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";
 	out() << "  shipgen faces     <design.SoH> [<part>]  how the faces look: texture slot, paint, opacity, glow, effect\n";
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
+	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
 	out() << "  shipgen cut       <in.SoH> <out.SoH> window|door <hull part> <room part|0> x0 y0 z0 x1 y1 z1\n";
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
@@ -2430,6 +2552,7 @@ int main(int argc, char* argv[])
 	if(command == "faces")				return cmdFaces(rest);
 	if(command == "sight")				return cmdSight(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
+	if(command == "door-check")			return cmdDoorCheck(rest);
 	if(command == "kit")				return cmdKit(rest);
 	if(command == "plan-example")		return cmdPlanExample(rest);
 	if(command == "plan-flip")			return cmdPlanFlip(rest);

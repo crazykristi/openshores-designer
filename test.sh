@@ -1173,6 +1173,74 @@ PY
 		fail=$((fail+1))
 		echo "  FAIL  the drawn hull is over the face budget ($faces faces)"
 	fi
+	# A hull door's own way down: instead of the ship's, and tied to the door.
+	python3 - "$WORK/plan/example.json" "$WORK/plan" <<'PY'
+import json, sys
+for name, change, ship in (('exit-ladder', {'exit': 'ladder'}, None), ('exit-none', {'exit': 'none'}, None),
+		('exit-ramp', {'exit': 'ramp'}, 'none'), ('exit-ladder-open', {'exit': 'ladder', 'exitOpenOnly': True}, None),
+		('exit-ramp-open', {'exit': 'ramp', 'exitOpenOnly': True}, None),
+		('exit-ramp-long', {'exit': 'ramp', 'rampRun': 4}, None)):
+	plan = json.load(open(sys.argv[1]))
+	door = [d for d in plan['doors'] if d['y'] == 15]
+	assert len(door) == 1
+	door[0].update(change)
+	if ship:
+		plan['hullDoorExit'] = ship
+	json.dump(plan, open('%s/%s.json' % (sys.argv[2], name), 'w'))
+PY
+	for name in exit-ladder exit-none exit-ramp exit-ladder-open exit-ramp-open exit-ramp-long; do
+		"$SHIPGEN" build-plan "$WORK/plan/$name.json" --out "$WORK/plan/$name.SoH" > "$WORK/plan/$name.txt" 2>&1
+		"$SHIPGEN" door-check "$WORK/plan/$name.SoH" > "$WORK/plan/$name.doors" 2>&1
+	done
+	ladders() { "$SHIPGEN" parts "$WORK/plan/$1.SoH" | grep -c 'Ladder Path'; }
+	if grep -q '^Ramps        : 0$' "$WORK/plan/exit-ladder.txt" && [ "$(ladders exit-ladder)" = "3" ] &&
+			grep -q '^Ramps        : 0$' "$WORK/plan/exit-none.txt" && [ "$(ladders exit-none)" = "2" ] &&
+			grep -q '^Ramps        : 1$' "$WORK/plan/exit-ramp.txt" && [ "$(ladders exit-ramp)" = "2" ]; then
+		pass=$((pass+1))
+		echo "  ok    a hull door's own way down overrides the ship's"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a hull door's own way down is not what it asks for"
+	fi
+	if grep -qE 'ladder [0-9]+ tied to door [0-9]+ .*hold closed 0 of 5 points, open [1-5] of 5' "$WORK/plan/exit-ladder-open.doors" &&
+			grep -qE 'ramp [0-9]+ tied to door [0-9]+.*stand closed 0 of 5 points, open 5 of 5' "$WORK/plan/exit-ramp-open.doors" &&
+			grep -qE 'ramp [0-9]+ always.*stand closed 5 of 5 points, open 5 of 5' "$WORK/plan/exit-ramp.doors"; then
+		pass=$((pass+1))
+		echo "  ok    a way down tied to the door can only be used while the door is open"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a way down tied to the door does not follow the door"
+		cat "$WORK/plan/exit-ladder-open.doors" "$WORK/plan/exit-ramp-open.doors" | head -8
+	fi
+	if "$SHIPGEN" crew-check "$WORK/plan/exit-ramp-open.SoH" > /dev/null 2>&1 && "$SHIPGEN" crew-check "$WORK/plan/exit-ladder-open.SoH" > /dev/null 2>&1; then
+		pass=$((pass+1))
+		echo "  ok    the crew can still get around with ways down tied to the doors"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  crew routes break with ways down tied to the doors"
+	fi
+	rampLength() { sed -n 's/^ramp [0-9]* always, \([0-9.]*\) x \([0-9.]*\) ft.*/\1 \2/p' "$WORK/plan/$1.doors" | awk '{ print ($1 > $2) ? $1 : $2 }'; }
+	if awk -v a="$(rampLength exit-ramp)" -v b="$(rampLength exit-ramp-long)" 'BEGIN { exit (a > 0 && b > a * 1.5) ? 0 : 1 }'; then
+		pass=$((pass+1))
+		echo "  ok    a door's ramp can be made longer and gentler ($(rampLength exit-ramp) ft to $(rampLength exit-ramp-long) ft)"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a door's ramp length is not followed"
+	fi
+	if QT_QPA_PLATFORM=offscreen "$(dirname "$SHIPGEN")/shipgen-designer" --open "$WORK/plan/exit-ramp-long.json" --export "$WORK/plan/exit-kept.SoH" > /dev/null 2>&1 &&
+			cmp -s "$WORK/plan/exit-kept.SoH" "$WORK/plan/exit-ramp-long.SoH" &&
+			"$SHIPGEN" plan-flip "$WORK/plan/exit-ladder-open.json" "$WORK/plan/exit-flipped.json" --turn > /dev/null 2>&1 &&
+			python3 - "$WORK/plan/exit-flipped.json" <<'PY'
+import json, sys
+sys.exit(0 if [d for d in json.load(open(sys.argv[1]))['doors'] if d.get('exit') == 'ladder' and d.get('exitOpenOnly')] else 1)
+PY
+	then
+		pass=$((pass+1))
+		echo "  ok    a door's way down goes through the designer and through a flip"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a door's way down is lost in the designer or a flip"
+	fi
 	# The same plan always gives the same hull.
 	"$SHIPGEN" build-plan "$WORK/plan/example.json" --out "$WORK/plan/again.SoH" > "$WORK/plan/again.txt" 2>&1
 	if [ "$(sed -n 2p "$WORK/plan/build.txt")" = "$(sed -n 2p "$WORK/plan/again.txt")" ]; then

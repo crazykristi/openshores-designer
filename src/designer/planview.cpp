@@ -243,6 +243,20 @@ void PlanView::paintEvent(QPaintEvent*)
 					(QPointF::dotProduct(near0, near0) < QPointF::dotProduct(near1, near1) ? at0 : at1) = true;
 				}
 			p.drawLine(at0 ? e0 : e0 + (e1 - e0) * 0.12, at1 ? e1 : e1 + (e0 - e1) * 0.12);
+			// A hull door's own way down, if it has one: a letter on the door,
+			// with a star if it is only there while the door is open.
+			if(hullDoor && (!door.exit.isEmpty() || door.exitOpenOnly) && cellPixels >= 10)
+			{
+				const QString way = door.exit == "ladder" ? "L" : door.exit == "ramp" ? "R" : door.exit == "none" ? "D"
+						: door.exit == "auto" ? "A" : "S";
+				const QString mark = door.exitOpenOnly ? way + "*" : way;
+				const QPointF middle = (e0 + e1) / 2.0;
+				const QRectF box(middle.x() - cellPixels / 2, middle.y() - cellPixels / 2, cellPixels, cellPixels);
+				p.setPen(Qt::black);
+				p.drawText(box.translated(1, 1), Qt::AlignCenter, mark);
+				p.setPen(Qt::white);
+				p.drawText(box, Qt::AlignCenter, mark);
+			}
 		}
 		for(const PlanDoor& window : m_plan->windows)
 		{
@@ -515,7 +529,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 		if(erase)
 		{
 			// The right button gives a door, and the rest of its row, the
-			// texture picked for doors.
+			// texture and the way down picked for doors.
 			if(existing < 0)
 				return;
 			emit AboutToChange();
@@ -526,7 +540,13 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 					if(!row.contains(i) && m_plan->DoorsJoin(m_plan->doors.at(i), m_plan->doors.at(row[at])))
 						row << i;
 			for(int i : row)
-				m_plan->doors[i].tex = m_doorTexture;
+			{
+				PlanDoor& door = m_plan->doors[i];
+				door.tex = m_doorTexture;
+				door.exit = m_doorExit;
+				door.exitOpenOnly = m_doorExitOpenOnly;
+				door.rampRun = m_doorRampRun;
+			}
 			emit PlanChanged(false);
 			update();
 			return;
@@ -854,6 +874,9 @@ bool PlanView::PlaceDoorInRow(int deck, int cx, int cy, int side)
 		d.side = side;
 		d.row = row;
 		d.tex = m_doorTexture;
+		d.exit = m_doorExit;
+		d.exitOpenOnly = m_doorExitOpenOnly;
+		d.rampRun = m_doorRampRun;
 		m_plan->doors << d;
 		return true;
 	};

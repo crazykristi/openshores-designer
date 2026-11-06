@@ -157,7 +157,12 @@ centrepiece:
   - [x] Fixed ramps at hull doors, in the designer and the generator, done
     2026-10-31 (`AddDoorRamp`); doors over 15 ft up keep the ladder. Not
     yet tried in the game.
-  - [ ] The deployable version, if the fixed one works.
+  - [x] A way down per hull door, and tied to the door's state, done
+    2026-11-02 (`exit`, `exitOpenOnly`, `rampRun`); not yet tried in the game.
+  - [ ] The deployable version that lowers into sight, if the tied ramp works: the
+    door's state meshes for what is seen. Doors do not count for the hull's
+    extents, so the ramp's foot needs a small hull part as well.
+  - [ ] Whether ground vehicles can drive up a ramp.
 - [x] Windows at an adjustable height (the user: the windows suit tall
   characters): `windowSill`, `windowTop`, 2026-10-31.
 - [x] Windows side by side join into one (the user: an option),

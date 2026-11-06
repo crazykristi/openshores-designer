@@ -28,6 +28,13 @@ class PlanView : public QWidget
 
 public:
 	void	SetDoorTexture(int texture) { m_doorTexture = texture; }
+	// For hull doors placed from now on, or right clicked: as in PlanDoor.
+	void	SetDoorExit(const QString& exit, bool openOnly, double rampRun)
+	{
+		m_doorExit = exit;
+		m_doorExitOpenOnly = openOnly;
+		m_doorRampRun = rampRun;
+	}
 	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, StairMode,
 			ContrailMode, WeaponMode, SkylightMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
@@ -124,6 +131,9 @@ private:
 	int		m_doorRow = 0;
 	int		m_doorMirrorRow = 0;
 	int		m_doorTexture = -1;
+	QString	m_doorExit;
+	bool	m_doorExitOpenOnly = false;
+	double	m_doorRampRun = 0;
 };
 
 #endif

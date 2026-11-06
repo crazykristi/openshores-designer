@@ -937,13 +937,13 @@ static AuScFaceList ProfilePrism(const AuPointArray& profile, const AuPoint& dir
 }
 
 bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
-		double surface, double groundZ, AuPoint& top, AuPoint& foot)
+		double surface, double groundZ, AuPoint& top, AuPoint& foot, double runPerRise, double maxRise, quint16 openOnlyDoor)
 {
 	const bool alongX = fabs(outward.x) > fabs(outward.y);
 	const double sgn = alongX ? (outward.x > 0 ? 1. : -1.) : (outward.y > 0 ? 1. : -1.);
 	const double z0 = slabMin.z;
 	const double rise = z0 - groundZ;
-	if(rise < .5 || rise > SHIPGEN_RAMP_MAX_RISE)
+	if(rise < .5 || rise > maxRise)
 		return false;
 	const double width = alongX ? slabMax.y - slabMin.y : slabMax.x - slabMin.x;
 	const double across = alongX ? (slabMin.y + slabMax.y)/2 : (slabMin.x + slabMax.x)/2;
@@ -953,7 +953,7 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	// slope down to the ground, as at the door of the user's aircraft
 	// factory (a level barrier, then a sloped one).
 	const double u0 = -.2, uLanding = SHIPGEN_THRESHOLD_OUTSIDE + 1.0;
-	const double u1 = uLanding + rise * SHIPGEN_RAMP_RUN_PER_RISE;
+	const double u1 = uLanding + rise * runPerRise;
 	const double thick = 1.0;
 	AuPointArray profile;
 	profile.append(AuPoint(u0, -thick, 0));
@@ -974,11 +974,49 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	// side was a ghost in the user's test. The hull void over it keeps it
 	// from blocking anyone itself.
 	AuScHull mesh;
-	mesh.AddFaces(ramp(width/2 - .1));
+	mesh.AddFaces(ramp(openOnlyDoor ? width/2 : width/2 - .1));
 	mesh.SetGroupName("Frame");
 	if(!barrier.IsValid() || !mesh.IsValid())
 		return false;
-	if(!design.Parts().AddPart(barrier) || !design.Parts().AddPart(mesh))
+	if(!design.Parts().AddPart(mesh))
+		return false;
+	top = alongX ? AuPoint(surface + sgn * uLanding, across, z0) : AuPoint(across, surface + sgn * uLanding, z0);
+	foot = alongX ? AuPoint(surface + sgn * u1, across, groundZ) : AuPoint(across, surface + sgn * u1, groundZ);
+	if(openOnlyDoor)
+	{
+		// While the door is closed, nothing out here stops anyone.
+		AuPoint cmn = slabMin, cmx = slabMax;
+		const double c0 = surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), c1 = surface + sgn * (u1 + .5);
+		(alongX ? cmn.x : cmn.y) = qMin(c0, c1);
+		(alongX ? cmx.x : cmx.y) = qMax(c0, c1);
+		(alongX ? cmn.y : cmn.x) -= SHIPGEN_HULL_VOID_MARGIN;
+		(alongX ? cmx.y : cmx.x) += SHIPGEN_HULL_VOID_MARGIN;
+		cmn.z = groundZ - thick - 1.0;
+		cmx.z = z0 - .01;
+		AuScHullVoid whileClosed;
+		whileClosed.AddFaces(BoxFaces(cmn, cmx));
+		whileClosed.SetGroupName("Hull Door");
+		whileClosed.SetAssociatedPart(openOnlyDoor, AuScDoor::Closed);
+		if(!whileClosed.IsValid() || !design.Parts().AddPart(whileClosed))
+			return false;
+		// Always, the hull does not stop anyone above the slope.
+		const double headroom = slabMax.z - z0 + SHIPGEN_HULL_VOID_MARGIN;
+		const double ua = SHIPGEN_THRESHOLD_OUTSIDE + .05;
+		AuPointArray above;
+		above.append(AuPoint(ua, 0, 0));
+		above.append(AuPoint(uLanding, 0, 0));
+		above.append(AuPoint(u1, -rise, 0));
+		above.append(AuPoint(u1 + .5, -rise, 0));
+		above.append(AuPoint(u1 + .5, headroom, 0));
+		above.append(AuPoint(ua, headroom, 0));
+		AuScFaceList aboveFaces = ProfilePrism(above, outward, origin, width/2 + SHIPGEN_HULL_VOID_MARGIN);
+		OrientAsVoid(aboveFaces);
+		AuScHullVoid overSlope;
+		overSlope.AddFaces(aboveFaces);
+		overSlope.SetGroupName("Hull Door");
+		return overSlope.IsValid() && design.Parts().AddPart(overSlope) != 0;
+	}
+	if(!design.Parts().AddPart(barrier))
 		return false;
 
 	// The hull does not stop anyone anywhere over the ramp.
@@ -1003,12 +1041,7 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	AuScHullVoid clear;
 	clear.AddFaces(BoxFaces(vmn, vmx));
 	clear.SetGroupName("Hull Door");
-	if(!clear.IsValid() || !design.Parts().AddPart(clear))
-		return false;
-
-	top = alongX ? AuPoint(surface + sgn * uLanding, across, z0) : AuPoint(across, surface + sgn * uLanding, z0);
-	foot = alongX ? AuPoint(surface + sgn * u1, across, groundZ) : AuPoint(across, surface + sgn * u1, groundZ);
-	return true;
+	return clear.IsValid() && design.Parts().AddPart(clear) != 0;
 }
 
 const char* LadderGroupPrefix()
@@ -1286,11 +1319,13 @@ bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QSt
 	return design.Parts().AddPart(barrier) != 0 && design.Parts().AddPart(mesh) != 0;
 }
 
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing)
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing, quint16 openOnlyDoor)
 {
 	AuScPathLadder ladder;
 	ladder.MakePath(bottom, top);
 	ladder.SetFacing(facing);
+	if(openOnlyDoor)
+		ladder.SetAssociatedPart(openOnlyDoor, AuScDoor::Open);
 	if(!ladder.IsValid())
 		return false;
 	return design.Parts().AddPart(ladder) != 0;

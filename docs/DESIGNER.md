@@ -235,8 +235,9 @@ walked on (a level landing over the threshold, then a slope of about 34
 degrees, 1.5 ft out for each foot down), a mesh that shows it, a hull void
 over it and a walk path down it. Higher doors, or every door with
 `--no-ramps`, get a ladder path down to 2.5 ft below the hull instead,
-standing just outside the hull inside the doorway's voids. *Hull doors* on
-the Rooms page (`hullDoorExit`) chooses: `auto` (a ramp where it fits, else
+standing just outside the hull inside the doorway's voids. *Hull doors (ship)* on
+the Rooms page (`hullDoorExit`) chooses for the whole ship, and *Door's way
+down* for one door or row (see below): `auto` (a ramp where it fits, else
 a ladder), `ladder` (always a ladder) or `none` (a docking door: no way
 down). The hull void outside the door ends at the hull's real surface
 (found by sight lines out through it at three heights), and the clear space
@@ -389,6 +390,24 @@ hull is cut directly here, because the engine's jig did not finish on an
 opening this wide across a zigzag hull. Turn off *One flat pane across a zigzag
 wall* (`"flatWindows": false`) to cut tooth by tooth.
 
+**A way down for each hull door.** *Door's way down*, *Only while the door is
+open* and *Ramp length per height* on the Rooms page apply to hull doors you
+place from then on; with the door tool, a right click on a door gives it and the
+rest of its row these settings and the door texture. A door with a way of its own
+shows a letter in the plan: L ladder, R ramp, D docking, A ramp or ladder, S same
+as the ship, with a star if it is only there while the door is open.
+
+* A ramp asked for by name reaches the ground from up to 60 ft (the automatic
+  choice stops at 15 ft); higher, the door gets a ladder and the build warns.
+* *Ramp length per height* is feet of ramp for each foot it falls, 1.5 unless you
+  change it. At 4, a door 15 ft up has a ramp of about 60 ft.
+* *Only while the door is open* (experimental): a ladder cannot be taken hold of
+  and a ramp cannot be stood on with the door closed, and anyone on one falls when
+  it closes. The ramp stays in sight. The game's own characters do not come aboard
+  by such a ladder, so give a ship that needs them another way in.
+* Whether ground vehicles can drive up a ramp has not been tried yet.
+  `shipgen door-check` shows what each way down does, closed and open.
+
 **Crew routes.** The build warns when the rooms' walking paths fall into
 separate parts, naming the rooms in each. `shipgen sight` shows what is seen
 along a line of sight, leaving out faces seen from behind, as the game does.
@@ -408,7 +427,8 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "width": 36, "depth": 16, "decks": 2,
   "rooms":   [ { "type": "Bridge", "label": "Bridge 1", "colour": "#5a8cdc" } ],
   "ftl": "wormhole-p",
-  "doors":   [ { "deck": 0, "x": 7, "y": 7, "side": 1, "row": 1, "texture": 111 } ],
+  "doors":   [ { "deck": 0, "x": 7, "y": 7, "side": 1, "row": 1, "texture": 111,
+                 "exit": "ramp", "exitOpenOnly": true, "rampRun": 4 } ],
   "windows": [ { "deck": 1, "x": 12, "y": 13, "side": 2 } ],
   "ladders": [ { "deck": 0, "x": 13, "y": 7 } ],
   "parking": [ { "deck": 0, "x": 4, "y": 8, "kind": "ground", "across": true } ],

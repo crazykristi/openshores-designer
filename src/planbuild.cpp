@@ -3875,10 +3875,16 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		// or none at all for a docking door. Only where the hull is in the way
 		// of the ladder does the clearing in front of the door reach down:
 		// looked for straight below the ladder, from under the hull upwards.
-		const bool wayDown = plan.hullDoorExit != "none";
+		const QString doorExit = door.exit.isEmpty() ? plan.hullDoorExit : door.exit;
+		const bool wayDown = doorExit != "none";
 		const double rampRise = z0 - (hullBottom - SHIPGEN_RAMP_BELOW_HULL);
-		const bool rampExpected = wayDown && plan.hullDoorExit == "auto" && options.ramps
-				&& rampRise >= .5 && rampRise <= SHIPGEN_RAMP_MAX_RISE;
+		const double rampLimit = doorExit == "ramp" ? SHIPGEN_RAMP_LONGEST_RISE : SHIPGEN_RAMP_MAX_RISE;
+		const double rampRun = door.rampRun > 0 ? door.rampRun : SHIPGEN_RAMP_RUN_PER_RISE;
+		const bool rampExpected = (doorExit == "auto" || doorExit == "ramp") && options.ramps
+				&& rampRise >= .5 && rampRise <= rampLimit;
+		if(doorExit == "ramp" && options.ramps && rampRise > rampLimit)
+			report.warnings << QString("The hull door of '%1' is %2 ft up, too high for a ramp (%3 ft at most); it gets a ladder.")
+					.arg(room->group).arg(qRound(rampRise)).arg(qRound(rampLimit));
 		double clearBelow = 1e30;
 		if(wayDown && !rampExpected)
 		{
@@ -3901,8 +3907,9 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 		// A ramp down to the ground where the door is low enough, as at the
 		// user's aircraft factory; otherwise a ladder (below).
 		AuPoint rampTop, rampFoot;
+		const quint16 openOnly = door.exitOpenOnly ? doorId : 0;
 		const bool ramp = rampExpected && AddDoorRamp(*design, mn, mx, outward, surface,
-				hullBottom - SHIPGEN_RAMP_BELOW_HULL, rampTop, rampFoot);
+				hullBottom - SHIPGEN_RAMP_BELOW_HULL, rampTop, rampFoot, rampRun, rampLimit, openOnly);
 		if(ramp)
 			++report.ramps;
 		if(options.walkPaths)
@@ -3926,7 +3933,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 				// Out over the landing and down the ramp.
 				rampTop.z = pz;
 				AddWalkOnce(*design, from, rampTop, doorId, paths);
-				AddWalkOnce(*design, rampTop, rampFoot, 0, paths);
+				AddWalkOnce(*design, rampTop, rampFoot, openOnly, paths);
 				onTheGround << rampFoot;
 			}
 			else
@@ -3935,7 +3942,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options
 			// little below the bottom of the hull.
 			if(ladderDown)
 			{
-				AddLadderPath(*design, AuPoint(to.x, to.y, foot), to, outward * -1.0);
+				AddLadderPath(*design, AuPoint(to.x, to.y, foot), to, outward * -1.0, openOnly);
 				onTheGround << AuPoint(to.x, to.y, foot);
 			}
 			const double depth = fabs(surface - roomWall) - plan.skinFeet;

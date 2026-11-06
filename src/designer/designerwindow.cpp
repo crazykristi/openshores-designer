@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "designerwindow.h"
+#include "interior.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -577,11 +578,41 @@ QWidget* DesignerWindow::MakeRoomPage()
 	for(QComboBox* box : { m_roomWallTex, m_roomFloorTex, m_roomCeilingTex })
 		connect(box, QOverload<int>::of(&QComboBox::activated), this, &DesignerWindow::OnRoomEdited);
 	m_doorTex = textureBox("The texture for doors you place from now on. With the door tool, a right click on a door "
-			"gives it and the rest of its row this texture.");
+			"gives it and the rest of its row this texture, and the way down below.");
 	form->addRow("Door texture", m_doorTex);
 	connect(m_doorTex, QOverload<int>::of(&QComboBox::activated), this, [this]() {
 		m_view->SetDoorTexture(m_doorTex->currentData().toInt());
 	});
+	const QString doorExitTip = "For hull doors you place from now on. With the door tool, a right click on a door gives "
+			"it and the rest of its row these settings, and its texture. A door with a way of its own shows a letter in the "
+			"plan: L ladder, R ramp, D docking, A ramp or ladder, S same as the ship; a star means only while it is open.";
+	m_doorExit = new QComboBox;
+	m_doorExit->addItem("Same as the ship", "");
+	m_doorExit->addItem("A ramp or a ladder down", "auto");
+	m_doorExit->addItem("A ladder down", "ladder");
+	m_doorExit->addItem("A ramp down", "ramp");
+	m_doorExit->addItem("None (docking door)", "none");
+	m_doorExit->setToolTip(doorExitTip);
+	form->addRow("Door's way down", m_doorExit);
+	m_doorExitOpenOnly = new QCheckBox("Only while the door is open");
+	m_doorExitOpenOnly->setToolTip(doorExitTip + " (Experimental.) A ramp stays in sight with the door closed, "
+			"but cannot be stood on, and the game's crew do not use such a ladder to come aboard from the ground.");
+	form->addRow(m_doorExitOpenOnly);
+	m_doorRampRun = new QDoubleSpinBox;
+	m_doorRampRun->setRange(1.0, 8.0);
+	m_doorRampRun->setSingleStep(.5);
+	m_doorRampRun->setDecimals(1);
+	m_doorRampRun->setValue(SHIPGEN_RAMP_RUN_PER_RISE);
+	m_doorRampRun->setToolTip(doorExitTip + " Feet of ramp for each foot it falls: more is longer and gentler.");
+	form->addRow("Ramp length per height", m_doorRampRun);
+	auto doorExitChanged = [this]() {
+		const double run = m_doorRampRun->value();
+		m_view->SetDoorExit(m_doorExit->currentData().toString(), m_doorExitOpenOnly->isChecked(),
+				qFuzzyCompare(run, SHIPGEN_RAMP_RUN_PER_RISE) ? 0.0 : run);
+	};
+	connect(m_doorExit, QOverload<int>::of(&QComboBox::activated), this, doorExitChanged);
+	connect(m_doorExitOpenOnly, &QCheckBox::toggled, this, doorExitChanged);
+	connect(m_doorRampRun, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, doorExitChanged);
 	m_roomLabel = new QLineEdit;
 	m_roomLabel->setToolTip("The name of the room picked in the list, as the blueprint has it. Every room needs "
 							"its own.");
@@ -608,8 +639,9 @@ QWidget* DesignerWindow::MakeRoomPage()
 	m_hullDoorExit->addItem("None (docking door)", "none");
 	m_hullDoorExit->setToolTip("How people get from the hull doors down to the ground: a ramp where the door is "
 							   "low enough and a ladder otherwise, always a ladder, or no way down at all, for a "
-							   "ship that stays in space (no ladder, and nothing cleared below the door).");
-	windowForm->addRow("Hull doors", m_hullDoorExit);
+							   "ship that stays in space (no ladder, and nothing cleared below the door). A door can have "
+							   "its own way down: see *Door's way down* above.");
+	windowForm->addRow("Hull doors (ship)", m_hullDoorExit);
 	layout->addWidget(windowBox);
 	layout->addStretch(1);
 

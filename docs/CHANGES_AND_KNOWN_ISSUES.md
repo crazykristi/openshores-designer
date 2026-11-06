@@ -1,5 +1,40 @@
 # Changes and known issues
 
+## 2 November 2026: a way down for each hull door
+
+* **Each hull door or row can have its own way down** (*Door's way down* on the
+  Rooms page; `exit` in the plan): the ship's choice, a ramp or a ladder, a
+  ladder, a ramp, or none (a docking door). A ramp asked for by name goes up to
+  60 ft, where the automatic choice stops at 15 ft; above 60 ft the door gets a
+  ladder and the build warns. A row shows a letter in the plan.
+* **Ramp length** per door (`rampRun`, 1 to 8 ft of ramp for each foot it falls).
+* **Only while the door is open** (`exitOpenOnly`, experimental). Checked with
+  the game's own code by the new `shipgen door-check`; **not yet tried in the
+  game**.
+  * A Barrier cannot be tied to a door. `AuScBarrier::operator>>` adds a flag
+    (0x40) to the byte that holds the state it is tied to, and `operator<<` does
+    not take it out again, so a Barrier tied to Open (10) comes back tied to state
+    74, which no door is ever in. So such a ramp has no Barrier: the hull part
+    that shows it is what is walked on, and a hull void tied to the door's Closed
+    state takes it away while the door is closed.
+  * **Known**: such a ramp stays in sight with the door closed, because no part
+    that can be seen can be tied to a door except the door itself.
+  * **Known**: `AuScParts::FollowExteriorLadderDown` only looks a ladder's tie up
+    among the landing gear. For a ladder tied to a door it finds nothing and
+    reads past the end of that list. `door-check` shows such a ladder is never
+    offered as the way in from the ground, closed or open, so the game's own
+    characters will not come aboard by it. A player can still climb it.
+  * **Known**: anyone on such a ramp or ladder falls when the door closes.
+* **Known**, from before this change: with its door closed, a ramp that is always
+  there is not offered as a way in from the ground, because its path has no end
+  in a room until the door opens. `door-check` shows the game sending someone at
+  its foot to another entrance.
+* **Whether a ground vehicle can drive up a ramp is not known.** Nothing in the
+  game's code was found that routes vehicles up one; it needs trying in the game.
+* The door's settings are kept in plans, flips and the designer. The automatic
+  tests are added to `test.sh`; the new controls have not been clicked through by
+  a test, only the plans they make.
+
 ## 2 November 2026: release 0.3.6-alpha
 
 * **Version 0.3.6-alpha** (`src/version.h`, `RELEASE_NOTES.md`): everything below

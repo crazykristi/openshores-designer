@@ -214,6 +214,9 @@ private:
 	QComboBox*		m_roomFloorTex = 0;
 	QComboBox*		m_roomCeilingTex = 0;
 	QComboBox*		m_doorTex = 0;
+	QComboBox*		m_doorExit = 0;
+	QCheckBox*		m_doorExitOpenOnly = 0;
+	QDoubleSpinBox*	m_doorRampRun = 0;
 	QCheckBox*		m_slopedDecks = 0;
 	QComboBox*		m_hullStyle = 0;
 	QComboBox*		m_hullDoorExit = 0;

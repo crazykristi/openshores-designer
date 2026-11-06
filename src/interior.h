@@ -63,6 +63,9 @@ class AuScPart;
 // a ladder.
 #define SHIPGEN_RAMP_RUN_PER_RISE 1.5
 #define SHIPGEN_RAMP_MAX_RISE 15.0
+// How high a door can be for a ramp asked for by name, on that door. Above
+// this it gets a ladder, and the build says so.
+#define SHIPGEN_RAMP_LONGEST_RISE 60.0
 // The foot of the ramp is this far below the bottom of the hull. The ramp is
 // a hull part, so the ship rests on its foot too; level with the bottom.
 #define SHIPGEN_RAMP_BELOW_HULL 0.0
@@ -186,9 +189,16 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 // that the engine looks for the barrier out there at all), and a hull void
 // over it. 'top' and 'foot' are
 // where a walk path down it goes. False, and nothing added, if the door is
-// too high (SHIPGEN_RAMP_MAX_RISE) or too low for one.
+// too high ('maxRise') or too low for one. 'runPerRise' is how long it is for
+// its fall. With 'openOnlyDoor', it can only be stood on while that door is
+// open, and looks the same either way: a part that shows it cannot be tied to a
+// door. A Barrier cannot do this, because saving one adds a flag to the state it
+// is tied to, so the game never finds it in that state (AuScBarrier::operator>>).
+// So the hull part is what is walked on, with a hull void over it that is there
+// only while the door is closed.
 bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
-		double surface, double groundZ, AuPoint& top, AuPoint& foot);
+		double surface, double groundZ, AuPoint& top, AuPoint& foot,
+		double runPerRise = SHIPGEN_RAMP_RUN_PER_RISE, double maxRise = SHIPGEN_RAMP_MAX_RISE, quint16 openOnlyDoor = 0);
 
 // The hull part nearest to a point (0 if there is none).
 quint16 HullPartAt(const AuDesign& design, const AuPoint& p);
@@ -205,7 +215,8 @@ bool AddVoid(AuDesign& design, const QString& groupName, const AuScFaceList& fac
 bool SetVoidGravity(AuDesign& design, quint16 voidId, GRAVITY gravity);
 
 // A ladder path from 'bottom' up to 'top'; 'facing' is the way a climber faces.
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing);
+// With 'openOnlyDoor', it can only be taken hold of while that door is open.
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing, quint16 openOnlyDoor = 0);
 
 // What a ladder between decks looks like, beside its path: the opening is
 // cut through the lower room's ceiling and the upper room's floor with the

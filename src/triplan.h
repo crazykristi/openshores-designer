@@ -86,6 +86,16 @@ struct PlanDoor
 	// from before rows existed: every neighbour with 0 joins.
 	int		row = 0;
 	int		tex = -1;		// A texture from the game's library, or -1 for the usual look.
+	// Hull doors only; a row takes these from the door in its middle, and the
+	// designer sets them for a whole row. The way down: empty for the ship's
+	// hullDoorExit, or "auto", "ladder", "ramp" (up to SHIPGEN_RAMP_LONGEST_RISE,
+	// where "auto" stops at SHIPGEN_RAMP_MAX_RISE) or "none" (a docking door).
+	QString	exit;
+	// The way down can only be used while the door is open. A ramp stays visible
+	// when the door is closed, but can no longer be stood on.
+	bool	exitOpenOnly = false;
+	// Feet of ramp for each foot it falls; 0 for the usual SHIPGEN_RAMP_RUN_PER_RISE.
+	double	rampRun = 0;
 };
 
 // A ladder up from a cell of one deck into the same cell of the deck above.

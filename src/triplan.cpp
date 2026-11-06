@@ -867,6 +867,12 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 			o["row"] = d.row;
 		if(d.tex >= 0)
 			o["texture"] = d.tex;
+		if(!d.exit.isEmpty())
+			o["exit"] = d.exit;
+		if(d.exitOpenOnly)
+			o["exitOpenOnly"] = true;
+		if(d.rampRun > 0)
+			o["rampRun"] = d.rampRun;
 		doorArray.append(o);
 	}
 	root["doors"] = doorArray;
@@ -1083,6 +1089,12 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		d.side = o["side"].toInt();
 		d.row = o["row"].toInt();
 		d.tex = o["texture"].toInt(-1);
+		d.exit = o["exit"].toString();
+		if(d.exit != "auto" && d.exit != "ladder" && d.exit != "ramp" && d.exit != "none")
+			d.exit.clear();
+		d.exitOpenOnly = o["exitOpenOnly"].toBool();
+		d.rampRun = o["rampRun"].toDouble();
+		d.rampRun = d.rampRun > 0 ? qBound(1.0, d.rampRun, 8.0) : 0.0;
 		plan.doors << d;
 	}
 	plan.windows.clear();

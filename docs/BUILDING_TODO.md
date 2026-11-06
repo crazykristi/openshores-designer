@@ -183,4 +183,36 @@ centrepiece:
   `shipgen reduce` does (the user): done, above 20,000 faces; it also
   copes with models of several overlapping pieces.
 
+### Parallel tracks (from the user, 2026-11-06)
+Separate tracks, not in priority order; each can be picked up on its own.
+- [ ] **1. How the game's own designer places these** (from the original
+  game's source code):
+  - [ ] 1a. Turbolifts.
+  - [ ] 1b. The empire flag.
+  - [ ] 1c. Landing spots for spacecraft and starships (as at an airport).
+- [ ] **2. Weapon bay flow.** In the game a weapon bay always has a bay type
+  and a fire control station, and may have a weapon emitter. We already have
+  these types; let the user pick the bay type when placing an emitter. Support
+  several weapon bays per ship.
+- [ ] **3. Hull voids still trap people in front of the door.** A design
+  where nobody could get in during the game: the user's arness-mcrn ship
+  (private, outside this repository). Check whether hull voids are switched
+  off when a ramp is closed or open.
+- [ ] **4. A second window style: one unified window** where possible (the
+  old style stays; windows can look garbled now). Needs windows that can be
+  dragged out, as doors are.
+- [ ] **5. Hull geometry clips through doors.** The door is its own geometry
+  and takes precedence: cut the hull away inside the doorway.
+- [ ] **6. Hull-wide default textures** for walls, doors, ceilings and floors,
+  so they do not have to be picked again for each new room.
+- [ ] **7. Liveries** (working name; also possible: markings, insignia). A
+  painted pattern must stay clearly visible: let the user mark a shape as a
+  livery so the designer keeps as much of its geometry as it can (no thinning
+  or merging across it).
+- [ ] **8. Balconies:** a wall a third of the room's height between rooms.
+- [ ] **9. Windows between rooms**, if the engine supports them.
+- [ ] **10. Audit the room types:** which ones actually do something in the
+  game. Rooms and room voids can carry properties; the list has grown very
+  long.
+
 ### Open questions to settle as we go

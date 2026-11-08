@@ -714,3 +714,285 @@ void AuditDesign(const AuScParts& parts, QList<HullSolidity>& hulls,
 				.arg(hull.id).arg(s.openEdges).arg(s.nonManifoldEdges);
 	}
 }
+
+//-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+// Parts sticking out of the hull.
+
+namespace {
+
+bool ShouldBeInside(const AuScPart* part)
+{
+	if(!part || part->IsOmitted())
+		return false;
+	if(part->IsHullMesh())
+		return part->GroupName() == "Frame";
+	if(part->IsRoomVoid())
+		return !part->AssociatedPartId();		// A doorway reaches through on purpose.
+	if(part->IsRoomMesh() || part->IsTurboLiftMesh())
+		return true;
+	const int t = part->Type();
+	return t == AuScPart::Part_Mesh || t == AuScPart::Part_Lift || t == AuScPart::Part_GameTable ||
+			t == AuScPart::Part_TroopPost ||
+			(t >= AuScPart::Part_StatusAlert && t <= AuScPart::Part_ConsoleTransporter) ||
+			(t >= AuScPart::Part_BerthCapt && t <= AuScPart::Part_BerthTroop);
+}
+
+}
+
+static QList<QPair<AuPoint, AuPoint> > HullDoorBoxes(const AuScParts& parts, double margin);
+static bool InAnyBox(const QList<QPair<AuPoint, AuPoint> >& boxes, const AuPoint& p);
+
+QList<StickOut> AuditStickOut(const AuScParts& parts, double tolerance)
+{
+	QList<StickOut> result;
+	const QList<QPair<AuPoint, AuPoint> > doors = HullDoorBoxes(parts, .25);
+
+	const SolidMesh hull = HullSolidOf(parts);
+	if(!hull.HasInside())
+		return result;
+
+	auto inside = [&](const AuPoint& p) {
+		bool on = false;
+		return hull.Contains(p, &on) || on;
+	};
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!ShouldBeInside(part) || OutsideOnPurpose(parts, part))
+			continue;
+		QSet<quint32> ids;
+		part->VertexIds(ids);
+		if(ids.isEmpty())
+			continue;
+		AuPoint middle(0, 0, 0);
+		for(quint32 id : ids)
+			middle += part->VertexLoc(id);
+		middle /= double(ids.size());
+
+		StickOut s;
+		s.partId = it.key();
+		s.type = part->TypeName();
+		s.group = part->GroupName();
+		s.corners = ids.size();
+		s.mn = AuPoint(1e30, 1e30, 1e30);
+		s.mx = AuPoint(-1e30, -1e30, -1e30);
+		for(quint32 id : ids)
+		{
+			const AuPoint p = part->VertexLoc(id);
+			AuPoint toMiddle = middle - p;
+			const double len = toMiddle.Length();
+			if(len > 1e-9)
+				toMiddle /= len;
+			// A corner on the surface, or just past it, is in; so is one at a
+			// hull door's opening.
+			if(InAnyBox(doors, p) || inside(p) || (len > 1e-9 && inside(p + toMiddle * qMin(tolerance, len))))
+				continue;
+			// How far: walk towards the middle until it is inside.
+			double past = len;
+			for(double d = tolerance; d < len; d += .25)
+				if(inside(p + toMiddle * d))
+				{
+					past = d;
+					break;
+				}
+			++s.outside;
+			s.worst = qMax(s.worst, past);
+			s.mn = s.mn.Min(p);
+			s.mx = s.mx.Max(p);
+		}
+		if(s.outside)
+			result << s;
+	}
+	return result;
+}
+
+// The boxes of the hull doors, a little larger: a corner at a door's opening
+// is where the hull has a hole, and the rays of the inside test go through it.
+static QList<QPair<AuPoint, AuPoint> > HullDoorBoxes(const AuScParts& parts, double margin)
+{
+	QList<QPair<AuPoint, AuPoint> > boxes;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted() || !part->IsHullDoor())
+			continue;
+		// All its states: a door read from a file has no current one.
+		AuScFaceList faces;
+		part->Faces(faces);
+		if(const AuScStatePart* sp = dynamic_cast<const AuScStatePart*>(part))
+		{
+			AuScStatePart* copy = dynamic_cast<AuScStatePart*>(sp->Clone());
+			for(int state = 0; copy && state < 256; ++state)
+				if(copy->HasState(quint8(state)))
+				{
+					AuScFaceList more;
+					copy->SetState(quint8(state));
+					copy->Faces(more);
+					faces.AddFaces(more);
+				}
+			delete copy;
+		}
+		AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+		for(const AuScFace* f : faces)
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				mn = mn.Min(AuPoint(f->Vertex(v)));
+				mx = mx.Max(AuPoint(f->Vertex(v)));
+			}
+		if(mn.x <= mx.x)
+			boxes << qMakePair(mn - AuPoint(margin, margin, margin), mx + AuPoint(margin, margin, margin));
+	}
+	return boxes;
+}
+
+static bool InAnyBox(const QList<QPair<AuPoint, AuPoint> >& boxes, const AuPoint& p)
+{
+	for(const QPair<AuPoint, AuPoint>& b : boxes)
+		if(p.x >= b.first.x && p.x <= b.second.x && p.y >= b.first.y && p.y <= b.second.y && p.z >= b.first.z && p.z <= b.second.z)
+			return true;
+	return false;
+}
+
+SolidMesh HullSolidOf(const AuScParts& parts)
+{
+	AuScFaceList hullFaces;
+	int openings = 0;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted())
+			continue;
+		if(part->IsDoor() || part->IsWindow())
+			++openings;
+		if((part->IsHullMesh() && part->GroupName() != "Frame") || part->IsWindow())
+		{
+			AuScFaceList faces;
+			part->Faces(faces);
+			hullFaces.AddFaces(faces);
+		}
+	}
+	AuScTriList triangles;
+	hullFaces.Triangles(triangles);
+	SolidMesh hull(triangles);
+	hull.SetOpenings(openings);
+	return hull;
+}
+
+bool OutsideOnPurpose(const AuScParts& parts, const AuScPart* part)
+{
+	if(!part || !part->IsHullMesh() || part->GroupName() != "Frame")
+		return false;
+	AuPoint mn, mx;
+	if(!PartBounds(part, mn, mx))
+		return false;
+	for(const QPair<AuPoint, AuPoint>& door : HullDoorBoxes(parts, 0))
+		if(mx.z <= door.first.z + .1 && BoxesTouch(mn, mx, door.first - AuPoint(1, 1, 1), door.second + AuPoint(1, 1, 1)))
+			return true;
+	return false;
+}
+
+bool PullPointInside(const SolidMesh& hull, AuPoint& p, const QList<AuPoint>& directions, double reach, double margin)
+{
+	auto inside = [&](const AuPoint& q) {
+		bool on = false;
+		return hull.Contains(q, &on) || on;
+	};
+	if(inside(p))
+		return true;
+	double best = 1e30;
+	AuPoint bestDir;
+	for(const AuPoint& d : directions)
+		for(double step = .05; step <= reach && step < best; step += .05)
+			if(inside(p + d * step))
+			{
+				best = step;
+				bestDir = d;
+				break;
+			}
+	if(best > reach)
+		return false;
+	const AuPoint in = p + bestDir * best;
+	p = inside(in + bestDir * margin) ? in + bestDir * margin : in;
+	return true;
+}
+
+int PullFramesInside(AuScParts& parts, double margin, int* stuck)
+{
+	if(stuck)
+		*stuck = 0;
+	const SolidMesh hull = HullSolidOf(parts);
+	if(!hull.HasInside())
+		return 0;
+	QList<quint16> frames;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(it.value() && !it.value()->IsOmitted() && it.value()->IsHullMesh() && it.value()->GroupName() == "Frame"
+				&& !OutsideOnPurpose(parts, it.value()))
+			frames << it.key();
+	const QList<QPair<AuPoint, AuPoint> > doors = HullDoorBoxes(parts, .25);
+	int moved = 0;
+	auto key = [](const AuPoint& p) {
+		return QString("%1,%2,%3").arg(qRound64(p.x * 1e4)).arg(qRound64(p.y * 1e4)).arg(qRound64(p.z * 1e4));
+	};
+	for(quint16 id : frames)
+	{
+		AuScPart* part = parts.value(id);
+		AuScFaceList faces;
+		part->Faces(faces);
+		AuPoint middle(0, 0, 0);
+		int n = 0;
+		for(const AuScFace* f : faces)
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				middle += AuPoint(f->Vertex(v));
+				++n;
+			}
+		if(!n)
+			continue;
+		middle /= double(n);
+		// Each corner once, wherever it is shared, so the part stays closed.
+		QHash<QString, AuPoint> shift;
+		QSet<QString> seen;
+		for(const AuScFace* f : faces)
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				const AuPoint p(f->Vertex(v));
+				const QString k = key(p);
+				if(seen.contains(k))
+					continue;
+				seen.insert(k);
+				QList<AuPoint> dirs { AuPoint(1, 0, 0), AuPoint(-1, 0, 0), AuPoint(0, 1, 0), AuPoint(0, -1, 0),
+						AuPoint(0, 0, 1), AuPoint(0, 0, -1) };
+				AuPoint toMiddle = middle - p;
+				if(toMiddle.Length() > 1e-9)
+				{
+					toMiddle.Unit();
+					dirs << toMiddle;
+				}
+				AuPoint q = p;
+				bool on = false;
+				if(InAnyBox(doors, p) || hull.Contains(q, &on) || on)
+					continue;
+				if(PullPointInside(hull, q, dirs, 12.0, margin))
+				{
+					shift.insert(k, q - p);
+					++moved;
+				}
+				else if(stuck)
+					++*stuck;
+			}
+		if(shift.isEmpty())
+			continue;
+		for(AuScFace* f : faces)
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				const auto it = shift.constFind(key(AuPoint(f->Vertex(v))));
+				if(it == shift.constEnd())
+					continue;
+				AuMatrix4x4 t;
+				t.Translate(it.value());
+				f->Transform(t, 0, QSet<quint32> { quint32(v) }, 0, QSet<quint32>(), false);
+			}
+		part->SetFaces(faces);
+	}
+	return moved;
+}

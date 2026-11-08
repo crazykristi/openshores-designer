@@ -31,6 +31,7 @@
 #include "aubdreport.h"
 #include "aether.h"
 #include "audit.h"
+#include "view.h"
 #include "building.h"
 #include "dgdata.h"
 #include "generate.h"
@@ -700,6 +701,70 @@ int cmdDoorCheck(const QStringList& args)
 	return 0;
 }
 
+int cmdViewCheck(const QStringList& given)
+{
+	QStringList args = given;
+	double eye = 2.4;
+	const int at = args.indexOf("--eye");
+	if(at >= 0 && at + 1 < args.size())
+	{
+		eye = args.at(at + 1).toDouble();
+		args.removeAt(at + 1);
+		args.removeAt(at);
+	}
+	if(args.isEmpty())
+	{
+		out() << "usage: shipgen view-check <design.SoH> [--eye <feet above the seat, 2.4>]\n";
+		return 2;
+	}
+	AuDesign* design = LoadForTool(args.first());
+	if(!design)
+	{
+		err() << "could not load: " << args.first() << "\n";
+		return 1;
+	}
+	const QList<StationView> views = CheckStationViews(design->Parts(), eye);
+	if(views.isEmpty())
+		out() << "No helm or command station.\n";
+	else
+		out() << QString("The eye is %1 ft over the seat (5.2 ft over the floor standing); --eye changes it.\n\n").arg(eye);
+	bool allAhead = true;
+	for(const StationView& v : views)
+	{
+		out() << QString("%1 (part %2)%3, eye at %4 %5 %6, facing %7 %8\n").arg(v.type).arg(v.partId)
+				.arg(v.group.isEmpty() ? QString() : QString(" in '%1'").arg(v.group))
+				.arg(v.eye.x, 0, 'f', 1).arg(v.eye.y, 0, 'f', 1).arg(v.eye.z, 0, 'f', 1)
+				.arg(v.facing.x, 0, 'f', 2).arg(v.facing.y, 0, 'f', 2);
+		for(const ViewSector& s : v.sectors)
+		{
+			out() << QString("  %1 %2 % out (glass %3 %, the hull's undrawn inside %4 %, nothing %5 %)")
+					.arg(s.name + ":", -12).arg(s.Percent(s.SeesOut()), 3).arg(s.Percent(s.glass)).arg(s.Percent(s.hull))
+					.arg(s.Percent(s.open));
+			QList<QPair<int, QString> > worst;
+			for(auto it = s.blockers.constBegin(); it != s.blockers.constEnd(); ++it)
+				worst << qMakePair(-it.value(), it.key());
+			std::sort(worst.begin(), worst.end());
+			QStringList named;
+			for(int i = 0; i < worst.size() && i < 3; ++i)
+				named << QString("%1 % %2").arg(s.Percent(-worst.at(i).first)).arg(worst.at(i).second);
+			if(!named.isEmpty())
+				out() << "; in the way: " << named.join(", ");
+			out() << "\n";
+		}
+		if(!v.SeesAhead())
+		{
+			allAhead = false;
+			out() << "  Cannot see out ahead.\n";
+		}
+		else if(const ViewSector* a = v.Sector("ahead"))
+			if(a->hull > a->glass)
+				out() << "  Ahead is seen mostly through the hull's inside, which the game does not draw, not glass: "
+						 "a canopy or windows further forward would put glass there.\n";
+	}
+	delete design;
+	return allAhead ? 0 : 1;
+}
+
 int cmdCrewCheck(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -1308,6 +1373,8 @@ int cmdBuildPlan(const QStringList& args)
 	if(report.hullSkylights)
 		out() << " (" << report.hullSkylights << " following the hull)";
 	out() << "\n";
+	if(report.canopies)
+		out() << "Canopies     : " << report.canopies << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
 	out() << "Zero-G joins : " << report.zeroGJoins << "\n";
 	out() << "Open to below: " << report.openJoins << "\n";
@@ -1859,6 +1926,21 @@ int cmdAudit(const QStringList& args)
 		out() << "none\n";
 	if(unchecked)
 		out() << "Rooms that could not be checked: " << unchecked << "\n";
+
+	// Everything else that belongs inside: frames, linings, furniture,
+	// stations, berths.
+	// Not for a building: its kit and decorations stand outside on purpose.
+	// It is a note, not a failure: the exact containment above is the test.
+	const bool building = dynamic_cast<AuBdDesign*>(design) != 0;
+	const QList<StickOut> sticking = building ? QList<StickOut>() : AuditStickOut(design->Parts());
+	if(!building)
+		out() << "\nParts sticking out of the hull: " << (sticking.isEmpty() ? QString("none") : QString::number(sticking.size())) << "\n";
+	for(const StickOut& st : sticking)
+		out() << QString("  part %1  %2%3  %4 of %5 corners out, up to %6 ft  x %7..%8  y %9..%10  z %11..%12\n")
+				.arg(st.partId).arg(st.type).arg(st.group.isEmpty() ? QString() : QString(" [%1]").arg(st.group))
+				.arg(st.outside).arg(st.corners).arg(st.worst, 0, 'f', 1)
+				.arg(st.mn.x, 0, 'f', 1).arg(st.mx.x, 0, 'f', 1).arg(st.mn.y, 0, 'f', 1).arg(st.mx.y, 0, 'f', 1)
+				.arg(st.mn.z, 0, 'f', 1).arg(st.mx.z, 0, 'f', 1);
 	for(const QString& note : notes)
 		out() << "Note: " << note << "\n";
 
@@ -2485,6 +2567,7 @@ void usage()
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
 	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
+	out() << "  shipgen view-check <design.SoH> [--eye ft]  what the helm and the captain see from their seats\n";
 	out() << "  shipgen cut       <in.SoH> <out.SoH> window|door <hull part> <room part|0> x0 y0 z0 x1 y1 z1\n";
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
 	out() << "  shipgen resave    <in.SoH> <out.SoH>  read and write back, keeping parts this build cannot read\n";
@@ -2847,6 +2930,7 @@ int main(int argc, char* argv[])
 	if(command == "sight")				return cmdSight(rest);
 	if(command == "walk")				return cmdWalk(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
+	if(command == "view-check")			return cmdViewCheck(rest);
 	if(command == "door-check")			return cmdDoorCheck(rest);
 	if(command == "kit")				return cmdKit(rest);
 	if(command == "plan-example")		return cmdPlanExample(rest);

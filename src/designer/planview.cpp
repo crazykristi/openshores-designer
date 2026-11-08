@@ -153,73 +153,111 @@ QList<int> PlanView::ButtonRow(int door) const
 }
 
 // A button goes on a wall of one of the door's rooms, its middle within 12 ft
-// of the door: the wall edge of the triangle under the mouse nearest it.
-bool PlanView::ButtonSpot(const QPointF& world, QPoint& eighths, QPointF& wallA, QPointF& wallB, QString* why) const
+// of the door, where the mouse is along the wall (in steps of a quarter of a
+// foot). A hull door's button can also go outside: on the hull beside the
+// door, clicked beyond the door's wall.
+bool PlanView::ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA, QPointF& wallB, QString* why) const
 {
 	const QList<int> row = ButtonRow(m_buttonDoor);
 	if(row.isEmpty())
 		return false;
+	const double margin = .5, step = .25, halfPlate = .35;
 	QList<int> rooms;
-	QPointF middle(0, 0);
+	QPointF middle(0, 0), dir(0, 0), outward(0, 0);
+	bool hullDoor = false;
+	QList<QPointF> ends;
 	for(int i : row)
 	{
 		const PlanDoor& d = m_plan->doors.at(i);
 		const TriRef a(d.deck, d.cx, d.cy, d.side);
 		const TriRef b = m_plan->AcrossCellEdge(d.deck, d.cx, d.cy, d.side);
+		const bool roomA = m_plan->Valid(a) && m_plan->Room(a) >= 0, roomB = m_plan->Valid(b) && m_plan->Room(b) >= 0;
 		for(const TriRef& t : { a, b })
 			if(m_plan->Valid(t) && m_plan->Room(t) >= 0 && !rooms.contains(m_plan->Room(t)))
 				rooms << m_plan->Room(t);
 		QPointF c[3];
 		m_plan->TriCorners(a, c);
 		middle += (c[0] + c[1]) / 2.0;
-	}
-	middle /= row.size();
-	TriRef t;
-	if(!m_plan->TriAt(m_plan->doors.at(row[0]).deck, world, t) || !rooms.contains(m_plan->Room(t)))
-	{
-		if(why)
-			*why = "A door's button goes on a wall of one of the rooms the door opens into.";
-		return false;
-	}
-	double best = 1e30;
-	for(int e = 0; e < 3; ++e)
-	{
-		const TriRef across = m_plan->Across(t, e);
-		if(m_plan->Valid(across) && m_plan->Room(across) == m_plan->Room(t))
-			continue;
-		// Not in a doorway (a cell edge with a door on it).
-		if(e == 0 && m_plan->DoorAt(t.deck, t.cx, t.cy, t.k) >= 0)
-			continue;
-		QPointF p, q;
-		m_plan->EdgeEnds(t, e, p, q);
-		const QPointF off = (p + q) / 2.0 - world;
-		const double d = QPointF::dotProduct(off, off);
-		if(d < best)
+		ends << c[0] << c[1];
+		if(dir.isNull())
 		{
-			best = d;
-			wallA = p;
-			wallB = q;
+			dir = c[1] - c[0];
+			dir /= sqrt(QPointF::dotProduct(dir, dir));
+		}
+		if(roomA != roomB && outward.isNull())
+		{
+			hullDoor = true;
+			// Out of the room, across the door's edge.
+			const QPointF inside = m_plan->TriCentre(roomA ? a : b);
+			outward = QPointF(-dir.y(), dir.x());
+			if(QPointF::dotProduct(outward, (c[0] + c[1]) / 2.0 - inside) < 0)
+				outward = -outward;
 		}
 	}
-	if(best > 1e29)
+	middle /= row.size();
+	double lo = 1e30, hi = -1e30;
+	for(const QPointF& e : ends)
+	{
+		lo = qMin(lo, QPointF::dotProduct(e - middle, dir));
+		hi = qMax(hi, QPointF::dotProduct(e - middle, dir));
+	}
+
+	TriRef t;
+	const bool inRoom = m_plan->TriAt(m_plan->doors.at(row[0]).deck, world, t) && rooms.contains(m_plan->Room(t));
+	if(!inRoom && hullDoor && QPointF::dotProduct(world - middle, outward) > 0)
+	{
+		// Outside: on the hull beside the door, clear of its frame.
+		double along = qRound(QPointF::dotProduct(world - middle, dir) / step) * step;
+		if(along < 0)
+			along = qMin(along, lo - .8);
+		else
+			along = qMax(along, hi + .8);
+		if(fabs(along) > 12)
+		{
+			if(why)
+				*why = "A door's button has to be within 12 ft of the door (the game shows its switch within 3 m).";
+			return false;
+		}
+		const QPointF spot = middle + dir * along;
+		wallA = spot - dir * halfPlate + outward * .15;
+		wallB = spot + dir * halfPlate + outward * .15;
+		eighths = m_plan->ToEighths(spot + outward * (m_plan->cellFeet / 8.0));
+		return true;
+	}
+	if(!inRoom)
+	{
+		if(why)
+			*why = hullDoor ? "A door's button goes on a wall of the door's room, or outside on the hull beside the door."
+					: "A door's button goes on a wall of one of the rooms the door opens into.";
+		return false;
+	}
+	QPointF spot, in, a, b;
+	if(!m_plan->ButtonWallSpot(t, world, margin, spot, in, &a, &b))
 	{
 		if(why)
 			*why = "Point at a wall of the room: a door's button goes on a wall.";
 		return false;
 	}
-	const QPointF mid = (wallA + wallB) / 2.0, toDoor = mid - middle;
+	// In steps along the wall, from its end.
+	const QPointF ab = b - a;
+	const double len = sqrt(QPointF::dotProduct(ab, ab));
+	const QPointF along = ab / len;
+	const double m = qMin(margin, len / 2);
+	const double at = qBound(m, qRound(QPointF::dotProduct(spot - a, along) / step) * step, len - m);
+	spot = a + along * at;
+	const QPointF toDoor = spot - middle;
 	if(QPointF::dotProduct(toDoor, toDoor) > 12.0 * 12.0)
 	{
 		if(why)
 			*why = "A door's button has to be within 12 ft of the door (the game shows its switch within 3 m).";
 		return false;
 	}
-	// An eighth of a cell in from the wall's middle, into the triangle.
-	QPointF in = m_plan->TriCentre(t) - mid;
-	in /= sqrt(QPointF::dotProduct(in, in));
-	const QPointF at = mid + in * (m_plan->cellFeet / 8.0);
-	const QPointF origin = m_plan->Corner(0, 0);
-	eighths = QPoint(qRound((at.x() - origin.x()) / m_plan->cellFeet * 8.0), qRound((at.y() - origin.y()) / m_plan->cellFeet * 8.0));
+	wallA = spot - along * halfPlate;
+	wallB = spot + along * halfPlate;
+	// A little in from the wall, into the triangle: not so far near a corner
+	// of it that the point falls into the next one.
+	const double offset = qMin(m_plan->cellFeet / 8.0, .25 * qMin(at, len - at));
+	eighths = m_plan->ToEighths(spot + in * offset);
 	return true;
 }
 
@@ -228,7 +266,8 @@ void PlanView::StartButtons(int door)
 	m_buttonDoor = door;
 	m_buttonHover = false;
 	emit Hover("Now click a wall within 12 ft of the door for a button that opens and closes it, then one on the "
-			"other side if you like. Esc, or a click anywhere else, for no (more) buttons.");
+			"other side if you like (for a hull door, click outside beside it for one on the hull). Esc, or a click "
+			"anywhere else, for no (more) buttons.");
 	m_notice = "button";
 	setFocus();		// For Esc.
 	update();
@@ -386,7 +425,7 @@ void PlanView::paintEvent(QPaintEvent*)
 				p.drawText(box, Qt::AlignCenter, way);
 			}
 			// Its buttons: small green squares on the wall.
-			for(const QPoint& b : door.buttons)
+			for(const QPointF& b : door.buttons)
 			{
 				const QPointF at = ToScreen(m_plan->EighthPoint(b));
 				const double r = qMax(3.0, cellPixels * .12);
@@ -418,7 +457,15 @@ void PlanView::paintEvent(QPaintEvent*)
 			if(window.deck != m_deck)
 				continue;
 			p.setPen(QPen(kWindow, qMax(1.5, cellPixels / 10), m_plan->SkylightIsHull(window) ? Qt::DotLine : Qt::DashLine));
-			p.setBrush(Qt::NoBrush);
+			// A canopy is filled, as glass.
+			if(window.shape == "canopy")
+			{
+				QColor glass = kWindow;
+				glass.setAlpha(80);
+				p.setBrush(glass);
+			}
+			else
+				p.setBrush(Qt::NoBrush);
 			if(window.k < 0)
 			{
 				const QRectF r = QRectF(ToScreen(m_plan->Corner(window.cx, window.cy)), ToScreen(m_plan->Corner(window.cx + 1, window.cy + 1)))
@@ -713,25 +760,18 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	}
 	if(!m_plan)
 		return;
-	TriRef t;
-	if(!TriangleAt(event->pos(), t))
-		return;
 	const bool erase = event->button() == Qt::RightButton;
-
-	if(CrewMode())
-	{
-		CrewClick(ToWorld(event->pos()), t, erase);
-		return;
-	}
 	if(m_mode == DoorMode && m_buttonDoor >= 0)
 	{
 		// Placing a door's buttons: a click on a wall near it puts one there;
 		// anywhere else stops, and the click does what it would have done.
-		QPoint at;
+		QPointF at;
 		QPointF wa, wb;
 		// A click on a door (this one or another) is a click on the door:
 		// it stops placing buttons and takes the door away, as usual.
-		const bool onDoor = m_plan->DoorAt(t.deck, t.cx, t.cy, t.k) >= 0;
+		// (A hull door's outside button can be off the grid.)
+		TriRef under;
+		const bool onDoor = TriangleAt(event->pos(), under) && m_plan->DoorAt(under.deck, under.cx, under.cy, under.k) >= 0;
 		if(!erase && !onDoor && ButtonSpot(ToWorld(event->pos()), at, wa, wb, 0))
 		{
 			emit AboutToChange();
@@ -748,7 +788,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 				const TriRef m = m_plan->Mirror(TriRef(d.deck, d.cx, d.cy, d.side));
 				const int other = m_plan->DoorAt(m.deck, m.cx, m.cy, m.k);
 				if(other >= 0 && !row.contains(other))
-					m_plan->doors[ButtonRow(other)[0]].buttons << QPoint(at.x(), 8 * m_plan->Depth() - at.y());
+					m_plan->doors[ButtonRow(other)[0]].buttons << QPointF(at.x(), 8 * m_plan->Depth() - at.y());
 			}
 			emit PlanChanged(false);
 			if(count + 1 >= 2)
@@ -758,6 +798,15 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			return;
 		}
 		StopButtons();
+	}
+	TriRef t;
+	if(!TriangleAt(event->pos(), t))
+		return;
+
+	if(CrewMode())
+	{
+		CrewClick(ToWorld(event->pos()), t, erase);
+		return;
 	}
 	if(m_mode == DoorMode)
 	{

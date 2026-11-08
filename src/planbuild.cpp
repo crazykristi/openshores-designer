@@ -22,6 +22,7 @@
 #include <queue>
 
 #include "audit.h"
+#include "view.h"
 #include "mesh.h"
 #include <functional>
 #include "auscdesign.h"
@@ -1628,6 +1629,18 @@ void ApplyPaint(AuScFace& face, const TriPlan& plan, int paint)
 		face.SetPaint(AuScFace::COLOR_THEME(AuScFace::THEME_ExteriorPrimary + p.theme), 255);
 	else
 		face.SetPaint(p.colour);
+	if(!p.HasFinish())
+		return;
+	face.SetOpacity(p.opacity);
+	face.SetSelfIllumination(p.selfLit);
+	// A reflective face with shininess 0 lights up evenly all over (the
+	// exponent of the highlight is 0), so it gets at least 1, as the kit does.
+	face.SetShine(p.reflect > 0.f ? qMax(1.f, p.shine) : p.shine);
+	face.SetReflectivity(p.reflect);
+	face.SetEffect(SURFACE_EFFECT(p.effect < int(EFF_Count) ? p.effect : 0));
+	if(p.HasGlow())
+		for(int v = 0; v < face.VertexCount(); ++v)
+			face.SetVertexGlow(v, p.glow);
 }
 
 // A room on one deck.
@@ -2352,8 +2365,24 @@ static double TrisDistance(const QList<QVector<QPointF> >& tris, const QPointF& 
 // room's ceiling is cut the same way and opened; a lining stands on each
 // edge of the outline up to the hull. False, with nothing taken out of the
 // hull, when less than half the outline finds hull over it.
+// A canopy (a fighter's, or any bubble of glass over a room): the hull over
+// the outline is glass from the sill up, its sides too, wherever it is the
+// first thing seen from the eye; the room's walls under it are opened above
+// the sill as well as its ceiling, and there is no lining, which would stand
+// in the way of the view.
+struct CanopyCut
+{
+	bool	on = false;
+	double	sill = 0;		// The z the glass and the opened walls start at.
+	double	eye = 0;		// The z of the eye the glass is looked at from.
+	double	reach = 0;		// How far past the outline (in the plan) the glass may be: the
+							// hull is not cut along the outline, its own faces are taken
+							// whole, so the glass ends where the model's canopy does.
+};
+
 static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& group,
-		const QList<QVector<QPointF> >& tris, const QList<QLineF>& edges, double plane, double sgn, double& nearest)
+		const QList<QVector<QPointF> >& tris, const QList<QLineF>& edges, double plane, double sgn, double& nearest,
+		const CanopyCut& canopy = CanopyCut())
 {
 	nearest = 1e30;
 	QList<quint16> hullIds;
@@ -2373,8 +2402,18 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 		}
 		area += fabs((t[1].x() - t[0].x()) * (t[2].y() - t[0].y()) - (t[1].y() - t[0].y()) * (t[2].x() - t[0].x())) / 2;
 	}
-	// Upright cutters on the outline, from just under the ceiling far out.
-	const double zLow = qMin(plane - sgn, plane + sgn * 400), zHigh = qMax(plane - sgn, plane + sgn * 400);
+	// Upright cutters on the outline, from just under the ceiling (a
+	// canopy's sill) far out.
+	const double zLow = canopy.on ? canopy.sill - .05 : qMin(plane - sgn, plane + sgn * 400);
+	const double zHigh = qMax(plane - sgn, plane + sgn * 400);
+	double cxSum = 0, cySum = 0;
+	for(const QVector<QPointF>& t : tris)
+	{
+		const double a = fabs((t[1].x() - t[0].x()) * (t[2].y() - t[0].y()) - (t[1].y() - t[0].y()) * (t[2].x() - t[0].x())) / 2;
+		cxSum += (t[0].x() + t[1].x() + t[2].x()) / 3 * a;
+		cySum += (t[0].y() + t[1].y() + t[2].y()) / 3 * a;
+	}
+	const AuPoint eyePoint(area > 0 ? cxSum / area : (xa + xb) / 2, area > 0 ? cySum / area : (ya + yb) / 2, canopy.eye);
 	QList<AuScFaceQuad> cutters;
 	for(const QLineF& e : edges)
 	{
@@ -2408,9 +2447,32 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 		farFaces.AddFaces(nearFaces);
 		part->SetFaces(farFaces);
 	};
-	for(quint16 id : hullIds)
-		sliceNear(design.Parts().value(id), zLow, zHigh);
+	// A canopy takes the hull's faces whole, so that the glass ends where the
+	// model's canopy does; on a hull of a few large faces that covers too
+	// little, and it is cut along the outline after all, as a ceiling window.
+	if(!canopy.on)
+		for(quint16 id : hullIds)
+			sliceNear(design.Parts().value(id), zLow, zHigh);
+	double reach = canopy.on ? canopy.reach : 0.0;
+	QMap<quint16, QSet<int> > take;
+	AuScFaceList glass;
+	double covered = 0;
 	AuScFaceList hullFaces;
+	for(int pass = 0; pass < 2; ++pass)
+	{
+	if(pass == 1)
+	{
+		if(!canopy.on || (!glass.isEmpty() && covered >= area * .5))
+			break;
+		for(quint16 id : hullIds)
+			sliceNear(design.Parts().value(id), zLow, zHigh);
+		reach = 0;
+		take.clear();
+		glass.Clear();			// It owns its faces.
+		covered = 0;
+		nearest = 1e30;
+		hullFaces.Clear();
+	}
 	for(quint16 id : hullIds)
 	{
 		AuScFaceList partFaces;
@@ -2419,9 +2481,6 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 	}
 
 	// The glass.
-	QMap<quint16, QSet<int> > take;
-	AuScFaceList glass;
-	double covered = 0;
 	for(quint16 id : hullIds)
 	{
 		AuScFaceList faces;
@@ -2434,7 +2493,7 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 				continue;
 			n.Unit();
 			const double facing = n.z * sgn;
-			if(facing < .2)
+			if(facing < (canopy.on ? -.3 : .2))
 				continue;
 			bool inside = true;
 			double fNear = 1e30;
@@ -2442,20 +2501,32 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 			{
 				const AuPoint p(f->Vertex(v));
 				const double h = (p.z - plane) * sgn;
-				inside = h > -.3 && TrisDistance(tris, QPointF(p.x, p.y)) < .3;
+				inside = (canopy.on ? p.z > canopy.sill - .05 : h > -.3)
+						&& TrisDistance(tris, QPointF(p.x, p.y)) < .3 + reach;
 				fNear = qMin(fNear, h);
 			}
 			const AuPoint centre = f->FaceLocation();
-			if(!inside || TrisDistance(tris, QPointF(centre.x, centre.y)) > 1e-3)
+			if(!inside || TrisDistance(tris, QPointF(centre.x, centre.y)) > qMax(reach, 1e-3))
 				continue;
-			AuPoint down(centre.x, centre.y, plane - sgn * .1);
-			if(hullFaces.Sight(centre - AuPoint(0, 0, sgn * .05), down))
-				continue;		// Something of the hull is nearer the room.
+			if(canopy.on)
+			{
+				// Seen from the eye, with nothing of the hull before it.
+				AuPoint toEye = eyePoint;
+				if(hullFaces.Sight(centre - n * .05, toEye))
+					continue;
+			}
+			else
+			{
+				AuPoint down(centre.x, centre.y, plane - sgn * .1);
+				if(hullFaces.Sight(centre - AuPoint(0, 0, sgn * .05), down))
+					continue;		// Something of the hull is nearer the room.
+			}
 			take[id] << i;
 			glass.AddFace(*f);
-			covered += f->Area() * facing;
+			covered += f->Area() * qMax(0.0, facing);
 			nearest = qMin(nearest, fNear);
 		}
+	}
 	}
 	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
 		fprintf(stderr, "hull ceiling window at %.1f %.1f: %d faces, %.0f of %.0f sq ft covered, nearest %.1f ft\n",
@@ -2465,10 +2536,10 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 
 	// The opening in the room's ceiling.
 	sliceNear(roomPart, plane - .2, plane + .2);
+	int opened = 0;
 	{
 		AuScFaceList faces, kept;
 		roomPart->Faces(faces);
-		int opened = 0;
 		for(const AuScFace* f : faces)
 		{
 			bool level = true;
@@ -2480,7 +2551,52 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 			else
 				kept.AddFace(*f);
 		}
-		if(!opened)
+		if(!opened && !canopy.on)
+			return false;
+		roomPart->SetFaces(kept);
+	}
+
+	// A canopy: the walls under it open from the sill up. They may lean in,
+	// where the room was fitted to the hull, so they are looked for a little
+	// way out of the outline.
+	if(canopy.on)
+	{
+		AuPoint rmn(1e30, 1e30, 1e30), rmx(-1e30, -1e30, -1e30);
+		{
+			AuScFaceList faces;
+			roomPart->Faces(faces);
+			for(const AuScFace* f : faces)
+				for(int v = 0; v < f->VertexCount(); ++v)
+				{
+					rmn = rmn.Min(AuPoint(f->Vertex(v)));
+					rmx = rmx.Max(AuPoint(f->Vertex(v)));
+				}
+		}
+		AuScFaceList faces, kept;
+		roomPart->Faces(faces);
+		const AuPoint p0(rmn.x - 1, rmn.y - 1, canopy.sill), p1(rmx.x + 1, rmn.y - 1, canopy.sill),
+				p2(rmx.x + 1, rmx.y + 1, canopy.sill), p3(rmn.x - 1, rmx.y + 1, canopy.sill);
+		const AuPoint up(0, 0, 1);
+		faces.Slice(AuScFaceQuad(AuScPoint(p0, 0, 0, up), AuScPoint(p1, 0, 1, up), AuScPoint(p2, 1, 1, up), AuScPoint(p3, 1, 0, up)));
+		int walls = 0;
+		for(const AuScFace* f : faces)
+		{
+			AuPoint n = f->FaceNormal();
+			bool open = n.Length() > 1e-9;
+			if(open)
+			{
+				n.Unit();
+				open = fabs(n.z) < .5;
+			}
+			for(int v = 0; v < f->VertexCount() && open; ++v)
+				open = AuPoint(f->Vertex(v)).z > canopy.sill - .01;
+			const AuPoint c = f->FaceLocation();
+			if(open && TrisDistance(tris, QPointF(c.x, c.y)) < .6)
+				++walls;
+			else
+				kept.AddFace(*f);
+		}
+		if(!opened && !walls)
 			return false;
 		roomPart->SetFaces(kept);
 	}
@@ -2506,9 +2622,10 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 	}
 
 	// A lining on each edge, from the ceiling up to the hull, outside the
-	// opening, so the inside of the hull is not seen.
+	// opening, so the inside of the hull is not seen. Not round a canopy:
+	// it would stand in the way of the view out.
 	AuScFaceList lining;
-	for(const QLineF& e : edges)
+	for(const QLineF& e : canopy.on ? QList<QLineF>() : edges)
 	{
 		const QPointF mid = (e.p1() + e.p2()) / 2;
 		QPointF outward(e.dy(), -e.dx());
@@ -4605,6 +4722,8 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 
 	// The rooms, one per deck they are drawn on.
 	const QVector<QVector<bool> > roomable = RoomableTriangles(plan, hull);
+	// The hull as built so far, to keep the rooms inside it.
+	const SolidMesh hullSolid = HullSolidOf(design->Parts());
 	QList<DeckRoom> deckRooms;
 	QHash<qint64, int> deckRoomIndex;		// (room, deck) -> index in deckRooms
 	for(int r = 0; r < plan.rooms.size(); ++r)
@@ -4680,6 +4799,32 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 					[&plan, d, z0, z1](int level) { return level == d ? z0 : z1; }, 1, false, true,
 					[](const TriRef&) { return 0; });
 			CollapseFlat(mesh);
+			// Corners out of the hull are moved in, sideways only so that the
+			// floor and the ceiling stay level: where a model's hull narrows
+			// (a fighter's cockpit under its canopy) the walls lean in with
+			// it instead of standing out of it.
+			if(hullSolid.HasInside())
+			{
+				const QPointF mid(sx / qMax(1, count), sy / qMax(1, count));
+				int pulled = 0;
+				for(AuPoint& p : mesh.v)
+				{
+					bool on = false;
+					if(hullSolid.Contains(p, &on) || on)
+						continue;
+					AuPoint toMid(mid.x() - p.x, mid.y() - p.y, 0);
+					const double len = toMid.Length();
+					if(len < 1e-6)
+						continue;
+					toMid /= len;
+					const QList<AuPoint> dirs { toMid, AuPoint(1, 0, 0), AuPoint(-1, 0, 0), AuPoint(0, 1, 0), AuPoint(0, -1, 0) };
+					if(PullPointInside(hullSolid, p, dirs, qMin(4.0, len * .5), qMin(.3, plan.skinFeet)))
+						++pulled;
+				}
+				if(pulled)
+					report.notes << QString("'%1': %2 corner(s) of the room were moved in to stay inside the hull.")
+							.arg(dr.group).arg(pulled);
+			}
 			AuScFaceList faces;
 			for(int fi = 0; fi < mesh.Faces(); ++fi)
 				faces.AddFace(AuScFaceTri(AuScPoint(mesh.v[mesh.f[fi*3]], 0.f, 0.f, AuPoint(0, 0, 1)),
@@ -4791,7 +4936,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 	QList<AuPoint> onTheGround;		// Where a path meets the ground outside the ship.
 	QList<QPair<quint16, int> > texturedDoors;		// Door part, library texture.
 	const double s = plan.cellFeet;
-	struct DoorRun { PlanDoor door; int count = 1; QPointF mid; QList<QPoint> buttons; };
+	struct DoorRun { PlanDoor door; int count = 1; QPointF mid; QList<QPointF> buttons; };
 	QList<DoorRun> runs;
 	{
 		auto midOf = [&plan](const PlanDoor& d) {
@@ -4828,7 +4973,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 			dr.count = run.size();
 			dr.mid = (midOf(run.first()) + midOf(run.last())) / 2.0;
 			for(const PlanDoor& d : run)
-				for(const QPoint& b : d.buttons)
+				for(const QPointF& b : d.buttons)
 					if(!dr.buttons.contains(b) && dr.buttons.size() < 2)
 						dr.buttons << b;
 			runs << dr;
@@ -4839,41 +4984,30 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 	// button is no longer automatic, or it would open for anyone walking past
 	// the button (the game opens automatic doors for whoever comes near a
 	// switch, AuDoorStateHash::OpenAutomaticDoors).
+	// For a hull door, where its outside buttons go: on the hull surface,
+	// looked for outwards from the room's wall.
+	struct HullSide { AuPoint outward; double roomWall = 0; bool xWall = false; const AuScFaceList* hull = 0; };
 	auto addButtons = [&](const DoorRun& run, quint16 doorId, const DeckRoom* ra, const DeckRoom* rb, double z0,
-			const AuPoint& doorMiddle) {
+			const AuPoint& doorMiddle, const HullSide* outside = 0) {
 		AuScDoor* door = dynamic_cast<AuScDoor*>(design->Parts().value(doorId));
 		if(!door || run.buttons.isEmpty())
 			return;
-		QList<AuPoint> switches;
-		for(const QPoint& b : run.buttons)
+		QList<AuPoint> switches, outsideSwitches;
+		for(const QPointF& b : run.buttons)
 		{
-			// The triangle the point is in, and its wall edge nearest the point.
 			const QPointF at = plan.EighthPoint(b);
 			bool placed = false;
 			TriRef t;
 			const DeckRoom* room = plan.TriAt(run.door.deck, at, t) ? deckRoomOf(t) : 0;
+			// Beyond the room's wall at a hull door (whose middle is out at the hull).
+			const bool beyondWall = outside && ((outside->xWall ? at.x() : at.y()) - outside->roomWall) *
+					(outside->xWall ? outside->outward.x : outside->outward.y) > 0;
 			if(room && (room == ra || room == rb))
 			{
-				double best = 1e30;
-				QPointF wallMid;
-				for(int e = 0; e < 3; ++e)
-				{
-					const TriRef across = plan.Across(t, e);
-					if(plan.Valid(across) && plan.Room(across) == plan.Room(t))
-						continue;		// Not a wall.
-					QPointF p, q;
-					plan.EdgeEnds(t, e, p, q);
-					const QPointF mid = (p + q) / 2.0, off = mid - at;
-					const double d = QPointF::dotProduct(off, off);
-					if(d < best)
-					{
-						best = d;
-						wallMid = mid;
-					}
-				}
-				const QPointF in = plan.TriCentre(t) - wallMid;
+				// On the wall nearest the point, where the point is along it.
+				QPointF spot, in;
 				AuPoint sw;
-				if(best < 1e29 && AddDoorButton(*design, AuPoint(wallMid.x(), wallMid.y(), z0 + 4.0),
+				if(plan.ButtonWallSpot(t, at, .5, spot, in) && AddDoorButton(*design, AuPoint(spot.x(), spot.y(), z0 + 4.0),
 						AuPoint(in.x(), in.y(), 0), room->group, sw))
 				{
 					switches << sw;
@@ -4881,21 +5015,51 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 					placed = true;
 				}
 			}
+			else if(beyondWall && outside->hull)
+			{
+				// Outside a hull door: on the hull, beside the door. The plate
+				// is upright, so it goes where the hull is furthest out over
+				// its height.
+				const AuPoint& out = outside->outward;
+				double furthest = -1;
+				for(double dz : { -.45, 0.0, .45 })
+				{
+					const AuPoint eye(outside->xWall ? outside->roomWall : at.x(), outside->xWall ? at.y() : outside->roomWall,
+							z0 + 4.0 + dz);
+					AuPoint hit = eye + out * 80.0;
+					if(outside->hull->Sight(eye, hit))
+						furthest = qMax(furthest, (hit - eye).Length());
+				}
+				AuPoint sw;
+				const AuPoint onHull = AuPoint(outside->xWall ? outside->roomWall : at.x(), outside->xWall ? at.y() : outside->roomWall,
+						z0 + 4.0) + out * (furthest + .02);
+				if(furthest > 0 && AddDoorButton(*design, onHull, out, "Hull Door", sw, true))
+				{
+					outsideSwitches << sw;
+					++report.doorButtons;
+					placed = true;
+				}
+			}
 			if(!placed)
-				report.warnings << QString("A button of a door on deck %1 is not on a wall of the door's rooms.")
-						.arg(run.door.deck + 1);
+				report.warnings << QString("A button of a door on deck %1 is not on a wall of the door's rooms%2.")
+						.arg(run.door.deck + 1).arg(outside ? " or on the hull beside it" : "");
 		}
-		if(switches.isEmpty())
+		if(switches.isEmpty() && outsideSwitches.isEmpty())
 			return;
 		AuPoint op1, op2;
 		door->DoorOpLocs(op1, op2);
-		if(!door->IsHullDoor() && !door->IsTurboLiftDoor())
+		if(door->IsHullDoor())
+		{
+			// Inside and outside, each from a button there or where it was.
+			door->SetDoorOpLocs(switches.isEmpty() ? op1 : switches.at(0), outsideSwitches.isEmpty() ? op2 : outsideSwitches.at(0));
+			return;
+		}
+		if(!door->IsTurboLiftDoor())
 		{
 			door->SetDoorProperties(Qt::Unchecked, Qt::PartiallyChecked, Qt::PartiallyChecked, Qt::PartiallyChecked);
 			op2 = doorMiddle;		// The other side works the door itself.
 		}
-		// A hull door keeps its switch outside: its buttons are all inside.
-		door->SetDoorOpLocs(switches.at(0), switches.size() > 1 && !door->IsHullDoor() ? switches.at(1) : op2);
+		door->SetDoorOpLocs(switches.at(0), switches.size() > 1 ? switches.at(1) : op2);
 	};
 	for(const DoorRun& run : runs)
 	{
@@ -5126,7 +5290,12 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 			continue;
 		}
 		++report.doors;
-		addButtons(run, doorId, room, 0, z0, (mn + mx) * .5);
+		HullSide hullSide;
+		hullSide.outward = outward;
+		hullSide.roomWall = roomWall;
+		hullSide.xWall = xWall;
+		hullSide.hull = &hullFaces;
+		addButtons(run, doorId, room, 0, z0, (mn + mx) * .5, &hullSide);
 		if(lift)
 			liftDoors.insert(doorId, qMakePair(lift, QString("Outside")));
 		if((door.tex >= 0 ? door.tex : plan.doorTex) >= 0)
@@ -5648,7 +5817,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 	// joinWindows, neighbouring whole cells of one room make one rectangle,
 	// and two triangles side by side in a cell make a half cell.
 	{
-		struct SkyTri { TriRef t; bool floor = false; bool hull = false; const DeckRoom* room = nullptr; bool done = false; };
+		struct SkyTri { TriRef t; bool floor = false; bool hull = false; bool canopy = false; const DeckRoom* room = nullptr; bool done = false; };
 		QList<SkyTri> sky;
 		QHash<QString, int> skyIndex;
 		auto keyOf = [](const TriRef& t) { return QString("%1,%2,%3,%4").arg(t.deck).arg(t.cx).arg(t.cy).arg(t.k); };
@@ -5656,7 +5825,10 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 		for(const PlanSkylight& w : plan.skylights)
 		{
 			const DeckRoom* room = deckRoomOf(TriRef(w.deck, w.cx, w.cy, w.k < 0 ? 0 : w.k));
-			if(!room || !plan.SkylightFits(w))
+			// A canopy over hull with no room under it joins the room of the
+			// canopy next to it (below).
+			const bool orphanCanopy = !room && w.shape == "canopy" && !w.floor && plan.SkylightFits(w);
+			if(!orphanCanopy && (!room || !plan.SkylightFits(w)))
 			{
 				report.warnings << QString("A ceiling window on deck %1 was left out: it needs room (a whole cell, or the "
 						"triangle) with no room beyond it.").arg(w.deck + 1);
@@ -5671,6 +5843,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 						continue;
 					st.floor = w.floor;
 					st.hull = plan.SkylightIsHull(w);
+					st.canopy = w.shape == "canopy" && !w.floor;
 					st.room = room;
 					skyIndex[keyOf(st.t)] = sky.size();
 					sky << st;
@@ -5680,6 +5853,33 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 			return std::array<TriRef, 3>{ plan.AcrossCellEdge(t.deck, t.cx, t.cy, t.k),
 					TriRef(t.deck, t.cx, t.cy, (t.k + 1) % 4), TriRef(t.deck, t.cx, t.cy, (t.k + 3) % 4) };
 		};
+		// Canopy over hull: the room of a canopy triangle it touches, spread
+		// until nothing changes.
+		for(bool changed = true; changed; )
+		{
+			changed = false;
+			for(SkyTri& st : sky)
+				if(!st.room && st.canopy)
+					for(const TriRef& n : neighbours(st.t))
+					{
+						const int m = skyAt(n);
+						if(m >= 0 && sky.at(m).canopy && sky.at(m).room)
+						{
+							st.room = sky.at(m).room;
+							changed = true;
+							break;
+						}
+					}
+		}
+		int lost = 0;
+		for(SkyTri& st : sky)
+			if(!st.room)
+			{
+				st.done = true;
+				++lost;
+			}
+		if(lost)
+			report.warnings << QString("%1 canopy triangle(s) over the hull touch no canopy over a room, and were left out.").arg(lost);
 		auto tunnel = [&](const DeckRoom* room, double gap) {
 			if(gap - plan.skinFeet > s * 1.5)
 				report.warnings << QString("A ceiling window of '%1' is %2 ft from the hull surface; it looks down a tunnel.")
@@ -5703,7 +5903,7 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 				{
 					const int m = skyAt(n);
 					if(m >= 0 && !seen.contains(m) && !sky.at(m).done && sky.at(m).hull && sky.at(m).floor == sky.at(i).floor
-							&& sky.at(m).room == sky.at(i).room)
+							&& sky.at(m).room == sky.at(i).room && sky.at(m).canopy == sky.at(i).canopy)
 					{
 						seen.insert(m);
 						todo.enqueue(m);
@@ -5728,13 +5928,31 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 			double z0, z1, gap = 0;
 			RoomHeights(plan, first.t.deck, z0, z1);
 			const double sgn = first.floor ? -1.0 : 1.0, plane = first.floor ? z0 : z1;
-			if(HullSkylight(*design, first.room->meshId, first.room->group, tris, edges, plane, sgn, gap))
+			CanopyCut canopy;
+			if(first.canopy)
+			{
+				canopy.on = true;
+				canopy.sill = z0 + qMin(plan.windowSillFeet, (z1 - z0) / 2);
+				canopy.eye = z0 + qMax(canopy.sill - z0 + .3, qMin(3.0, z1 - z0 - .3));
+				canopy.reach = s * .6;
+			}
+			if(HullSkylight(*design, first.room->meshId, first.room->group, tris, edges, plane, sgn, gap, canopy))
 			{
 				for(int j : group)
 					sky[j].done = true;
 				++report.skylights;
 				++report.hullSkylights;
-				tunnel(first.room, gap);
+				if(first.canopy)
+					++report.canopies;
+				else
+					tunnel(first.room, gap);
+			}
+			else if(first.canopy)
+			{
+				for(int j : group)
+					sky[j].done = true;
+				report.warnings << QString("The canopy of '%1' found too little hull over it to be its glass; draw it "
+						"under the hull's canopy.").arg(first.room->group);
 			}
 			else
 				for(int j : group)
@@ -6306,6 +6524,17 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 	// are cut away there.
 	if(const int cleared = ClearDoorways(*design))
 		report.notes << QString("Window frames were cut out of %1 doorway(s), where they ran through them.").arg(cleared);
+
+	// Frames and linings stop at the hull: where the hull curves in over a
+	// door, a window or a ceiling window (a fighter's canopy), their corners
+	// reached out of it (the F-22 test, 2026-11-08).
+	{
+		int stuck = 0;
+		if(const int moved = PullFramesInside(design->Parts(), .05, &stuck))
+			report.notes << QString("%1 corner(s) of frames and linings were moved back inside the hull.").arg(moved);
+		if(stuck)
+			report.warnings << QString("%1 corner(s) of frames and linings are outside the hull and could not be moved in.").arg(stuck);
+	}
 
 	// The looks the plan asks for. Every texture takes a slot of the ship's one
 	// palette: the slot that already has it, or one nothing uses.
@@ -6920,6 +7149,27 @@ AuScDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given,
 			it.value()->Faces(faces);
 			report.hullFaces += faces.size();
 		}
+
+	// A fighter's pilot has to see out: what the helm (and a captain's
+	// chair) sees from the seat (`shipgen view-check` for the whole of it).
+	if(plan.IsFighter())
+		for(const StationView& v : CheckStationViews(design->Parts()))
+		{
+			const ViewSector* ahead = v.Sector("ahead");
+			if(!ahead || !ahead->rays)
+				continue;
+			if(!v.SeesAhead())
+				report.warnings << QString("The %1 sees out ahead only %2 % of the way (glass %3 %); a canopy over the "
+						"cockpit (ceiling window tool, Canopy) lets the pilot see out all round.")
+						.arg(v.type).arg(ahead->Percent(ahead->SeesOut())).arg(ahead->Percent(ahead->glass));
+			else
+				report.notes << QString("The %1 sees out ahead %2 % of the way, %3 % through glass.")
+						.arg(v.type).arg(ahead->Percent(ahead->SeesOut())).arg(ahead->Percent(ahead->glass));
+		}
+	for(const StickOut& st : AuditStickOut(design->Parts()))
+		report.warnings << QString("%1%2 reaches up to %3 ft out of the hull (%4 of its %5 corners); `shipgen audit` "
+				"says where.").arg(st.type).arg(st.group.isEmpty() ? QString() : QString(" of '%1'").arg(st.group))
+				.arg(st.worst, 0, 'f', 1).arg(st.outside).arg(st.corners);
 
 	ValidateDesign(*design, report.errors, report.engineWarnings);
 	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())

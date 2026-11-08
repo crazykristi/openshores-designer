@@ -86,6 +86,7 @@ struct PlanBuildReport
 	int				walkAreas = 0;			// Parts of the ship the crew can walk between.
 	int				skylights = 0;			// Windows in a ceiling.
 	int				hullSkylights = 0;		// Of them, following the hull.
+	int				canopies = 0;			// Of them, canopies: glass from the sill up, walls opened under it.
 	int				ladders = 0;
 	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
 	int				openJoins = 0;		// "Open to Deck Below" rooms opened into the room below.

@@ -2477,9 +2477,14 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 	if(opts.placeWalkPaths)
 		PlaceWalkPaths(design, result.rooms, doorLinks);
 
-	// Service panels for the allocated modules.
-	if(opts.placeServicePanels && opts.placeSystems)
+	// Service panels for the allocated modules: side by side on the wall at
+	// the low-y end of the first room, each at most 8 by 6 ft and never
+	// wider or taller than the wall leaves room for (in a fighter's cockpit
+	// all of them were 8 ft wide, on top of each other, and stuck out of
+	// the hull).
+	if(opts.placeServicePanels && opts.placeSystems && !result.rooms.isEmpty())
 	{
+		QList<AuScPart::PART_TYPE> panelTypes;
 		for(const char* key : kPanelTypes)
 		{
 			const QString k(key);
@@ -2490,31 +2495,28 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			else if(k == "lifeSupport")	volume = brief.modules.lifeSupport;
 			else if(k == "sensors")		volume = brief.modules.sensors;
 			else if(k == "shields")		volume = brief.modules.shields;
-			if(!volume)
-				continue;
-			AuScPart::PART_TYPE partType = PanelTypeFor(k);
-			if(partType == AuScPart::Part_Invalid)
-				continue;
-			AuScPart* part = AuScPart::Create(partType);
-			if(!part)
-				continue;
+			const AuScPart::PART_TYPE partType = volume ? PanelTypeFor(k) : AuScPart::Part_Invalid;
+			if(partType != AuScPart::Part_Invalid)
+				panelTypes << partType;
+		}
+		const PlacedRoom& r = result.rooms.first();
+		const double gap = .1;
+		const int n = panelTypes.size();
+		const double wallWidth = r.max.x - r.min.x, wallHeight = r.max.z - r.min.z;
+		const double w = n ? qMin(8.0, (wallWidth - gap * (n + 1)) / n) : 0;
+		const double h = qMin(6.0, wallHeight - 2 * gap);
+		for(int i = 0; i < n && w > .2 && h > .2; ++i)
+		{
+			AuScPart* part = AuScPart::Create(panelTypes.at(i));
 			AuScScreen* screen = dynamic_cast<AuScScreen*>(part);
-			if(!screen)
+			if(screen)
 			{
-				delete part;
-				continue;
+				const double x0 = r.min.x + gap + i * (w + gap), z0 = r.min.z + gap;
+				AuMatrix4x4 wall = WallPlane(x0, x0 + w, r.min.y, z0, z0 + h);
+				screen->MakeScreen(AuPoint(x0, r.min.y, z0), AuPoint(x0 + w, r.min.y, z0 + h), wall);
+				if(screen->IsValid())
+					design.Parts().AddPart(*screen);
 			}
-			// A small panel on the port wall of the first room.
-			if(result.rooms.isEmpty())
-			{
-				delete part;
-				continue;
-			}
-			const PlacedRoom& r = result.rooms.first();
-			AuMatrix4x4 wall = WallPlane(r.min.x, r.min.x + 8, r.min.y, r.min.z, r.min.z + 6);
-			screen->MakeScreen(AuPoint(r.min.x, r.min.y, r.min.z), AuPoint(r.min.x + 8, r.min.y, r.min.z + 6), wall);
-			if(screen->IsValid())
-				design.Parts().AddPart(*screen);
 			delete part;
 		}
 	}

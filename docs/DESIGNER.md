@@ -78,7 +78,7 @@ The steps are the tabs of the side panel:
 | 2 Hull | Draw the hull. The deck below shows faintly. Hull style (smooth, angular or classic, below), skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15, smooth style only) and the face budget (5,000). For a plan from a 3D model: whether the model is the hull, and whether that hull is sharp or smooth. The 3D view follows the drawing after a short pause. |
 | 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drag along the walls for a row of windows, which build as one window, as *Join windows side by side* joins them, and drag from a window to take a row out; *Glass* below the tool says how the windows put in from now on are made: *Window frame*, a box cut through the hull with a frame round it, *Follow the hull*, the hull's own triangles inside the window become the glass, or as the Hull page's setting; drawn as a light blue line, dashed when framed, dotted when following the hull; in the plan `"style": "frame"` or `"hull"` on the window), vehicle parking spots (ground or space vehicle, or a 238 ft spacecraft landing spot, which need not lie in a room and is taken away by a click anywhere on it; an outline of the spot's size follows the mouse, snapped to the nearest grid corner: green fits, red does not, orange means a click takes that spot away; R turns it a quarter turn; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue ball where it ends up on the hull, with an arrow the way the trail goes and a dotted line back to the triangle it was put in from; click the ball or the triangle to take it away; the 3D view shows the same ball and arrow) or weapon emitters (click a hull triangle: a weapon bay that fires from the nearest point of the hull, of the type picked in *Weapon bay* below the tool, or the ship's *Fire control* on the Ship page; each emitter gets a fire control station of its own running that bay, and a right click gives an emitter the type picked; drawn as a red ring with a cross, and the bay's first letter when it has its own; in the plan `"module"` on the emitter) or the owner's flag or empire name (*Place empire flags and names*: pick *Flag* or *Name* and a width, then click a hull triangle; it goes upright on the nearest hull wall straight out to the side at mid-deck height, or on the nearest hull surface where there is no wall, 0.1 ft outside it; the game paints the owner's flag or name on it; drawn as a small flag or an "N" plate; in the plan an emitter of kind `flag` or `name`, `size` its width). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
 | 4 Crew | Optional. Stations, berths, transporter pads and walk paths placed by hand; left alone, the build puts all of them in by itself. Pick *Place stations* (the station, its seat: the bridge style's, a swivel chair or an integrated desk, and for fire control the weapon bay), *Place berths* (crew, officer, captain, passenger or troops), *Place transporter pads* or *Draw walk paths*, then click on a room's floor: an outline of the item follows the mouse, green where all of it is on one room's floor, red where not, orange over one already there (a click takes it away). R turns a station or berth 45° (Shift+R the other way); the mirror puts in the other side's too. A walk path is dragged from one triangle of a room to another of the same room, and runs straight between their middles on the floor, where the automatic paths meet it; a click on one takes it away. Ladders and stairs always get their paths. What is placed by hand counts towards what the ship needs: the build puts in only the rest, unless *Put in the rest automatically* is switched off for that kind (then only those placed by hand). In the plan: `stations`, `berths`, `pads`, `paths`, `autoStations`, `autoBerths`, `autoPads`, `autoPaths`. |
-| 5 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. *Livery* marks the colour picked as a pattern to keep sharp (an L in the list): on a hull shaped from a model, or an angular hull, the hull is cut along the outline drawn in it, so the edge is where it was drawn instead of stepping along the hull's own triangles, and thinning the hull to its face budget does not move that edge. A hull made from the drawn triangles keeps every colour edge already. |
+| 5 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. *Livery* marks the colour picked as a pattern to keep sharp (an L in the list): on a hull shaped from a model, or an angular hull, the hull is cut along the outline drawn in it, so the edge is where it was drawn instead of stepping along the hull's own triangles, and thinning the hull to its face budget does not move that edge. A hull made from the drawn triangles keeps every colour edge already. *Finish of this colour* sets what the game's own designer calls Transparency, Self Illumination, Polish (shininess and reflectivity), Glow and the animated surface effects, for every hull face painted in that colour; *Ready finish* fills them in for matte paint, satin or polished metal, tinted glass, a light or an energy field. A colour with a finish is marked F in the list. A see-through colour shows the rooms inside from outside, so it is meant for glass, lights and fields. |
 | 6 Build | Build the blueprint and see the engine's report; save it as `.SoH`. *What gets built* lists every kind of thing in the plan (doors, door buttons, windows, ladders, ramps, parking, emitters, stations, berths, pads, system volumes, walk paths, ...): untick a kind to leave all of it out, or open it and untick single items. Nothing is deleted; the plan keeps them (`buildLeaveOut`, and `"skip": true` on an item) and ticking them again builds them. Clicking an item shows its deck. |
 
 Every control has a tooltip saying what it does; the room tools have one
@@ -339,19 +339,30 @@ on a wall beside a door, with a long tunnel, did that in the arness).
 
 **Door buttons** (since 7 November 2026). After a door is placed (clicked or
 dragged out), the next click on a wall of one of its rooms, within 12 ft of
-it, puts a button there; a second click can put one on the other side. Esc,
-or a click anywhere else, ends it. Shift and a click on a door places its
-buttons again. The wall that would get the button lights up green under the
-mouse; placed buttons are small green squares. In the build each button is a
+it, puts a button there, where the mouse is along the wall (in steps of a
+quarter of a foot, at least half a foot from a corner); a second click can put
+one on the other side. For a hull door the other side is outside: a click
+beyond the door's wall, beside the door, puts a button on the hull surface
+there (a click in front of the door moves it to beside it, clear of the
+frame; it may be off the grid). Esc, or a click anywhere else, ends it.
+Shift and a click on a door places its buttons again. Where the button
+would go lights up green under the mouse; placed buttons are small green
+squares. In the build each button is a
 dark plate with a lit green button standing 0.15 ft out of the wall, 4 ft up,
 and the door's switch (the game has two per door, where the player clicks to
 work it, within 3 m) goes on its face. An interior door with a button is no
 longer automatic: the game opens an automatic door for anyone passing near a
 switch, so it would open for people walking past the button. With one button,
-the door's other switch stays on the door itself. A hull door keeps its
-outside switch. In the plan: `"buttons": [[x, y], ...]` on a door, in eighths
-of a cell from grid corner 0,0, an eighth of a cell in from the middle of the
-wall edge, on the button's side.
+the door's other switch stays on the door itself. A hull door's switches
+go on its inside and outside buttons; without one, that switch stays where
+it was (just inside, or just outside the hull). A button outside is a hull
+part, as the frames round openings are: the game wants every mesh part
+inside the hull. In the plan: `"buttons": [[x, y], ...]` on a door, in
+eighths of a cell from grid corner 0,0 (fractions allowed): inside, a point a
+little in from the wall, on the button's side, the button going where the
+point is along the wall; outside a hull door, a point beyond the door's
+wall line. Plans from before 8 November, with the point an eighth of a cell
+in from the middle of a wall edge, build as before.
 
 **Turbolifts** (room type *Turbo Lift* or *Public Lift*, since 7 November
 2026) are drawn as a room on the same cells of every deck they serve. Each deck
@@ -394,6 +405,29 @@ triangles* decides. A hull window that finds hull over less than half of it is
 cut flat. The plan view draws them dotted when they follow the hull and
 dashed when flat. Deep ones warn that they look down a tunnel. A plan turned
 upside down makes them windows in the floor.
+
+A **canopy** (`"shape": "canopy"`, *Canopy* under *Glass*; experimental) is
+for a cockpit under a bubble of glass, a fighter's above all. Draw it over the
+cockpit's cells, and on over the hull cells ahead of it where the model's
+canopy runs on over the nose (canopy cells over hull with no room take the
+room of the canopy they touch). The hull's own faces over it, from the window
+sill up and its sides as well as its top, become one window of the room,
+wherever they are the first thing seen from the pilot's eye; they are taken
+whole, up to about half a cell past the drawn outline, so that the glass ends
+where the model's canopy does (a hull of a few large faces is cut along the
+outline instead). The room's ceiling under it is opened, and its walls too
+from the sill up, and there is no lining, so the pilot sees out all round. The
+plan view draws a canopy filled.
+
+**Keeping inside the hull.** A room's corners that are outside the hull are
+moved in sideways (the floor and ceiling stay level), so that where a model's
+hull narrows, as round a fighter's cockpit, the walls lean in with it instead
+of standing out of it. Frames and linings of doors, windows and ceiling
+windows are moved back inside where the hull curves in over them, and the
+service panels are laid side by side on the wall at the end of the first room,
+never wider or taller than it. Whatever still reaches out is a warning in the
+build report; `shipgen audit` lists it. A fighter's build report also says how
+much of the view ahead the pilot has (`shipgen view-check`).
 
 **Bridge styles** (`"bridgeStyle"` in the plan, on the Build page) choose how
 stations look. `hazeron`, the default, is the game's swivel chairs, as before.
@@ -617,7 +651,9 @@ has a `"model"` object (the file, how it was placed, `"asHull"`,
 when it was flipped). `hullStyle` is `smooth` (the default, then left out),
 `angular` or `classic`; `hullDoorExit` is `auto` (the default, left out),
 `ladder` or `none`. `theme` is 0, 1 or 2 for
-the owner's three exterior colours, -1 for the plain colour. Stations,
+the owner's three exterior colours, -1 for the plain colour. A palette entry's finish is written only where it
+is not plain: `opacity` (1 opaque, 0 invisible), `selfLit` (0 to 1), `shine` (0 and up), `reflect` (0 to 1), `glow`
+(a colour) and `effect` (a `SURFACE_EFFECT` number from `aumath/auscface.h`, 9 for Shield). Stations,
 berths and pads placed by hand (Crew step) stand at (`x`, `y`) in cells from
 the grid's corner 0,0 (fractions allowed), `yaw` in degrees from fore towards
 port; a path runs from triangle `from` to triangle `to` (`[x, y, side]`).

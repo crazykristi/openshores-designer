@@ -1,4 +1,4 @@
-# Shipgen Designer 0.3.7-beta-rc1
+# Shipgen Designer 0.3.7-beta-rc2
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
@@ -6,18 +6,52 @@ triangles, paint it, and build a blueprint the game loads. The download
 also holds `shipgen-gui` (the automatic generator's window) and the
 `shipgen` command line.
 
-0.3.7-beta-rc1 is the first beta and a **release candidate**: please try it
-and report what goes wrong before the final 0.3.7. It brings everything since
-0.3.6-alpha: three rounds of testing in the game (doors, features, liveries),
-a new Crew step for placing stations, beds and walk paths yourself, a choice of
-what gets built, and a first, experimental fighter mode.
+0.3.7-beta-rc2 is the second **release candidate** of the first beta: please
+try it and report what goes wrong before the final 0.3.7. Since rc1 it adds
+a finish for each colour, canopies for fighters, less geometry sticking out
+of the hull, a check of what the pilot and captain see, more freedom in
+placing door buttons, and a fix for large hull doors. It also brings
+everything from rc1, all since 0.3.6-alpha: three rounds of testing in the
+game (doors, features, liveries), a new Crew step for placing stations, beds
+and walk paths yourself, a choice of what gets built, and a first,
+experimental fighter mode.
 
 **Problems?** If something goes wrong, please either contact the author
 (Kristiana Moretti, `crazykristi` on GitHub) or report an issue at
 <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
 plan file (`.json`) and what you expected help most.
 
-## New
+## New since rc1
+
+* **Door buttons go where you click** along the wall, no longer only at the
+  middle of a cell edge.
+* **`shipgen view-check`**: what the helm and the captain see from their
+  seats (ahead, to the sides, up, down ahead): glass, hull, open sky, or what
+  is in the way. A fighter's build report says how much of the view ahead the
+  pilot has.
+* `shipgen audit` lists parts that reach out of the hull.
+
+## Experimental since rc1
+
+* **A finish for each colour** (Paint step): transparency, self-lit,
+  shininess, reflectivity, glow and the game's animated surface effects, with
+  ready finishes (matte, satin metal, polished metal, tinted glass, light,
+  energy field).
+* **Canopy**: a ceiling window shape for a cockpit under a bubble of glass.
+  The hull's own faces over the cockpit become its glass, so the canopy ends
+  where the model's does; it may reach over the hull ahead of the cockpit.
+* **A button outside a hull door**: click beyond the door's wall, beside the
+  door, for a button on the hull that opens it from outside.
+
+## Changes and fixes since rc1
+
+* **Less sticks out of the hull**: room corners, frames and door linings are
+  moved back inside where the hull curves in over them, and service panels
+  sit side by side on one wall (in a fighter they were stacked and stuck out).
+* **A large hull door could hang the build** and the designer with it (a 79 ft
+  bay door on a curved hull); it builds in seconds now.
+
+## New in rc1
 
 * **A Crew step (tab 4)** for placing stations, berths, transporter pads and
   walk paths by hand. It is optional: anything you do not place is still put
@@ -57,7 +91,7 @@ plan file (`.json`) and what you expected help most.
 * New commands: `shipgen walk`, `shipgen faces --where`, `plan-flip
   --clockwise/--anticlockwise`, `plan-from-model --fighter`.
 
-## Experimental
+## Experimental in rc1
 
 Marked as experimental in the program as well; please try them in the game
 before relying on them, and tell us how they behave.
@@ -74,7 +108,7 @@ before relying on them, and tell us how they behave.
 * **Integrated desks** (from 0.3.6-alpha) and the **Windows** and **macOS**
   downloads (built and tested automatically, little tried on real machines).
 
-## Changes
+## Changes in rc1
 
 * The steps are now 1 Ship, 2 Hull, 3 Rooms, **4 Crew**, 5 Paint, 6 Build
   (`--step` counts that way).
@@ -88,7 +122,7 @@ before relying on them, and tell us how they behave.
   engineer station their power plant and drive stay under 100 m³, so the
   engine's two power warnings are gone.
 
-## Bug fixes
+## Bug fixes in rc1
 
 * **The 3D view stayed empty in the AppImage on some PCs** (KDE Plasma on
   Wayland: "EGL not available").
@@ -112,10 +146,10 @@ before relying on them, and tell us how they behave.
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage
+./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -123,14 +157,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.7-beta-rc1-windows-x86_64.zip` and start
+`shipgen-designer-0.3.7-beta-rc2-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc1-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc2-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The

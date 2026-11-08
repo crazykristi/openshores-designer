@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "auscface.h"
+#include <cstdio>
 //
 #include "aubox.h"
 #include "auglobell.h"
@@ -4241,6 +4242,8 @@ void AuScFaceList::FlattenVertexNormals(const AuScSelectInfo& selInfo)
 }
 
 // I'm the jig.
+bool AuScFaceList::s_JigCutWithoutLining = false;
+
 void AuScFaceList::JigCut(AuScFaceList& cut1Faces, AuScFaceList& cut2Faces, AuScFaceList& lining) const
 {
 	// Slice the cut1 faces against this jig.
@@ -4264,6 +4267,10 @@ void AuScFaceList::JigCut(AuScFaceList& cut1Faces, AuScFaceList& cut2Faces, AuSc
 	for(const_iterator ji = cbegin(); ji != cend(); ji++)
 		if(!IsFuzzyZero((*ji)->FaceNormal().z) && !FuzzyEquals(fabs((*ji)->FaceNormal().z), 1))
 			cut2Faces.Slice(*(*ji));							// Slice diagonally last.
+
+	lining.Clear();
+	if(s_JigCutWithoutLining)
+		return;
 
 	// Clip the cutter faces against the resulting cut faces to create the interconnecting liner.
 	AuScFaceList firstClip;
@@ -4502,6 +4509,15 @@ void AuScFaceList::JoinFaces()
 	if(size() <= 1)
 		return;
 
+	// shipgen: joining tries every face against every other, and the joined
+	// polygons grow, each try dearer than the last. On a large cut through a
+	// broad flat hull side (a 79 ft bay door in a land battleship,
+	// 2026-11-08) it ran for hours. Joining only tidies, so after this many
+	// tries the rest are left as they are. A count, not a time, so that the
+	// same design always comes out the same.
+	const qint64 maxTries = 400000;
+	qint64 tries = 0;
+
 	// This sometimes takes a couple of passes to stop finding things to join together.
 	bool listJoined;
 	do
@@ -4521,8 +4537,9 @@ void AuScFaceList::JoinFaces()
 			{
 				anyJoined = false;
 				iterator ai = begin();
-				while(ai != end())
+				while(ai != end() && tries < maxTries)
 				{
+					++tries;
 					AuScFace* nuf = f->Join(*(*ai));
 					if(nuf)
 					{
@@ -4538,14 +4555,16 @@ void AuScFaceList::JoinFaces()
 						ai++;
 				}
 			}
-			while(anyJoined);
+			while(anyJoined && tries < maxTries);
 
 			nuFaceList.append(f);
 		}
 
 		*this = nuFaceList;
 	}
-	while(listJoined);
+	while(listJoined && tries < maxTries);
+	if(tries > 20000 && !qgetenv("SHIPGEN_DEBUG").isEmpty())
+		fprintf(stderr, "JoinFaces: %lld tries%s, %d faces left\n", tries, tries >= maxTries ? " (stopped there)" : "", int(size()));
 }
 
 bool AuScFaceList::CutFaces(const AuPointArray& cutLine)

@@ -1,5 +1,55 @@
 # Changes and known issues
 
+## 8 November 2026: release 0.3.7-beta-rc2
+
+The second release candidate: everything since 0.3.7-beta-rc1, below. See
+`RELEASE_NOTES.md`.
+
+* **Finish per colour** (the user, 8 November). On the Paint page, each
+  colour has a *Finish*: transparency, self-lit, shininess, reflectivity,
+  glow and one of the game's animated surface effects, with ready finishes
+  (matte, satin metal, polished metal, tinted glass, light, energy field).
+  It goes onto every hull face painted in that colour (`ApplyPaint`,
+  `src/planbuild.cpp`) and is saved in the plan's palette. Test ships:
+  `wipdesigns/aether-kit/ships/f22_finish_test1` (polished hull, glowing
+  self-lit trim with the Shield effect) and `f22_finish_test2` (satin hull,
+  trim as 60 % see-through tinted glass).
+* **Canopy** (experimental; the user, 8 November): a ceiling window shape
+  for a cockpit under a bubble of glass. The hull's own faces over it, from
+  the sill up, sides too, become one window of the room where the pilot's
+  eye sees them first, taken whole so the glass ends where the model's
+  canopy does; the room's ceiling and walls above the sill open under it, with
+  no lining. Canopy cells may go on over the hull ahead of the room. Test
+  ship: `wipdesigns/aether-kit/ships/f22_canopy_test1`.
+* **Less sticks out of the hull** (the user, 8 November): room corners outside
+  the hull are moved in sideways, frames and linings are moved back inside
+  where the hull curves in over them, and the service panels sit side by
+  side on one wall within the room (in a fighter all of them were 8 ft wide,
+  on top of each other). `shipgen audit` lists any part that still reaches
+  out; the build report warns about it. In the F-22 test, 9 parts reached up
+  to 3.6 ft out; none do now.
+* **Door buttons where you click, and outside a hull door** (the user,
+  8 November). A button goes where the mouse is along the wall, in steps of
+  a quarter of a foot, not at the middle of a cell edge (`buttons` in the
+  plan take fractions of an eighth of a cell). A hull door can also get a
+  button outside, on the hull beside it (clicked beyond the door's wall);
+  the door's outside switch goes on it. Outside it is a hull part, not a
+  mesh (`AddDoorButton`, `TriPlan::ButtonWallSpot`).
+* **`shipgen view-check`**: what the helm and the captain see from their
+  seats, ahead, to the sides, up and down ahead. A fighter's build report
+  says how much of the view ahead the pilot has.
+* **Fix: a large hull door could hang the build** (the user's Tarpan land
+  battleship, 8 November). To line the hole the engine clipped the door's
+  jig against every nearby face of the hull and the room, over and over; for
+  a 79 ft bay door on a curved hull that made tens of thousands of pieces,
+  joining them again ran for hours, and the designer gave out (cut short, the
+  blueprint came to 45 MB, over the game's 28 MB limit). A hull door gets a
+  frame of its own instead of that lining, so the engine now leaves the
+  lining out for hull doors (`AuScFaceList::s_JigCutWithoutLining`, in the
+  engine's AuMath). The Tarpan builds in under 20 seconds, at 0.65 MB. As a
+  safety net the joining (`AuScFaceList::JoinFaces`) stops after 400,000
+  tries and leaves the rest as they are.
+
 ## 8 November 2026: release 0.3.7-beta-rc1
 
 The first beta, a release candidate: everything since 0.3.6-alpha (the

@@ -3016,6 +3016,9 @@ public:	// Methods
 			bool findEdges, bool findFaces) const;
 
 	void JigCut(AuScFaceList& cut1Faces, AuScFaceList& cut2Faces, AuScFaceList& lining) const;
+	// shipgen: when set, JigCut leaves the lining out. Clipping the jig against
+	// many faces on both sides makes tens of thousands of fragments.
+	static bool s_JigCutWithoutLining;
 
 	// Builds quads and polygons from coplanar faces that share an edge.
 	void JoinFaces();

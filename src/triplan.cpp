@@ -109,8 +109,8 @@ void TriPlan::Resize(int width, int depth)
 	{
 		door.cx += ox;
 		door.cy += oy;
-		for(QPoint& b : door.buttons)
-			b += QPoint(8 * ox, 8 * oy);
+		for(QPointF& b : door.buttons)
+			b += QPointF(8 * ox, 8 * oy);
 	}
 	for(PlanDoor& window : windows)
 	{
@@ -363,9 +363,55 @@ QPointF TriPlan::Corner(int ix, int iy) const
 	return QPointF((ix - m_width / 2.0) * cellFeet, (iy - m_depth / 2.0) * cellFeet);
 }
 
-QPointF TriPlan::EighthPoint(const QPoint& q) const
+QPointF TriPlan::EighthPoint(const QPointF& q) const
 {
 	return QPointF((q.x() / 8.0 - m_width / 2.0) * cellFeet, (q.y() / 8.0 - m_depth / 2.0) * cellFeet);
+}
+
+QPointF TriPlan::ToEighths(const QPointF& w) const
+{
+	return QPointF((w.x() / cellFeet + m_width / 2.0) * 8.0, (w.y() / cellFeet + m_depth / 2.0) * 8.0);
+}
+
+bool TriPlan::ButtonWallSpot(const TriRef& t, const QPointF& p, double margin, QPointF& spot, QPointF& inward,
+		QPointF* wallA, QPointF* wallB) const
+{
+	if(!Valid(t))
+		return false;
+	double best = 1e30;
+	for(int e = 0; e < 3; ++e)
+	{
+		const TriRef across = Across(t, e);
+		if(Valid(across) && Room(across) == Room(t))
+			continue;		// Not a wall.
+		if(e == 0 && DoorAt(t.deck, t.cx, t.cy, t.k) >= 0)
+			continue;		// A doorway.
+		QPointF a, b;
+		EdgeEnds(t, e, a, b);
+		const QPointF ab = b - a;
+		const double len = sqrt(QPointF::dotProduct(ab, ab));
+		if(len < 1e-9)
+			continue;
+		const QPointF dir = ab / len;
+		const double m = qMin(margin, len / 2);
+		const double along = qBound(m, QPointF::dotProduct(p - a, dir), len - m);
+		const QPointF on = a + dir * along, off = p - on;
+		const double d = QPointF::dotProduct(off, off);
+		if(d < best)
+		{
+			best = d;
+			spot = on;
+			QPointF in(-dir.y(), dir.x());
+			if(QPointF::dotProduct(in, TriCentre(t) - on) < 0)
+				in = -in;
+			inward = in;
+			if(wallA)
+				*wallA = a;
+			if(wallB)
+				*wallB = b;
+		}
+	}
+	return best < 1e29;
 }
 
 bool TriPlan::TriAt(int deck, const QPointF& w, TriRef& out) const
@@ -605,8 +651,14 @@ int TriPlan::SkylightOn(const TriRef& t) const
 
 bool TriPlan::SkylightFits(const PlanSkylight& window) const
 {
-	if(window.k >= 0 ? Room(TriRef(window.deck, window.cx, window.cy, window.k)) < 0
-			: CellRoom(window.deck, window.cx, window.cy) < 0)
+	// A canopy may also reach over hull next to its room (a fighter's canopy
+	// runs on over the nose); the build gives it the room it joins.
+	const bool canopyOverHull = window.shape == "canopy" && !window.floor &&
+			(window.k >= 0 ? Hull(TriRef(window.deck, window.cx, window.cy, window.k))
+				: Hull(TriRef(window.deck, window.cx, window.cy, 0)) && Hull(TriRef(window.deck, window.cx, window.cy, 1)) &&
+				  Hull(TriRef(window.deck, window.cx, window.cy, 2)) && Hull(TriRef(window.deck, window.cx, window.cy, 3)));
+	if(!canopyOverHull && (window.k >= 0 ? Room(TriRef(window.deck, window.cx, window.cy, window.k)) < 0
+			: CellRoom(window.deck, window.cx, window.cy) < 0))
 		return false;
 	const int step = window.floor ? -1 : 1;
 	for(int d = window.deck + step; d >= 0 && d < m_decks; d += step)
@@ -618,7 +670,7 @@ bool TriPlan::SkylightFits(const PlanSkylight& window) const
 
 bool TriPlan::SkylightIsHull(const PlanSkylight& window) const
 {
-	return window.shape == "hull" || (window.shape.isEmpty() && windowStyle == "hull");
+	return window.shape == "hull" || window.shape == "canopy" || (window.shape.isEmpty() && windowStyle == "hull");
 }
 
 int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
@@ -675,8 +727,8 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 				door.side = side(door.side);
 				if(reversed && door.edge != 0)
 					door.edge = 3 - door.edge;
-				for(QPoint& b : door.buttons)
-					b = QPoint(foreAft ? 8 * m_width - b.x() : b.x(), my ? 8 * m_depth - b.y() : b.y());
+				for(QPointF& b : door.buttons)
+					b = QPointF(foreAft ? 8 * m_width - b.x() : b.x(), my ? 8 * m_depth - b.y() : b.y());
 			}
 	for(PlanEmitter& e : emitters)
 		if(flipped(e.deck))
@@ -891,11 +943,8 @@ int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
 				door.cx = cellX(cx, cy);
 				door.cy = cellY(cx, cy);
 				door.side = side(door.side);
-				for(QPoint& b : door.buttons)
-				{
-					const QPointF q = point(b.x() / 8.0, b.y() / 8.0) * 8.0;
-					b = QPoint(qRound(q.x()), qRound(q.y()));
-				}
+				for(QPointF& b : door.buttons)
+					b = point(b.x() / 8.0, b.y() / 8.0) * 8.0;
 			}
 	for(PlanEmitter& e : emitters)
 		if(turned(e.deck))
@@ -1420,8 +1469,9 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		if(!d.buttons.isEmpty())
 		{
 			QJsonArray buttons;
-			for(const QPoint& b : d.buttons)
-				buttons.append(QJsonArray{ b.x(), b.y() });
+			// Two decimals of an eighth are under a hundredth of a foot.
+			for(const QPointF& b : d.buttons)
+				buttons.append(QJsonArray{ std::round(b.x() * 100) / 100, std::round(b.y() * 100) / 100 });
 			o["buttons"] = buttons;
 		}
 		if(d.skip)
@@ -1604,6 +1654,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	if(!buildLeaveOut.isEmpty())
 		root["buildLeaveOut"] = QJsonArray::fromStringList(buildLeaveOut);
 
+	// Three decimals: floats would otherwise be written as 0.6000000238.
+	auto Rounded = [](float v) { return std::round(double(v) * 1000.0) / 1000.0; };
 	QJsonArray paintArray;
 	for(const PlanPaint& p : palette)
 	{
@@ -1613,6 +1665,20 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["name"] = p.name;
 		if(p.livery)
 			o["livery"] = true;
+		// The finish is written only where it is not the plain default, so
+		// older plans and plain colours stay as they were.
+		if(p.opacity < 1.f)
+			o["opacity"] = Rounded(p.opacity);
+		if(p.selfLit > 0.f)
+			o["selfLit"] = Rounded(p.selfLit);
+		if(p.shine > 0.f)
+			o["shine"] = Rounded(p.shine);
+		if(p.reflect > 0.f)
+			o["reflect"] = Rounded(p.reflect);
+		if(p.HasGlow())
+			o["glow"] = ColourName(p.glow);
+		if(p.effect != 0)
+			o["effect"] = p.effect;
 		paintArray.append(o);
 	}
 	root["palette"] = paintArray;
@@ -1768,7 +1834,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 			d.kind.clear();
 		for(const QJsonValue& b : o["buttons"].toArray())
 			if(b.toArray().size() == 2 && d.buttons.size() < 2)
-				d.buttons << QPoint(b.toArray().at(0).toInt(), b.toArray().at(1).toInt());
+				d.buttons << QPointF(b.toArray().at(0).toDouble(), b.toArray().at(1).toDouble());
 		d.skip = o["skip"].toBool();
 		plan.doors << d;
 	}
@@ -1813,7 +1879,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		if(window.k < -1 || window.k > 3)
 			window.k = -1;
 		window.shape = o["shape"].toString();
-		if(window.shape != "hull" && window.shape != "flat")
+		if(window.shape != "hull" && window.shape != "flat" && window.shape != "canopy")
 			window.shape.clear();
 		window.skip = o["skip"].toBool();
 		plan.skylights << window;
@@ -1932,6 +1998,13 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 			p.theme = o["theme"].toInt(-1);
 			p.name = o["name"].toString();
 			p.livery = o["livery"].toBool();
+			p.opacity = float(qBound(0.0, o["opacity"].toDouble(1.0), 1.0));
+			p.selfLit = float(qBound(0.0, o["selfLit"].toDouble(0.0), 1.0));
+			p.shine = float(qMax(0.0, o["shine"].toDouble(0.0)));
+			p.reflect = float(qBound(0.0, o["reflect"].toDouble(0.0), 1.0));
+			if(o.contains("glow"))
+				p.glow = QColor(o["glow"].toString());
+			p.effect = qMax(0, o["effect"].toInt(0));		// Checked against the engine when built.
 			plan.palette << p;
 		}
 	}

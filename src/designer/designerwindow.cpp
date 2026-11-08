@@ -5,6 +5,7 @@
 #include "mesh.h"
 #include "designerwindow.h"
 #include "interior.h"
+#include "auscface.h"
 #include <QStandardItemModel>
 
 
@@ -114,6 +115,23 @@ static void PickRoomType(QComboBox* box, const QString& type)
 namespace {
 
 enum Step { StepShip, StepHull, StepRooms, StepCrew, StepPaint, StepBuild };
+
+// A few words on a colour's finish, for the list.
+QString FinishSummary(const PlanPaint& p)
+{
+	QStringList parts;
+	if(p.opacity < 1.f)
+		parts << QString("%1 % see-through").arg(qRound((1.f - p.opacity) * 100.f));
+	if(p.reflect > 0.f)
+		parts << (p.reflect >= .8f && p.shine >= 50.f ? "polished" : "sheen");
+	if(p.selfLit > 0.f)
+		parts << "self-lit";
+	if(p.HasGlow())
+		parts << "glows";
+	if(p.effect > 0 && p.effect < EFF_Count)
+		parts << SurfaceEffectName(SURFACE_EFFECT(p.effect));
+	return parts.join(", ");
+}
 
 QIcon Swatch(const QColor& colour)
 {
@@ -868,10 +886,15 @@ QWidget* DesignerWindow::MakeRoomPage()
 		m_skylightShape->addItem("Like the wall windows", "");
 		m_skylightShape->addItem("Follow the hull", "hull");
 		m_skylightShape->addItem("Flat", "flat");
+		m_skylightShape->addItem("Canopy", "canopy");
 		m_skylightShape->setToolTip("For ceiling windows placed from now on. Following the hull, the glass is the "
 									"hull's own surface over the window, in the hull's shape; flat, a level pane in a "
 									"cutout. Like the wall windows follows Windows follow the hull's own triangles. "
-									"Drawn dotted when following the hull, dashed when flat.");
+									"Drawn dotted when following the hull, dashed when flat.\n\n"
+									"Canopy: for a cockpit under a bubble of glass (a fighter's). Draw it over the "
+									"room's cells under the hull's canopy. The hull over them is glass from the window "
+									"sill up, its sides too, and the room's walls there are open above the sill, so "
+									"the pilot sees out all round. Drawn filled.");
 		skyForm->addRow("Glass", m_skylightShape);
 		connect(m_skylightShape, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
 			m_view->SetSkylightShape(m_skylightShape->currentData().toString());
@@ -1285,6 +1308,110 @@ QWidget* DesignerWindow::MakePaintPage()
 		RefreshPalette();
 		OnPlanChanged(true);
 	});
+
+	// The finish: what the game's own designer calls Transparency, Self
+	// Illumination, Polish, Glow and the surface effects, for every face
+	// painted in this colour.
+	QGroupBox* finish = new QGroupBox("Finish of this colour");
+	QFormLayout* form = new QFormLayout(finish);
+	m_finishPreset = new QComboBox;
+	m_finishPreset->addItems(QStringList() << "Choose a ready finish..." << "Matte (plain paint)" << "Satin metal"
+							 << "Polished metal" << "Tinted glass" << "Light (self-lit)" << "Energy field");
+	m_finishPreset->setToolTip("Sets all the values below at once; change any of them afterwards. The colour "
+							   "itself stays.");
+	form->addRow("Ready finish:", m_finishPreset);
+	auto percent = [](const QString& tip) {
+		QSpinBox* box = new QSpinBox;
+		box->setRange(0, 100);
+		box->setSuffix(" %");
+		box->setKeyboardTracking(false);
+		box->setToolTip(tip);
+		return box;
+	};
+	m_transparency = percent("How much you see through it: 0 % is solid, 100 % invisible. The game's windows "
+							 "are 75 %. On the hull, a see-through colour shows the rooms and the inside of the "
+							 "ship from outside, so keep it for glass, lights and energy fields.");
+	form->addRow("Transparency:", m_transparency);
+	m_selfLit = percent("How much it lights itself: 0 % is lit only by the sun and lamps, 100 % looks the same "
+						"in the dark. For lights, screens and glowing parts.");
+	form->addRow("Self-lit:", m_selfLit);
+	m_shine = new QDoubleSpinBox;
+	m_shine->setRange(0, 5000);
+	m_shine->setDecimals(0);
+	m_shine->setSingleStep(10);
+	m_shine->setKeyboardTracking(false);
+	m_shine->setToolTip("Polish, part one: how small and sharp the highlight is. Low numbers give a wide soft "
+						"sheen, high numbers (up to 1000 or more) a small bright spot, like chrome or glass.");
+	form->addRow("Shininess:", m_shine);
+	m_reflect = percent("Polish, part two: how bright the highlight is. 0 % is dull paint, 100 % a mirror "
+						"finish.");
+	form->addRow("Reflectivity:", m_reflect);
+	m_glow = new QPushButton;
+	m_glow->setToolTip("A colour of light added on top of everything else, as the game's Glow. The brighter the "
+					   "colour, the stronger the glow. Black is no glow.");
+	form->addRow("Glow:", m_glow);
+	m_effect = new QComboBox;
+	for(int e = 0; e < EFF_Count; ++e)
+		m_effect->addItem(SurfaceEffectName(SURFACE_EFFECT(e)));
+	m_effect->setToolTip("One of the game's animated surfaces. They move when the system they are named after "
+						 "works (the shield effect when the shields are up, for instance).");
+	form->addRow("Effect:", m_effect);
+	m_finishNote = new QLabel;
+	m_finishNote->setWordWrap(true);
+	m_finishNote->setStyleSheet("color: #c08000;");
+	form->addRow(m_finishNote);
+	layout->addWidget(finish);
+
+	connect(m_finishPreset, QOverload<int>::of(&QComboBox::activated), this, [this](int which) {
+		if(which <= 0)
+			return;
+		m_finishPreset->setCurrentIndex(0);
+		EditFinish([which](PlanPaint& p) {
+			const QColor colour = p.colour;
+			PlanPaint plain;
+			p.opacity = plain.opacity;
+			p.selfLit = plain.selfLit;
+			p.shine = plain.shine;
+			p.reflect = plain.reflect;
+			p.glow = QColor();
+			p.effect = 0;
+			switch(which)
+			{
+				case 2:	p.shine = 20; p.reflect = .3f; break;							// Satin metal.
+				case 3:	p.shine = 100; p.reflect = 1.f; break;							// Polished metal.
+				case 4:	p.opacity = .4f; p.shine = 200; p.reflect = .8f; break;			// Tinted glass.
+				case 5:	p.selfLit = 1.f; break;											// Light.
+				case 6:	p.opacity = .5f; p.selfLit = 1.f; p.glow = colour; p.effect = EFF_Shield; break;
+				default: break;															// Matte.
+			}
+		});
+	});
+	connect(m_transparency, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+		EditFinish([v](PlanPaint& p) { p.opacity = float(100 - v) / 100.f; });
+	});
+	connect(m_selfLit, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+		EditFinish([v](PlanPaint& p) { p.selfLit = float(v) / 100.f; });
+	});
+	connect(m_shine, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		EditFinish([v](PlanPaint& p) { p.shine = float(v); });
+	});
+	connect(m_reflect, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+		EditFinish([v](PlanPaint& p) { p.reflect = float(v) / 100.f; });
+	});
+	connect(m_effect, QOverload<int>::of(&QComboBox::activated), this, [this](int v) {
+		EditFinish([v](PlanPaint& p) { p.effect = v; });
+	});
+	connect(m_glow, &QPushButton::clicked, this, [this]() {
+		const int row = m_palette->currentRow();
+		if(row < 0 || row >= m_plan.palette.size())
+			return;
+		const PlanPaint& p = m_plan.palette.at(row);
+		const QColor c = QColorDialog::getColor(p.HasGlow() ? p.glow : QColor(Qt::black), this,
+												"The glow (black for none)");
+		if(!c.isValid())
+			return;
+		EditFinish([c](PlanPaint& p) { p.glow = (c.red() || c.green() || c.blue()) ? c : QColor(); });
+	});
 	layout->addStretch(1);
 	connect(m_palette, &QListWidget::currentRowChanged, this, &DesignerWindow::OnColourSelected);
 	connect(m_palette, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
@@ -1522,7 +1649,12 @@ void DesignerWindow::RefreshPalette()
 			text += "  - base coat";
 		if(p.livery)
 			text += "  (L: livery)";
-		m_palette->addItem(new QListWidgetItem(Swatch(p.colour), text));
+		if(p.HasFinish())
+			text += "  (F: finish)";
+		QListWidgetItem* item = new QListWidgetItem(Swatch(p.colour), text);
+		if(p.HasFinish())
+			item->setToolTip("Finish: " + FinishSummary(p));
+		m_palette->addItem(item);
 	}
 	m_palette->setCurrentRow(qBound(0, row, m_plan.palette.size() - 1));
 	m_updating = false;
@@ -2370,6 +2502,66 @@ void DesignerWindow::OnColourSelected(int row)
 		m_livery->setChecked(row >= 0 && row < m_plan.palette.size() && m_plan.palette.at(row).livery);
 		m_updating = was;
 	}
+	RefreshFinish();
+}
+
+// Puts the finish of the colour picked in the controls.
+void DesignerWindow::RefreshFinish()
+{
+	if(!m_transparency)
+		return;
+	const int row = m_palette->currentRow();
+	const bool valid = row >= 0 && row < m_plan.palette.size();
+	const PlanPaint p = valid ? m_plan.palette.at(row) : PlanPaint();
+	const bool was = m_updating;
+	m_updating = true;
+	// A named list: a range-for over 'QList<QWidget*>() << ...' would loop
+	// over a temporary that is already gone (operator<< returns a reference).
+	QList<QWidget*> controls;
+	controls << m_finishPreset << m_transparency << m_selfLit << m_shine << m_reflect << m_glow << m_effect;
+	for(QWidget* w : controls)
+		w->setEnabled(valid);
+	m_transparency->setValue(qRound((1.f - p.opacity) * 100.f));
+	m_selfLit->setValue(qRound(p.selfLit * 100.f));
+	m_shine->setValue(p.shine);
+	m_reflect->setValue(qRound(p.reflect * 100.f));
+	m_effect->setCurrentIndex(qBound(0, p.effect, m_effect->count() - 1));
+	if(p.HasGlow())
+	{
+		m_glow->setIcon(Swatch(p.glow));
+		m_glow->setText(p.glow.name());
+	}
+	else
+	{
+		m_glow->setIcon(QIcon());
+		m_glow->setText("None - choose...");
+	}
+	QString note;
+	if(valid && p.opacity < 1.f)
+		note = row == 0 ? "The base coat is see-through: from outside, the whole ship shows its rooms and "
+						  "insides. Usually only glass, lights and fields should be."
+						: "See-through: from outside, the rooms behind it show through.";
+	m_finishNote->setText(note);
+	m_finishNote->setVisible(!note.isEmpty());
+	m_updating = was;
+}
+
+// Changes the finish of the colour picked, as one step to undo.
+void DesignerWindow::EditFinish(const std::function<void(PlanPaint&)>& change)
+{
+	const int row = m_palette->currentRow();
+	if(m_updating || row < 0 || row >= m_plan.palette.size())
+		return;
+	PlanPaint p = m_plan.palette.at(row);
+	change(p);
+	const PlanPaint& old = m_plan.palette.at(row);
+	if(p.opacity == old.opacity && p.selfLit == old.selfLit && p.shine == old.shine && p.reflect == old.reflect &&
+			p.glow == old.glow && p.effect == old.effect)
+		return;
+	OnAboutToChange();
+	m_plan.palette[row] = p;
+	RefreshPalette();
+	OnPlanChanged(true);
 }
 
 void DesignerWindow::RunShapeJob(ShapeJob& job, const PlanProgress& progress)

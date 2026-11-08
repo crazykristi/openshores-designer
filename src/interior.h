@@ -307,7 +307,9 @@ int ClearDoorways(AuDesign& design);
 // 'onWall' is its middle on the wall, 'inward' the unit direction into the
 // room (level). The door's switch goes at the button's face, where the
 // game's hot zone for it (a foot each way) covers it.
+// 'outsideHull': on the outside of the hull (a hull door's outer button),
+// made a hull part.
 bool AddDoorButton(AuDesign& design, const AuPoint& onWall, const AuPoint& inward, const QString& groupName,
-		AuPoint& switchLoc);
+		AuPoint& switchLoc, bool outsideHull = false);
 
 #endif

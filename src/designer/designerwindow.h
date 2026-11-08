@@ -15,6 +15,7 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <atomic>
+#include <functional>
 #include <memory>
 
 #include "planbuild.h"
@@ -30,6 +31,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
+class QPushButton;
 class QProgressBar;
 class QThread;
 class QTreeWidget;
@@ -111,6 +113,8 @@ private:
 	void		RefreshAll();
 	void		RefreshRooms();
 	void		RefreshPalette();
+	void		RefreshFinish();
+	void		EditFinish(const std::function<void(PlanPaint&)>& change);
 	void		RefreshDecks();
 	void		RefreshTitle();
 	void		ApplyDrawMode();
@@ -257,6 +261,16 @@ private:
 	QWidget*		m_skylightRow = 0;		// Shown with the ceiling window tool.
 	QComboBox*		m_skylightShape = 0;
 	QCheckBox*		m_livery = 0;			// The colour picked is a livery colour.
+	// The finish of the colour picked (PlanPaint opacity, selfLit, shine,
+	// reflect, glow, effect).
+	QComboBox*		m_finishPreset = 0;
+	QSpinBox*		m_transparency = 0;		// Percent; 100 - opacity.
+	QSpinBox*		m_selfLit = 0;			// Percent.
+	QDoubleSpinBox*	m_shine = 0;
+	QSpinBox*		m_reflect = 0;			// Percent.
+	QPushButton*	m_glow = 0;
+	QComboBox*		m_effect = 0;
+	QLabel*			m_finishNote = 0;
 	QDoubleSpinBox*	m_markingSize = 0;
 
 	// The paint page.

@@ -871,6 +871,49 @@ PY
 		echo "  FAIL  fighter mode"
 		grep -E 'Fighter|^Stations|^Berths|Error|Warning' "$WORK/plan/fighter.txt" "$WORK/plan/fighter-cockpit.txt"
 	fi
+	# A canopy over the cockpit and on over the hull ahead of it: the hull
+	# over it is one window of the cockpit (this test hull has a few large
+	# faces, so it is cut along the outline), nothing reaches out of the
+	# hull, the helm sees out ahead and has glass overhead, and the plan
+	# keeps the canopy when saved.
+	python3 - "$WORK/plan/fighter-cockpit.json" "$WORK/plan/fighter-canopy.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1])); W, D = p['width'], p['depth']
+def dec(s):
+    o = []
+    for part in s.split(','):
+        if part:
+            n, v = part.split('*'); o += [int(v)] * int(n)
+    return o
+st = p['stations'][0]; d = st['deck']; L = p['layers'][d]
+r = dec(L['room']); h = dec(L['hull'])
+cells = sorted({(i // 4) % W for i in range(len(r)) if r[i] == 0})
+rows = sorted({(i // 4) // W for i in range(len(r)) if r[i] == 0})
+sky = [{'deck': d, 'x': x, 'y': y, 'shape': 'canopy'} for x in cells for y in rows]
+x = max(cells) + 1
+if all(h[(y * W + x) * 4 + k] for y in rows for k in range(4)):
+    sky += [{'deck': d, 'x': x, 'y': y, 'shape': 'canopy'} for y in rows]
+p['skylights'] = sky
+json.dump(p, open(sys.argv[2], 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/fighter-canopy.json" --out "$WORK/plan/fighter-canopy.SoH" > "$WORK/plan/fighter-canopy.txt" 2>&1
+	"$SHIPGEN" audit "$WORK/plan/fighter-canopy.SoH" > "$WORK/plan/fighter-canopy.audit" 2>&1
+	"$SHIPGEN" view-check "$WORK/plan/fighter-canopy.SoH" > "$WORK/plan/fighter-canopy.view" 2>&1; viewOk=$?
+	"$SHIPGEN" plan-flip "$WORK/plan/fighter-canopy.json" "$WORK/plan/fighter-canopy-saved.json" --clockwise > /dev/null 2>&1
+	if grep -q '^Canopies     : 1$' "$WORK/plan/fighter-canopy.txt" && grep -q 'Errors (0)' "$WORK/plan/fighter-canopy.txt" &&
+			grep -q 'sees out ahead 100 %' "$WORK/plan/fighter-canopy.txt" &&
+			grep -q '^Parts sticking out of the hull: none$' "$WORK/plan/fighter-canopy.audit" && [ "$viewOk" -eq 0 ] &&
+			grep -qE '^  up: .*\(glass [1-9]' "$WORK/plan/fighter-canopy.view" &&
+			[ "$(grep -o '"shape": *"canopy"' "$WORK/plan/fighter-canopy-saved.json" | wc -l)" -eq "$(grep -o '"shape": *"canopy"' "$WORK/plan/fighter-canopy.json" | wc -l)" ]; then
+		pass=$((pass+1))
+		echo "  ok    a fighter's canopy: one window, nothing out of the hull, the helm sees out"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a fighter's canopy"
+		grep -E 'Canop|sees out|reaches|Error|Warning' "$WORK/plan/fighter-canopy.txt"
+		sed -n '/Parts sticking/,$p' "$WORK/plan/fighter-canopy.audit"
+		cat "$WORK/plan/fighter-canopy.view"
+	fi
 	# Stations, berths and paths placed by hand (Crew step) are built where
 	# they are, and the build adds only the rest; what the Build page leaves
 	# out (all windows, one door, one station marked skip) is not built but
@@ -1793,6 +1836,28 @@ PY
 			grep -E '^Hull|Livery' "$WORK/plan/livery.txt"
 			echo "$liveryBox"
 		fi
+		# A colour's finish (transparency, self-lit, polish, glow, effect)
+		# goes onto every hull face painted in it, and survives a save.
+		python3 - "$WORK/plan/livery.json" "$WORK/plan/finish.json" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1]))
+plan['palette'][0].update(shine=100, reflect=0.6)
+plan['palette'][1].update(livery=False, opacity=0.4, selfLit=0.3, glow="#0055ff", effect=9)
+json.dump(plan, open(sys.argv[2], 'w'))
+PY
+		"$SHIPGEN" build-plan "$WORK/plan/finish.json" --out "$WORK/plan/finish.SoH" --no-furnish > "$WORK/plan/finish.txt" 2>&1
+		"$SHIPGEN" plan-flip "$WORK/plan/finish.json" "$WORK/plan/finish-saved.json" --clockwise > /dev/null 2>&1
+		finishFaces="$("$SHIPGEN" faces "$WORK/plan/finish.SoH" 1 2>&1)"
+		if grep -q 'shine 100  reflect 0.60  effect No Effect$' <<< "$finishFaces" &&
+				grep -q 'opacity 0.40  self-lit 0.30  shine 0  reflect 0.00  effect Shield  glow #0055ff$' <<< "$finishFaces" &&
+				python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["palette"]; sys.exit(0 if p[1].get("opacity")==0.4 and p[1].get("glow")=="#0055ff" and p[1].get("effect")==9 and p[0].get("reflect")==0.6 else 1)' "$WORK/plan/finish-saved.json"; then
+			pass=$((pass+1))
+			echo "  ok    a colour's finish (transparency, polish, glow, effect) is on its hull faces and saved"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  a colour's finish"
+			echo "$finishFaces" | head -5
+		fi
 		# Ceiling windows by the triangle: following the hull, four cells and
 		# two triangles make one outline whose glass is the hull's own; flat,
 		# a whole cell, a half cell and one triangle are each cut. Looking up
@@ -1956,6 +2021,33 @@ PYEOF
 		fi
 	else
 		echo "  skip  door buttons (needs python3)"
+	fi
+	# A hull door's buttons: one inside on the wall beside it, where it was
+	# clicked along the wall (not at the middle of a cell edge), and one
+	# outside on the hull (off the grid), a hull part; the door's inside and
+	# outside switches go on them.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/hullbuttons.json" <<'PYEOF' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+d['doors'][2]['buttons'] = [[90.88, 127.84], [91.84, 128.96]]
+json.dump(d, open(sys.argv[2], 'w'), indent=1)
+PYEOF
+	if [ -f "$WORK/plan/hullbuttons.json" ]; then
+		"$SHIPGEN" build-plan "$WORK/plan/hullbuttons.json" --out "$WORK/plan/hullbuttons.SoH" > "$WORK/plan/hullbuttons.txt" 2>&1
+		"$SHIPGEN" parts "$WORK/plan/hullbuttons.SoH" > "$WORK/plan/hullbuttons-parts.txt" 2>&1
+		if grep -q '^Door buttons : 2$' "$WORK/plan/hullbuttons.txt" && grep -q 'Errors (0)' "$WORK/plan/hullbuttons.txt" &&
+				! grep -q 'A button of a door' "$WORK/plan/hullbuttons.txt" &&
+				qgrep -E '  Hull Door  \[Hull Door\]  switches \(-39\.8, -33\.2, 4\.5\) \(-42\.4, -32\.6, 4\.5\)' "$WORK/plan/hullbuttons-parts.txt" &&
+				qgrep -E '  Hull  \[Hull Door\]  24 tris' "$WORK/plan/hullbuttons-parts.txt"; then
+			pass=$((pass+1))
+			echo "  ok    a hull door's buttons inside where clicked along the wall, and outside on the hull"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  a hull door's buttons are wrong"
+			grep -E 'Door buttons|Errors|button' "$WORK/plan/hullbuttons.txt"; grep -E '  Hull Door  \[|\[Hull Door\]' "$WORK/plan/hullbuttons-parts.txt" | head -4
+		fi
+	else
+		echo "  skip  hull door buttons (needs python3)"
 	fi
 	# A window two cells wide between the hall and the crew quarters, and a
 	# balcony between the engine room and the hall; one more "window" on a

@@ -194,10 +194,10 @@ private:
 	// wall near it, until two are placed, Esc, or a click elsewhere.
 	int		m_buttonDoor = -1;		// A door of the row, in doors; -1 when not placing buttons.
 	bool	m_buttonHover = false;
-	QPoint	m_buttonAt;				// Where a click would put one, in eighths of a cell.
-	QPointF	m_buttonWallA, m_buttonWallB;	// The wall edge it would go on.
+	QPointF	m_buttonAt;				// Where a click would put one, in eighths of a cell.
+	QPointF	m_buttonWallA, m_buttonWallB;	// The stretch of wall the button would cover.
 	QList<int> ButtonRow(int door) const;	// The doors of that door's row.
-	bool	ButtonSpot(const QPointF& world, QPoint& eighths, QPointF& wallA, QPointF& wallB, QString* why) const;
+	bool	ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA, QPointF& wallB, QString* why) const;
 	void	StartButtons(int door);
 	void	StopButtons();
 };

@@ -6,7 +6,7 @@
 #ifndef SHIPGEN_VERSION_H
 #define SHIPGEN_VERSION_H
 
-#define SHIPGEN_VERSION "0.3.7-beta-rc1"
+#define SHIPGEN_VERSION "0.3.7-beta-rc2"
 // Where problems are reported (shown when the program finds something missing).
 #define SHIPGEN_ISSUES_URL "https://github.com/crazykristi/openshores-designer/issues"
 #define SHIPGEN_AUTHOR "Kristiana Moretti"

@@ -112,11 +112,15 @@ struct PlanDoor
 	// room's height. Both only between two rooms; nobody walks through them.
 	QString	kind;
 	// Doors only: buttons that open and close it (the user, 2026-11-06), at
-	// most two for a row (one each side). Each is a point an eighth of a cell
-	// in from the middle of a wall edge of one of the door's rooms, in eighths
-	// of a cell from the grid's corner 0,0: the triangle it lies in says on
-	// which side of the wall the button is. 4 ft above the floor.
-	QList<QPoint> buttons;
+	// most two for a row (one each side), in eighths of a cell from the grid's
+	// corner 0,0 (fractions allowed since 8 November 2026; before, each was an
+	// eighth of a cell in from the middle of a wall edge). Inside, a point a
+	// little in from a wall of one of the door's rooms: the triangle it lies
+	// in says on which side of the wall the button is, and the button goes
+	// where the point is along the wall (TriPlan::ButtonWallSpot). For a hull
+	// door also outside, a point beyond the door's wall line: the button goes
+	// on the hull surface, there along the wall. 4 ft above the floor.
+	QList<QPointF> buttons;
 	// Wall windows only: how this one is made. "" as the plan's windowStyle,
 	// "frame" cut with a window jig (a frame round it), "hull" the hull's own
 	// triangles become the glass (follows the hull).
@@ -147,7 +151,7 @@ struct PlanSkylight
 	int		cy = 0;
 	int		k = -1;
 	bool	floor = false;
-	QString	shape;
+	QString	shape;			// "", "hull", "flat" or "canopy" (glass from the sill up, the walls under it opened).
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
@@ -228,6 +232,20 @@ struct PlanPaint
 	// colour edge is where it was drawn, not stepped along the hull's own
 	// triangles. Costs faces.
 	bool	livery = false;
+	// The finish, as the game's own designer sets it on faces (Transparency,
+	// Self Illumination, Polish, Glow and the surface effects).
+	float	opacity = 1.f;		// 1 opaque, 0 invisible.
+	float	selfLit = 0.f;		// 0 lit by the world, 1 fully self-lit.
+	float	shine = 0.f;		// Specular exponent, 0 and up (the game suggests up to 1000).
+	float	reflect = 0.f;		// Specular intensity, 0 to 1.
+	QColor	glow;				// Added light at every corner; invalid or black for none.
+	int		effect = 0;			// SURFACE_EFFECT (aumath/auscface.h); 0 for none.
+
+	bool	HasFinish() const
+	{
+		return opacity < 1.f || selfLit > 0.f || shine > 0.f || reflect > 0.f || HasGlow() || effect != 0;
+	}
+	bool	HasGlow() const { return glow.isValid() && (glow.red() || glow.green() || glow.blue()); }
 };
 
 // The 3D model a plan was made from, and how it was placed: turned (y up
@@ -454,7 +472,13 @@ public:
 
 	// Where things are, in feet. The grid is centred on the origin.
 	QPointF	Corner(int ix, int iy) const;			// Grid corner (0..Width, 0..Depth).
-	QPointF	EighthPoint(const QPoint& q) const;		// A point in eighths of a cell from corner 0,0 (PlanDoor::buttons).
+	QPointF	EighthPoint(const QPointF& q) const;	// A point in eighths of a cell from corner 0,0 (PlanDoor::buttons).
+	QPointF	ToEighths(const QPointF& world) const;	// The other way round.
+	// Where on a wall of triangle t a door button near 'p' goes: the wall edge
+	// nearest p (not a doorway), at the point of it nearest p, kept 'margin'
+	// feet from the ends of the edge. 'inward' is a unit vector into t.
+	bool	ButtonWallSpot(const TriRef& t, const QPointF& p, double margin, QPointF& spot, QPointF& inward,
+					QPointF* wallA = 0, QPointF* wallB = 0) const;
 	bool	TriAt(int deck, const QPointF& world, TriRef& out) const;	// The triangle a point lies in.
 	QPointF	CellCentre(int cx, int cy) const;
 	void	TriCorners(const TriRef& t, QPointF out[3]) const;	// Counter-clockwise from above.
@@ -487,7 +511,7 @@ public:
 	int		NewWindowRow() const;								// A row number no window has yet.
 	int		SkylightAt(int deck, int cx, int cy) const;			// Index in skylights, -1 if none.
 	int		SkylightOn(const TriRef& t) const;					// The skylight over a triangle (its own or its cell's), -1 if none.
-	bool	SkylightFits(const PlanSkylight& window) const;		// Room (a whole cell, or the triangle) with no room beyond it.
+	bool	SkylightFits(const PlanSkylight& window) const;		// Room (a whole cell, or the triangle) with no room beyond it; a canopy may be over hull too.
 	bool	WindowIsHull(const PlanDoor& window) const
 	{
 		return window.style == "hull" || (window.style.isEmpty() && windowStyle == "hull");

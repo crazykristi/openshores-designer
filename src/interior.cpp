@@ -174,6 +174,23 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 		farFaces.insert(id, otherFaces);
 	}
 
+	// The engine lines the hole by clipping the jig against every near face
+	// of both parts, again and again: a 79 ft bay door on a curved hull gave
+	// tens of thousands of fragments and a blueprint far over the game's size
+	// limit, and how bad it gets cannot be told from the face counts. A hull
+	// door with a known axis gets a frame instead of the lining anyway, so
+	// there the lining is left out.
+	int nearCount[2] = { 0, 0 };
+	for(int i = 0; i < 2; ++i)
+		if(AuScPart* part = (i ? roomId : hullId) ? design.Parts().value(i ? roomId : hullId) : 0)
+		{
+			AuScFaceList f;
+			part->Faces(f);
+			nearCount[i] = f.size();
+		}
+	const bool skipLining = hullId && axis >= 0 && axis <= 1;
+	if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+		fprintf(stderr, "jig cut: %d and %d near faces%s\n", nearCount[0], nearCount[1], skipLining ? ", without lining" : "");
 	AuScSelection sel;
 	sel.insert(jigId, AuScSelectInfo());
 	if(hullId)
@@ -181,7 +198,9 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 	if(roomId)
 		sel.insert(roomId, AuScSelectInfo());
 	AuScParts partsAdded, partsChanged, partsDeleted;
+	AuScFaceList::s_JigCutWithoutLining = skipLining;
 	const bool ok = design.Parts().JigCutParts(AuId(0), sel, partsAdded, partsChanged, partsDeleted);
+	AuScFaceList::s_JigCutWithoutLining = false;
 
 	// On a curved hull the engine's lining of the hole comes out as many
 	// overlapping fragments. With the axis of the opening known, the lining
@@ -921,6 +940,9 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 		AuScFaceList jig = BoxFaces(mn, mx);
 		OrientAsHull(jig);
 		QList<quint16> added;
+		if(!qgetenv("SHIPGEN_DEBUG").isEmpty())
+			fprintf(stderr, "hull door of '%s': cutting hull part %d, slab %.1f %.1f %.1f .. %.1f %.1f %.1f\n",
+					qPrintable(groupName), int(hullId), slabMin.x, slabMin.y, slabMin.z, slabMax.x, slabMax.y, slabMax.z);
 		if(hullId && JigCut(design, AuScPart::Part_DoorJig, jig, hullId, roomMeshId, &added, alongX ? 0 : 1, false))
 			for(quint16 id : added)
 				if(AuScDoor* door = dynamic_cast<AuScDoor*>(design.Parts().value(id)))
@@ -1504,7 +1526,7 @@ bool AddWalkPath(AuDesign& design, const AuPoint& from, const AuPoint& to, quint
 }
 
 bool AddDoorButton(AuDesign& design, const AuPoint& onWall, const AuPoint& inward, const QString& groupName,
-		AuPoint& switchLoc)
+		AuPoint& switchLoc, bool outsideHull)
 {
 	// Built facing +x at the origin, then turned to face 'inward'. The plate
 	// stands a little off the wall: with its back in the wall's plane, the
@@ -1541,10 +1563,14 @@ bool AddDoorButton(AuDesign& design, const AuPoint& onWall, const AuPoint& inwar
 	at.Translate(onWall);
 	faces.Transform(turn);
 	faces.Transform(at);
+	// Outside the hull, a hull part: the game wants every mesh part inside
+	// the hull (as for the frames round openings).
+	AuScHull hull;
 	AuScMesh mesh;
-	mesh.AddFaces(faces);
-	mesh.SetGroupName(groupName);
-	if(!mesh.IsValid() || !design.Parts().AddPart(mesh))
+	AuScPart& part = outsideHull ? static_cast<AuScPart&>(hull) : static_cast<AuScPart&>(mesh);
+	part.AddFaces(faces);
+	part.SetGroupName(groupName);
+	if(!part.IsValid() || !design.Parts().AddPart(part))
 		return false;
 	switchLoc = onWall + in * (off + .15);
 	return true;

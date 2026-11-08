@@ -21,6 +21,7 @@
 
 #include "auscface.h"
 
+class AuScPart;
 class AuScParts;
 
 // Whether a triangle mesh encloses a volume.
@@ -145,5 +146,45 @@ struct RoomContainment
 // the placement code.
 void	AuditDesign(const AuScParts& parts, QList<HullSolidity>& hulls,
 		QList<RoomContainment>& rooms, QStringList& notes);
+
+// A part that reaches out of the hull: how many of its corners are outside,
+// how far the worst one is, and where they are.
+struct StickOut
+{
+	quint16		partId = 0;
+	QString		type;
+	QString		group;
+	int			corners = 0;
+	int			outside = 0;
+	double		worst = 0;			// Feet past the hull, roughly (along the way to the part's middle).
+	AuPoint		mn;					// The box of the corners outside.
+	AuPoint		mx;
+};
+
+// Every part that should be inside the hull (rooms, their voids, frames and
+// linings, furniture, stations, berths, lifts) and has corners outside it.
+// Hull doors, doorways, windows, paths and things on the hull's surface
+// (emitters, flags, decals) reach out on purpose and are not looked at.
+// 'tolerance' is how far past the surface a corner may be before it counts.
+QList<StickOut> AuditStickOut(const AuScParts& parts, double tolerance = .15);
+
+// The hull as one solid: every hull part but the frames, with the window
+// glass, which is the hull's own surface taken out of it.
+SolidMesh	HullSolidOf(const AuScParts& parts);
+
+// A part that is meant to be outside the hull: the threshold and the ramp of
+// a hull door (frames at or below the door's floor, next to it).
+bool		OutsideOnPurpose(const AuScParts& parts, const AuScPart* part);
+
+// Moves 'p' into the hull along the shortest of 'directions' (unit
+// vectors), and 'margin' further where that is still inside. False, with
+// 'p' as it was, when none gets there within 'reach'.
+bool		PullPointInside(const SolidMesh& hull, AuPoint& p, const QList<AuPoint>& directions,
+				double reach, double margin);
+
+// Moves every corner of the frames and linings (hull parts in the group
+// "Frame") that is outside the hull back into it, the shortest way. Returns
+// how many corners were moved; 'stuck' counts those that could not be.
+int			PullFramesInside(AuScParts& parts, double margin = .05, int* stuck = 0);
 
 #endif // SHIPGEN_AUDIT_H

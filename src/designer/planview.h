@@ -15,6 +15,7 @@
 #define SHIPGEN_PLANVIEW_H
 
 #include <QPointF>
+#include <QPolygonF>
 #include <QVector>
 #include <QWidget>
 
@@ -28,15 +29,21 @@ class PlanView : public QWidget
 
 public:
 	void	SetDoorTexture(int texture) { m_doorTexture = texture; }
+	// What the door tool puts in from now on (PlanDoor::kind): "" a door,
+	// "window" a window between two rooms, "balcony".
+	void	SetDoorKind(const QString& kind) { m_doorKind = kind; }
+	void	SetWindowStyle(const QString& style) { m_windowStyle = style; }	// PlanDoor::style of wall windows put in from now on.
+	void	SetSkylightShape(const QString& shape) { m_skylightShape = shape; }	// PlanSkylight::shape.
 	// For hull doors placed from now on, or right clicked: as in PlanDoor.
-	void	SetDoorExit(const QString& exit, bool openOnly, double rampRun)
+	void	SetDoorExit(const QString& exit, double rampRun)
 	{
 		m_doorExit = exit;
-		m_doorExitOpenOnly = openOnly;
 		m_doorRampRun = rampRun;
 	}
-	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, StairMode,
-			ContrailMode, WeaponMode, SkylightMode };
+	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, SpacecraftParkingMode, StairMode,
+			ContrailMode, WeaponMode, SkylightMode, MarkingMode,
+			// The Crew step: stations, berths, transporter pads and walk paths placed by hand.
+			StationMode, BerthMode, PadMode, PathMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
 
 	explicit PlanView(QWidget* parent = 0);
@@ -51,6 +58,19 @@ public:
 	void	SetRoom(int room) { m_room = room; }
 	void	SetPaintIndex(int paint) { m_paintIndex = paint; }
 	void	SetEmitterSize(double feet) { m_emitterFeet = feet; }		// For contrail emitters placed from now on.
+	// The weapon bay of weapon emitters placed from now on, or right clicked:
+	// a fire control module, 0 for the ship's (PlanEmitter::module).
+	void	SetWeaponModule(int module) { m_weaponModule = module; }
+	// What the Crew step's tools put in from now on (PlanStation, PlanBerth).
+	void	SetStationChoice(const QString& type, const QString& seat, int module)
+	{
+		m_stationType = type;
+		m_stationSeat = seat;
+		m_stationModule = module;
+		update();
+	}
+	void	SetBerthKind(const QString& kind) { m_berthKind = kind; }
+	void	SetMarking(int marking, double widthFeet) { m_marking = marking; m_markingFeet = widthFeet; }	// PlanEmitter::marking.
 
 	// The triangles a room fits in, from the last time the hull was shaped.
 	// The ones that do not are marked.
@@ -82,6 +102,7 @@ private:
 	QPointF	ToScreen(const QPointF& world) const;
 	QPointF	ToWorld(const QPointF& screen) const;
 	bool	TriangleAt(const QPointF& screen, TriRef& out) const;
+	int		SpacecraftSpotUnder(const QPointF& world) const;	// Index in parking, -1 if none.
 	void	Apply(const TriRef& t, bool erase);
 	void	ApplyOne(const TriRef& t, bool erase);
 	QColor	TriangleColour(const TriRef& t) const;
@@ -101,11 +122,35 @@ private:
 	int			m_room = 0;
 	int			m_paintIndex = 0;
 	double		m_emitterFeet = 6.5616798;
+	int			m_weaponModule = 0;
+	int			m_marking = 1;
+	double		m_markingFeet = 10.;
 
 	QVector<QVector<bool> >	m_roomable;
 	AuScTriList	m_hullTris;
 	mutable QHash<qint64, QPointF>	m_contrailSpots;
 
+	// The Crew step. Items are kept in cell units from the grid's corner 0,0.
+	QString		m_stationType = "helm";
+	QString		m_stationSeat;
+	int			m_stationModule = 0;
+	QString		m_berthKind = "crew";
+	double		m_itemYaw = 0;				// Degrees from fore, towards port; R turns it 45 degrees.
+	bool		m_pathDrag = false;
+	TriRef		m_pathStart;
+	QPointF		m_pathEnd;					// Plan point the dragged path ends at, for drawing it.
+	bool	CrewMode() const { return m_mode == StationMode || m_mode == BerthMode || m_mode == PadMode || m_mode == PathMode; }
+	QPointF	ToCells(const QPointF& world) const;
+	// The outline of an item on the floor, in plan feet: kind 0 a station
+	// (with 'seat' "desk" or a chair), 1 a berth, 2 a pad.
+	QPolygonF	ItemOutline(int kind, const QPointF& world, double yawDegrees, const QString& seat) const;
+	// The room the whole outline is in, -1 if it is not in one room.
+	int		OutlineRoom(int deck, const QPolygonF& outline) const;
+	// The hand-placed item of the mode under a plan point, index in its list or -1.
+	int		CrewItemAt(const QPointF& world) const;
+	int		PathAt(const QPointF& world) const;
+	void	CrewClick(const QPointF& world, const TriRef& t, bool erase);
+	void	PaintCrew(QPainter& p, double cellPixels);
 	bool		m_parkingAcross = false;	// Spots placed from now on lie across the ship (R turns them).
 	bool		m_hovering = false;
 	QPointF		m_hoverWorld;
@@ -122,6 +167,14 @@ private:
 	QString		m_notice;
 	TriRef		m_noticeTri;
 
+	// Windows being dragged along walls: put in (or, from a window, taken out)
+	// wherever the mouse passes; those put in share a row.
+	bool	m_windowDrag = false;
+	bool	m_windowAdding = false;
+	int		m_windowRow = 0;
+	bool	WindowEdgeAt(const QPointF& world, const TriRef& t, TriRef& w, int& we) const;
+	bool	WindowOuter(const TriRef& a, int edge) const;
+	void	DragWindow(const TriRef& w, int we);
 	// A door being dragged along a wall into a row.
 	bool	m_doorDrag = false;
 	bool	m_doorMoved = false;
@@ -131,9 +184,22 @@ private:
 	int		m_doorRow = 0;
 	int		m_doorMirrorRow = 0;
 	int		m_doorTexture = -1;
+	QString	m_doorKind;
+	QString	m_skylightShape;
+	QString	m_windowStyle;
 	QString	m_doorExit;
-	bool	m_doorExitOpenOnly = false;
 	double	m_doorRampRun = 0;
+
+	// After a door is placed: its buttons (PlanDoor::buttons), clicked on a
+	// wall near it, until two are placed, Esc, or a click elsewhere.
+	int		m_buttonDoor = -1;		// A door of the row, in doors; -1 when not placing buttons.
+	bool	m_buttonHover = false;
+	QPoint	m_buttonAt;				// Where a click would put one, in eighths of a cell.
+	QPointF	m_buttonWallA, m_buttonWallB;	// The wall edge it would go on.
+	QList<int> ButtonRow(int door) const;	// The doors of that door's row.
+	bool	ButtonSpot(const QPointF& world, QPoint& eighths, QPointF& wallA, QPointF& wallB, QString* why) const;
+	void	StartButtons(int door);
+	void	StopButtons();
 };
 
 #endif

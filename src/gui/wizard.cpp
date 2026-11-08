@@ -2,6 +2,7 @@
 // shipgen - the generation wizard.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "mesh.h"
 #include "wizard.h"
 
 #include "basepanel.h"
@@ -219,7 +220,7 @@ void GenerationWizard::BuildShipPages()
 		QFormLayout* modelForm = new QFormLayout(modelBox);
 
 		m_modelList = new FileList(modelBox);
-		m_modelList->SetDialog(tr("Choose a ship model"), tr("Ship models (*.3ds *.stl);;All files (*)"));
+		m_modelList->SetDialog(tr("Choose a ship model"), ModelFileFilter() + ";;" + tr("All files (*)"));
 		m_modelList->SetListTip(tr("The files that the hull is made from. A model that is in "
 				"parts has more than one, and they are put together as one model."));
 		connect(m_modelList, &FileList::Changed, this, [this]() {
@@ -497,7 +498,7 @@ void GenerationWizard::BuildBuildingPages()
 		form->addRow(m_basePanel);
 
 		m_buildingModelList = new FileList(m_buildingPage);
-		m_buildingModelList->SetDialog(tr("Choose a model"), tr("Models (*.3ds *.stl *.obj);;All files (*)"));
+		m_buildingModelList->SetDialog(tr("Choose a model"), ModelFileFilter() + ";;" + tr("All files (*)"));
 		m_buildingModelList->SetListTip(tr("The files that the shell of the building is made from. "
 				"A model that is in parts has more than one, and they are put together as one model."));
 		form->addRow(tr("Model files:"), m_buildingModelList);

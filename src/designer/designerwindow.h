@@ -32,6 +32,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QProgressBar;
 class QThread;
+class QTreeWidget;
 class QToolButton;
 class QSlider;
 class QSpinBox;
@@ -63,11 +64,15 @@ public:
 	// Starts a new plan from a 3D model, in the background with a progress
 	// window; 'tell' shows what went wrong or needs looking at in a message
 	// box (off for scripts). Returns whether a plan was made.
-	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true);
+	// 'fighter': a plan in fighter mode (experimental, TriPlan::MakeFighter),
+	// at the model's real length with small cells and low decks.
+	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true, bool fighter = false);
 
 private slots:
 	void	OnNew();
 	void	OnNewFromModel();
+	void	OnNewFighter();
+	void	OnNewFighterFromModel();
 	void	OnMetric(bool metric);
 	void	OnOpen();
 	void	OnSave();
@@ -99,6 +104,8 @@ private:
 	QWidget*	MakeShipPage();
 	QWidget*	MakeHullPage();
 	QWidget*	MakeRoomPage();
+	QWidget*	MakeCrewPage();
+	void		ApplyCrewChoice();
 	QWidget*	MakePaintPage();
 	QWidget*	MakeBuildPage();
 	void		RefreshAll();
@@ -109,6 +116,7 @@ private:
 	void		ApplyDrawMode();
 	// Flips the plan (TriPlan::Flip), or with 'deckOnly' the deck shown.
 	void		Flip(bool foreAft, bool portStarboard, bool upsideDown, bool deckOnly);
+	void		Rotate(bool clockwise, bool deckOnly);	// A quarter turn (TriPlan::Rotate).
 
 	// The hull is shaped on a worker thread (a big model takes long), from a
 	// copy of the plan; edits made meanwhile shape it again after.
@@ -209,13 +217,20 @@ private:
 	QDoubleSpinBox*	m_windowSill = 0;
 	QDoubleSpinBox*	m_windowTop = 0;
 	QCheckBox*		m_joinWindows = 0;
+	QComboBox*		m_shipWallTex = 0;
+	QComboBox*		m_shipFloorTex = 0;
+	QComboBox*		m_shipCeilingTex = 0;
+	QComboBox*		m_shipDoorTex = 0;
 	QCheckBox*		m_flatWindows = 0;
+	QCheckBox*		m_hullWindows = 0;		// PlanTri::windowStyle "hull".
 	QComboBox*		m_roomWallTex = 0;
 	QComboBox*		m_roomFloorTex = 0;
 	QComboBox*		m_roomCeilingTex = 0;
+	QDoubleSpinBox*	m_carHeight = 0;		// A turbolift's car; shown for lifts only.
+	QWidget*		m_carHeightLabel = 0;
+	QCheckBox*		m_access[4] = {};		// Who may be in the room: officers, crew, passengers, troops.
 	QComboBox*		m_doorTex = 0;
 	QComboBox*		m_doorExit = 0;
-	QCheckBox*		m_doorExitOpenOnly = 0;
 	QDoubleSpinBox*	m_doorRampRun = 0;
 	QCheckBox*		m_slopedDecks = 0;
 	QComboBox*		m_hullStyle = 0;
@@ -233,14 +248,42 @@ private:
 	QComboBox*		m_roomTool = 0;
 	QWidget*		m_emitterRow = 0;		// Shown with the contrail tool.
 	QDoubleSpinBox*	m_emitterSize = 0;
+	QWidget*		m_weaponRow = 0;		// Shown with the weapon emitter tool.
+	QComboBox*		m_weaponBay = 0;
+	QWidget*		m_markingRow = 0;		// Shown with the empire flag tool.
+	QComboBox*		m_markingKind = 0;
+	QWidget*		m_wallWindowRow = 0;	// Shown with the window tool.
+	QComboBox*		m_wallWindowStyle = 0;	// PlanDoor::style of windows put in.
+	QWidget*		m_skylightRow = 0;		// Shown with the ceiling window tool.
+	QComboBox*		m_skylightShape = 0;
+	QCheckBox*		m_livery = 0;			// The colour picked is a livery colour.
+	QDoubleSpinBox*	m_markingSize = 0;
 
 	// The paint page.
 	QListWidget*	m_palette = 0;
 
 	// The build page.
 	QPlainTextEdit*	m_reportText = 0;
-	QCheckBox*		m_furnish = 0;
-	QCheckBox*		m_walkPaths = 0;
+	void			NewFromModel(bool fighter);
+	QCheckBox*		m_fighter = 0;			// TriPlan::mode "fighter".
+	QLabel*			m_fighterBanner = 0;	// Says fighter mode is experimental.
+	// The Crew step.
+	QComboBox*		m_crewTool = 0;
+	QWidget*		m_stationRow = 0;
+	QComboBox*		m_stationType = 0;
+	QComboBox*		m_stationSeat = 0;
+	QComboBox*		m_stationModule = 0;
+	QWidget*		m_berthRow = 0;
+	QComboBox*		m_berthKind = 0;
+	QCheckBox*		m_autoStations = 0;
+	QCheckBox*		m_autoBerths = 0;
+	QCheckBox*		m_autoPads = 0;
+	QCheckBox*		m_autoPaths = 0;
+	QLabel*			m_crewCounts = 0;
+	void			RefreshCrew();
+	// The Build step: what gets built (TriPlan::buildLeaveOut, and each item's skip).
+	QTreeWidget*	m_buildList = 0;
+	void			RefreshBuildList();
 	QComboBox*		m_bridgeStyle = 0;
 	QComboBox*		m_deskPosture = 0;
 	QDoubleSpinBox*	m_deskHeight = 0;

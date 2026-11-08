@@ -8,6 +8,15 @@
 #include <functional>
 
 #include <QOpenGLContext>
+#include <QCoreApplication>
+#include <QPushButton>
+#include <QCheckBox>
+#include <QMessageBox>
+#include <QSettings>
+#include <cstdio>
+#include <QGuiApplication>
+#include <QOffscreenSurface>
+#include <QPainter>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
 #include <QMap>
@@ -16,6 +25,7 @@
 #include <QVector3D>
 
 #include "auglsl.h"
+#include "version.h"
 #include "auscdesign.h"
 #include "auscface.h"
 #include "auscparts.h"
@@ -99,6 +109,82 @@ QColor ColourForPart(const AuScPart* part)
 } // namespace
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+
+QString ChooseOpenGLFormat()
+{
+	struct Probe { float version = 0; QString driver; };
+	auto probe = [](const QSurfaceFormat& format) -> Probe {
+		Probe result;
+		QOpenGLContext context;
+		context.setFormat(format);
+		if(!context.create())
+			return result;
+		QOffscreenSurface surface;
+		surface.setFormat(context.format());
+		surface.create();
+		if(!surface.isValid() || !context.makeCurrent(&surface))
+			return result;
+		const char* text = reinterpret_cast<const char*>(context.functions()->glGetString(GL_VERSION));
+		const char* renderer = reinterpret_cast<const char*>(context.functions()->glGetString(GL_RENDERER));
+		result.version = text ? QString(text).section(' ', 0, 0).toFloat() : 0;
+		result.driver = QString("OpenGL %1 (%2)").arg(text ? text : "?", renderer ? renderer : "?");
+		context.doneCurrent();
+		return result;
+	};
+	if(QGuiApplication::platformName() == "offscreen")
+		return QString();
+	const Probe first = probe(QSurfaceFormat::defaultFormat());
+	if(first.version >= 3.3f)
+		return QString();
+#if defined(Q_OS_LINUX)
+	QSurfaceFormat core = QSurfaceFormat::defaultFormat();
+	core.setRenderableType(QSurfaceFormat::OpenGL);
+	core.setVersion(3, 3);
+	core.setProfile(QSurfaceFormat::CoreProfile);
+	core.setDepthBufferSize(24);
+	const Probe second = probe(core);
+	if(second.version >= 3.3f)
+	{
+		QSurfaceFormat::setDefaultFormat(core);
+		return QString();
+	}
+#endif
+	if(first.driver.isEmpty())
+		return QCoreApplication::translate("DesignPreview", "No OpenGL context could be made on this system, so the 3D view will stay empty. "
+				"The graphics driver (OpenGL) may be missing or not working.");
+	return QCoreApplication::translate("DesignPreview", "The 3D view needs OpenGL 3.3, but this system's graphics driver gives %1, "
+			"so the 3D view will stay empty.").arg(first.driver);
+}
+
+bool WarnAboutPrerequisites(const QString& problem)
+{
+	QSettings settings;
+	const QString key = "startup/ignoredProblem";
+	if(settings.value(key).toString() == problem)
+		return true;
+	QMessageBox box;
+	box.setIcon(QMessageBox::Warning);
+	box.setWindowTitle(QCoreApplication::translate("DesignPreview", "Something this program needs is missing"));
+	box.setTextFormat(Qt::RichText);
+	box.setText(QCoreApplication::translate("DesignPreview",
+			"<p>%1</p><p>Everything else should work, but this system has not been tested. "
+			"You can go on at your own risk.</p>"
+			"<p>If something does not work, please report it, with what your system is (distribution, graphics card) "
+			"and this message, at<br><a href=\"%2\">%2</a></p>").arg(problem.toHtmlEscaped(), SHIPGEN_ISSUES_URL));
+	box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+	QCheckBox* again = new QCheckBox(QCoreApplication::translate("DesignPreview", "Do not warn me about this again"));
+	box.setCheckBox(again);
+	QPushButton* go = box.addButton(QCoreApplication::translate("DesignPreview", "Continue at my own risk"), QMessageBox::AcceptRole);
+	box.addButton(QCoreApplication::translate("DesignPreview", "Quit"), QMessageBox::RejectRole);
+	box.setDefaultButton(go);
+	box.exec();
+	if(box.clickedButton() != go)
+		return false;
+	if(again->isChecked())
+		settings.setValue(key, problem);
+	return true;
+}
 
 DesignPreview::DesignPreview(QWidget* parent) :
 	QOpenGLWidget(parent)
@@ -213,18 +299,30 @@ void DesignPreview::initializeGL()
 	// the rest of the tool, just without the 3D view.
 	// The version string looks like "4.5 (Core Profile) Mesa 25.0.7", so only
 	// the first number is of interest.
-	QOpenGLFunctions* functions = context()->functions();
+	QOpenGLFunctions* functions = context() ? context()->functions() : 0;
 	if(!functions)
+	{
+		m_glProblem = tr("No OpenGL context could be made.");
+		fprintf(stderr, "3D view: %s\n", qPrintable(m_glProblem));
 		return;
+	}
 	const char* versionText = reinterpret_cast<const char*>(functions->glGetString(GL_VERSION));
+	const char* rendererText = reinterpret_cast<const char*>(functions->glGetString(GL_RENDERER));
 	m_glVersion = versionText ? QString(versionText).section(' ', 0, 0).toFloat() : 0.0;
+	const QString driver = QString("OpenGL %1, %2").arg(versionText ? versionText : "?", rendererText ? rendererText : "?");
 	if(m_glVersion < 3.3)
+	{
+		m_glProblem = tr("The 3D view needs OpenGL 3.3; this driver gives %1.").arg(driver);
+		fprintf(stderr, "3D view: %s\n", qPrintable(m_glProblem));
 		return;
+	}
 	m_program = new QOpenGLShaderProgram(this);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader);
 	if(!m_program->link())
 	{
+		m_glProblem = tr("The 3D view's shaders did not compile on %1: %2").arg(driver, m_program->log().trimmed());
+		fprintf(stderr, "3D view: %s\n", qPrintable(m_glProblem));
 		delete m_program;
 		m_program = 0;
 		return;
@@ -610,6 +708,14 @@ void DesignPreview::paintGL()
 	functions->glClearColor(0.12f, 0.13f, 0.16f, 1.f);
 	functions->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+	if(!m_glProblem.isEmpty())
+	{
+		QPainter painter(this);
+		painter.setPen(QColor(220, 220, 220));
+		painter.drawText(rect().adjusted(20, 20, -20, -20), Qt::AlignCenter | Qt::TextWordWrap,
+				m_glProblem + "\n\n" + tr("Everything else works as usual."));
+		return;
+	}
 	if(!m_program || m_vertices.isEmpty())
 		return;
 	if(m_needsUpload)

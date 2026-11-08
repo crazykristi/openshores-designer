@@ -144,6 +144,24 @@ int cmdParts(const QStringList& args)
 			line += QString("  tied to %1 state %2").arg(p->AssociatedPartId()).arg(int(p->AssociatedPartState()));
 		if(p->Type() == AuScPart::Part_RoomVoid && p->GravityType() == G_Zero)
 			line += "  zero-G";
+		if(const AuScRoomVoid* rv = dynamic_cast<const AuScRoomVoid*>(p))
+		{
+			static const char* const holds[] = { "none", "armory", "bar", "feeder", "fuel coupling", "vehicle bay", "hold",
+					"pantry", "pharmacy", "wardrobe" };
+			const int h = int(rv->HoldAccess());
+			if(h >= 0 && h < int(sizeof(holds) / sizeof(holds[0])))
+				line += QString("  hold access: %1").arg(holds[h]);
+			const int who = rv->PersonnelAccess() & PERSONNEL_Everyone;
+			if(who != PERSONNEL_Everyone)
+			{
+				QStringList names;
+				const char* const kinds[] = { "officers", "crew", "passengers", "troops" };
+				for(int i = 0; i < 4; ++i)
+					if(who & (1 << i))
+						names << kinds[i];
+				line += QString("  only %1").arg(names.join(", "));
+			}
+		}
 		if(p->Module() != CID_Invalid)
 			line += QString("  module %1").arg(g_Au.CommodityName(p->Module()));
 		{
@@ -309,6 +327,70 @@ int cmdCut(const QStringList& args)
 
 // How the faces look: texture slot, colour theme, paint, opacity, light,
 // effect and glow, counted per part. This is where a blueprint's look lives.
+// Walking a straight line, as the game moves people (AuScParts::IsPathBlocked,
+// in 0.25 ft steps), with every door open or closed: where it is stopped,
+// and by which part.
+int cmdWalk(const QStringList& args)
+{
+	if(args.size() < 7)
+	{
+		out() << "usage: shipgen walk <design.SoH> x0 y0 z0 x1 y1 z1 [--closed]\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	AuScDesign* ship = dynamic_cast<AuScDesign*>(design);
+	if(!ship)
+	{
+		out() << "not a ship\n";
+		delete design;
+		return 1;
+	}
+	const bool closed = args.contains("--closed");
+	AuScParts& parts = ship->Parts();
+	AuDoorStateHash doors;
+	const AuPoint zero;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		if(const AuScDoor* door = dynamic_cast<const AuScDoor*>(it.value()))
+			doors.insert(it.key(), AuScDoorState(door->IsHullDoor() ? AuScDoorState::DOOR_Hull : AuScDoorState::DOOR_Interior,
+					zero, zero, 0, closed ? AuScDoor::Closed : AuScDoor::Open, false, false, false));
+	AuLandingGearStateHash gear;
+	AuLiftHash lifts;
+	const AuPoint a(args[1].toDouble(), args[2].toDouble(), args[3].toDouble());
+	const AuPoint b(args[4].toDouble(), args[5].toDouble(), args[6].toDouble());
+	const double length = a.Distance(b);
+	const int steps = qMax(1, int(ceil(length / .25)));
+	AuPoint was = a;
+	for(int i = 1; i <= steps; ++i)
+	{
+		const AuPoint now = a + (b - a) * (double(i) / steps);
+		AuPoint hit, normal;
+		if(parts.IsPathBlocked(was, now, hit, normal, doors, gear, lifts))
+		{
+			// Which part: the first that blocks the step by itself.
+			QString who = "?";
+			for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+			{
+				AuPoint h, n;
+				if(it.value() && !it.value()->IsRoomVoid() && !it.value()->IsHullVoid()
+						&& it.value()->IsPathBlocked(was, now, h, n))
+				{
+					who = QString("part %1 %2 [%3]").arg(it.key()).arg(it.value()->PartName(), it.value()->GroupName());
+					break;
+				}
+			}
+			out() << QString("stopped after %1 ft at (%2 %3 %4) by %5; %6\n")
+					.arg(was.Distance(a), 0, 'f', 2).arg(now.x, 0, 'f', 2).arg(now.y, 0, 'f', 2).arg(now.z, 0, 'f', 2)
+					.arg(who).arg(parts.RoomVoidContainingLoc(now, doors, gear, lifts) ? "a room void" : "no room void");
+			delete design;
+			return 0;
+		}
+		was = now;
+	}
+	out() << QString("clear for %1 ft\n").arg(length, 0, 'f', 2);
+	delete design;
+	return 0;
+}
+
 // What is seen along a line of sight, as the game draws it: the first face
 // looking back at the eye (a face seen from behind is not drawn).
 int cmdSight(const QStringList& args)
@@ -406,7 +488,40 @@ int cmdDoorCheck(const QStringList& args)
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
 		if(const AuScDoor* door = dynamic_cast<const AuScDoor*>(it.value()))
 			if(door->IsHullDoor())
-				out() << "hull door " << it.key() << "\n";
+			{
+				// Walked in from 15 ft out to the door's outer switch (just
+				// outside the hull, 4 ft up), with the doors open: the game's
+				// zone round the hull stopped people 1 to 2 m out (7 November).
+				AuPoint op1, op2, mn, mx;
+				door->DoorOpLocs(op1, op2);
+				door->ModelExtents(mn, mx);
+				// Out: from the inside switch to the outside one.
+				AuPoint dir(op2.x - op1.x, op2.y - op1.y, 0);
+				QString walk = "no way out found";
+				// Hull doors face along x or y.
+				if(fabs(dir.x) > fabs(dir.y))
+					dir = AuPoint(dir.x > 0 ? 1 : -1, 0, 0);
+				else if(fabs(dir.y) > .1)
+					dir = AuPoint(0, dir.y > 0 ? 1 : -1, 0);
+				if(dir.Length() > .1)
+				{
+					const AuPoint from = op2 + dir * 15.0;
+					AuPoint was = from, hit, normal;
+					walk = "walk in from 15 ft out clear";
+					for(int i = 1; i <= 60; ++i)
+					{
+						const AuPoint now = from + (op2 - from) * (i / 60.0);
+						if(parts.IsPathBlocked(was, now, hit, normal, open, gear, lifts))
+						{
+							walk = QString("walk in from 15 ft out stopped %1 ft from the door at %2")
+									.arg(now.Distance(op2), 0, 'f', 1).arg(text(now));
+							break;
+						}
+						was = now;
+					}
+				}
+				out() << "hull door " << it.key() << ": " << walk << "\n";
+			}
 
 	QList<AuPoint> ladderFeet;
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
@@ -430,8 +545,58 @@ int cmdDoorCheck(const QStringList& args)
 				}
 				return on;
 			};
+			// From the ground, as a player comes to it: standing 1 to 3 ft out
+			// from it, or 1.5 ft out and to one side. The game takes hold from
+			// the creature's centre (about 3 ft up) if nothing is in the way,
+			// then checks that the eye can get from where it was to its place on
+			// the ladder (DaCreature::GrabLadderOnCapsule).
+			const AuScPathLadder* rungs = dynamic_cast<const AuScPathLadder*>(part);
+			const AuPoint away = rungs ? rungs->Facing() * -1.0 : AuPoint();
+			const AuPoint side(-away.y, away.x, 0);
+			auto fromGround = [&](const AuDoorStateHash& doors) {
+				int on = 0;
+				const AuPoint spots[5] = { away * 1.0, away * 2.0, away * 3.0, away * 1.5 + side * 1.0, away * 1.5 - side * 1.0 };
+				for(const AuPoint& spot : spots)
+				{
+					const AuPoint at(bottom.x + spot.x, bottom.y + spot.y, hullMin.z + 3.0);
+					AuMatrix4x4 m;
+					if(!parts.FindLadderToGrab(at, m, doors, gear, lifts))
+						continue;
+					AuPoint hit, normal;
+					const AuPoint eye = at + AuPoint(0, 0, 2.5), eyeOn = m.Project(AuPoint(0, .3, 2.5));
+					on += parts.IsPathBlocked(eye, eyeOn, hit, normal, doors, gear, lifts) ? 0 : 1;
+				}
+				return on;
+			};
+			// Climbed: the eye on the ladder (as GrabLadder puts it, 0.3 ft off
+			// the rungs, 2.5 ft over the hands) from the foot to the top, then
+			// on into the doorway over the top; where something stops it.
+			const AuPoint top = seg.Loc1().z < seg.Loc2().z ? seg.Loc2() : seg.Loc1();
+			auto climbing = [&](const AuDoorStateHash& doors) {
+				AuPoint hit, normal;
+				const AuPoint off = away * .3 + AuPoint(0, 0, 2.5);
+				AuPoint was = bottom + off;
+				for(double z = bottom.z + .25; z <= top.z + 1e-6; z += .25)
+				{
+					const AuPoint now = AuPoint(bottom.x, bottom.y, z) + off;
+					if(parts.IsPathBlocked(was, now, hit, normal, doors, gear, lifts))
+						return QString("stopped %1 ft up at %2").arg(z - bottom.z, 0, 'f', 1).arg(text(hit));
+					was = now;
+				}
+				// Over the top and in: on up to the doorway's floor, then 3 ft
+				// in towards the rungs' side.
+				const AuPoint over = AuPoint(top.x, top.y, top.z + .5) + off;
+				if(parts.IsPathBlocked(was, over, hit, normal, doors, gear, lifts))
+					return QString("stopped over the top at %1").arg(text(hit));
+				const AuPoint in = over - away * 3.3;
+				if(parts.IsPathBlocked(over, in, hit, normal, doors, gear, lifts))
+					return QString("stopped going in at %1").arg(text(hit));
+				return QString("clear");
+			};
 			out() << "ladder " << it.key() << " " << tie(part) << " at " << text(bottom)
-				  << ": hold closed " << holding(closed) << " of 5 points, open " << holding(open) << " of 5\n";
+				  << ": hold closed " << holding(closed) << " of 5 points, open " << holding(open) << " of 5"
+				  << "; from the ground closed " << fromGround(closed) << " of 5, open " << fromGround(open) << " of 5"
+				  << "; climb closed " << climbing(closed) << ", open " << climbing(open) << "\n";
 			ladderFeet << bottom;
 		}
 		else if(part->GroupName() == "Hull Door" && (part->IsBarrier()
@@ -458,9 +623,58 @@ int cmdDoorCheck(const QStringList& args)
 				}
 				return on;
 			};
+			// Walked up from the ground, along its middle: the biggest step up
+			// from one quarter foot to the next (a ledge at the foot stopped
+			// people and vehicles in the game, 2026-11-06).
+			auto biggestStep = [&](const AuDoorStateHash& doors) {
+				auto floorAtXY = [&](double x, double y) {
+					AuPoint hit, normal;
+					for(double z = mx.z + 1; z > hullMin.z; z -= .05)
+						if(parts.IsPathBlocked(AuPoint(x, y, z), AuPoint(x, y, z - .05), hit, normal, doors, gear, lifts))
+							return z;
+					return hullMin.z;
+				};
+				// The way it slopes: the axis whose ends differ most in height.
+				const double cx = (mn.x + mx.x) / 2, cy = (mn.y + mx.y) / 2;
+				const bool alongX = fabs(floorAtXY(mn.x + .5, cy) - floorAtXY(mx.x - .5, cy))
+						> fabs(floorAtXY(cx, mn.y + .5) - floorAtXY(cx, mx.y - .5));
+				// A little off the quarter feet, so as not to look straight down a
+				// face's own plane (the end of a part), which counts as a hit.
+				auto floorAt = [&](double u) {
+					u += .013;
+					const AuPoint c(alongX ? u : (mn.x + mx.x) / 2 + .017, alongX ? (mn.y + mx.y) / 2 + .017 : u, 0);
+					AuPoint hit, normal;
+					for(double z = mx.z + 1; z > hullMin.z; z -= .05)
+						if(parts.IsPathBlocked(AuPoint(c.x, c.y, z), AuPoint(c.x, c.y, z - .05), hit, normal, doors, gear, lifts))
+							return z;
+					return hullMin.z;		// The ground.
+				};
+				const double lo = alongX ? mn.x : mn.y, hi = alongX ? mx.x : mx.y;
+				// From the ground beyond the low end, to the high end.
+				const bool lowFirst = floorAt(lo + .25) < floorAt(hi - .25);
+				// Against the highest floor of the last foot: the game misses
+				// thin bits of a slope here and there (narrow dips), which are
+				// not steps back up.
+				double step = 0;
+				QList<double> last;
+				last << floorAt(lowFirst ? lo - 3 : hi + 3);
+				for(double t = -3; t <= hi - lo - .5; t += .25)
+				{
+					const double z = floorAt(lowFirst ? lo + t : hi - t);
+					double before = last.first();
+					for(double v : last)
+						before = qMax(before, v);
+					step = qMax(step, z - before);
+					last << z;
+					if(last.size() > 4)
+						last.removeFirst();
+				}
+				return step;
+			};
 			out() << "ramp " << it.key() << " " << tie(part) << ", " << QString::number(mx.x - mn.x, 'f', 1) << " x "
 				  << QString::number(mx.y - mn.y, 'f', 1) << " ft: stand closed " << standing(closed) << " of 5 points, open "
-				  << standing(open) << " of 5\n";
+				  << standing(open) << " of 5; biggest step up from the ground "
+				  << QString::number(biggestStep(open), 'f', 2) << " ft\n";
 		}
 	}
 	// Where the game sends someone on the ground to go in.
@@ -669,11 +883,13 @@ int cmdCrewCheck(const QStringList& args)
 	return good == routes && !naturalDoorways && !mirrored ? 0 : 1;
 }
 
-int cmdFaces(const QStringList& args)
+int cmdFaces(const QStringList& given)
 {
+	QStringList args = given;
+	const bool where = args.removeAll("--where") > 0;		// The box each look's faces take up, too.
 	if(args.isEmpty())
 	{
-		err() << "usage: shipgen faces <design.SoH> [<part id>]\n";
+		err() << "usage: shipgen faces <design.SoH> [<part id>] [--where]\n";
 		return 2;
 	}
 	AuDesign* design = LoadForTool(args[0]);
@@ -716,6 +932,7 @@ int cmdFaces(const QStringList& args)
 		if(faces.isEmpty())
 			continue;
 		QMap<QString, int> looks;
+		QMap<QString, QPair<AuPoint, AuPoint> > boxes;
 		for(const AuScFace* f : faces)
 		{
 			QString glow;
@@ -730,6 +947,18 @@ int cmdFaces(const QStringList& args)
 					.arg(SurfaceEffectName(f->Effect()))
 					.arg(glow.isEmpty() ? QString() : QString("  glow %1").arg(glow));
 			looks[look]++;
+			if(where)
+			{
+				auto box = boxes.find(look);
+				if(box == boxes.end())
+					box = boxes.insert(look, qMakePair(AuPoint(1e30, 1e30, 1e30), AuPoint(-1e30, -1e30, -1e30)));
+				for(int v = 0; v < f->VertexCount(); ++v)
+				{
+					const AuPoint q(f->Vertex(v));
+					box.value().first = box.value().first.Min(q);
+					box.value().second = box.value().second.Max(q);
+				}
+			}
 		}
 		out() << "part " << it.key() << " " << p->TypeName()
 			  << (p->GroupName().isEmpty() ? QString() : QString(" [%1]").arg(p->GroupName()))
@@ -739,7 +968,16 @@ int cmdFaces(const QStringList& args)
 			sorted << qMakePair(-li.value(), li.key());
 		std::sort(sorted.begin(), sorted.end());
 		for(int i = 0; i < sorted.size() && i < 12; ++i)
-			out() << QString("  %1 x  ").arg(-sorted[i].first, 6) << sorted[i].second << "\n";
+		{
+			out() << QString("  %1 x  ").arg(-sorted[i].first, 6) << sorted[i].second;
+			if(where)
+			{
+				const QPair<AuPoint, AuPoint> b = boxes.value(sorted[i].second);
+				out() << QString("  within x %1..%2 y %3..%4 z %5..%6").arg(b.first.x, 0, 'f', 2).arg(b.second.x, 0, 'f', 2)
+						.arg(b.first.y, 0, 'f', 2).arg(b.second.y, 0, 'f', 2).arg(b.first.z, 0, 'f', 2).arg(b.second.z, 0, 'f', 2);
+			}
+			out() << "\n";
+		}
 		if(sorted.size() > 12)
 			out() << "  ... and " << sorted.size() - 12 << " more looks\n";
 	}
@@ -833,11 +1071,15 @@ int cmdPlanFlip(const QStringList& args)
 {
 	QStringList files;
 	bool foreAft = false, portStarboard = false, upsideDown = false;
-	int deck = -1;
+	int deck = -1, quarter = 0;
 	for(int i = 0; i < args.size(); ++i)
 	{
 		const QString& a = args.at(i);
-		if(a == "--turn")
+		if(a == "--clockwise")
+			quarter = 1;
+		else if(a == "--anticlockwise")
+			quarter = -1;
+		else if(a == "--turn")
 			foreAft = portStarboard = true;
 		else if(a == "--fore-aft")
 			foreAft = true;
@@ -850,10 +1092,10 @@ int cmdPlanFlip(const QStringList& args)
 		else
 			files << a;
 	}
-	if(files.size() != 2 || (!foreAft && !portStarboard && !upsideDown))
+	if(files.size() != 2 || (!foreAft && !portStarboard && !upsideDown && !quarter))
 	{
 		err() << "usage: shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down] "
-				 "[--deck <n>]\n";
+				 "[--clockwise | --anticlockwise] [--deck <n>]\n";
 		return 2;
 	}
 	TriPlan plan;
@@ -868,13 +1110,18 @@ int cmdPlanFlip(const QStringList& args)
 		err() << "the plan has " << plan.Decks() << " decks\n";
 		return 2;
 	}
-	const int lost = plan.Flip(foreAft, portStarboard, upsideDown, deck);
+	int lost = plan.Flip(foreAft, portStarboard, upsideDown, deck);
+	bool grew = false;
+	if(quarter)
+		lost += plan.Rotate(quarter > 0, deck, &grew);
 	if(!plan.Save(files.at(1), error))
 	{
 		err() << error << "\n";
 		return 1;
 	}
 	out() << "wrote " << files.at(1);
+	if(grew)
+		out() << " (the grid grew to " << plan.Width() << " by " << plan.Depth() << " for the turned deck)";
 	if(lost > 0)
 		out() << " (" << lost << " ladder(s), stairs or parking spot(s) no longer fitted)";
 	out() << "\n";
@@ -886,6 +1133,7 @@ int cmdPlanFromModel(const QStringList& args)
 	QString modelFile, planFile;
 	PlanFromModelOptions options;
 	double faces = options.maxFaces, decks = 0, slices = 0, minPiece = options.minPiece;
+	bool fighter = false, cellGiven = false, deckGiven = false;
 	for(int i = 0; i < args.size(); ++i)
 	{
 		const QString& a = args.at(i);
@@ -909,7 +1157,13 @@ int cmdPlanFromModel(const QStringList& args)
 			return 2;
 		}
 		else if(a == "--length" || a == "--threshold" || a == "--cell" || a == "--deck" || a == "--seal")
+		{
+			cellGiven = cellGiven || a == "--cell";
+			deckGiven = deckGiven || a == "--deck";
 			continue;
+		}
+		else if(a == "--fighter")
+			fighter = true;
 		else if(a == "--decks")
 			options.decks = int(decks);
 		else if(a == "--min-piece")
@@ -954,7 +1208,7 @@ int cmdPlanFromModel(const QStringList& args)
 		err() << "usage: shipgen plan-from-model <model.stl|3ds|obj> <plan.json> [--length <ft>] [--threshold <0..1>]\n"
 				 "         [--decks <n>] [--slices <per deck>] [--method slices|solid] [--seal <ft>]\n"
 				 "         [--min-piece <triangles>] [--no-pinholes] [--grid-hull]\n"
-				 "         [--cell <ft>] [--deck <ft>] [--faces <n>] [--flip] [--y-up]\n";
+				 "         [--cell <ft>] [--deck <ft>] [--faces <n>] [--flip] [--y-up] [--fighter]\n";
 		return 2;
 	}
 	TriPlan plan;
@@ -967,7 +1221,24 @@ int cmdPlanFromModel(const QStringList& args)
 		err() << QString("  [%1 s] %2\n").arg(clock.elapsed() / 1000.0, 0, 'f', 1).arg(what);
 		return true;
 	};
+	if(fighter)
+	{
+		if(!cellGiven)
+			options.cellFeet = TriPlan::kFighterCellFeet;
+		if(!deckGiven)
+			options.deckFeet = TriPlan::kFighterDeckFeet;
+	}
 	const bool made = PlanFromModel(modelFile, options, plan, notes, error);
+	if(made && fighter)
+	{
+		plan.MakeFighter(false);
+		plan.floorFeet = .5;
+		plan.skinFeet = .5;
+		plan.windowSillFeet = 1.0;
+		plan.windowTopFeet = 3.5;
+		notes << "Fighter mode (experimental): draw the cockpit room, a hull door with a button, and a canopy "
+				 "(windows or ceiling windows that follow the hull).";
+	}
 	for(const QString& n : notes)
 		out() << n << "\n";
 	if(!made || !plan.Save(planFile, error))
@@ -1033,7 +1304,10 @@ int cmdBuildPlan(const QStringList& args)
 	out() << "Rooms        : " << report.rooms << "\n";
 	out() << "Doors        : " << report.doors << "\n";
 	out() << "Windows      : " << report.windows << "\n";
-	out() << "Ceiling wind.: " << report.skylights << "\n";
+	out() << "Ceiling wind.: " << report.skylights;
+	if(report.hullSkylights)
+		out() << " (" << report.hullSkylights << " following the hull)";
+	out() << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
 	out() << "Zero-G joins : " << report.zeroGJoins << "\n";
 	out() << "Open to below: " << report.openJoins << "\n";
@@ -1041,9 +1315,25 @@ int cmdBuildPlan(const QStringList& args)
 	out() << "Ramps        : " << report.ramps << "\n";
 	out() << "Stairs       : " << report.stairs << "\n";
 	out() << "Contrails    : " << report.contrails << "\n";
+	out() << "Markings     : " << report.markings << "\n";
+	out() << "Door buttons : " << report.doorButtons << "\n";
+	out() << "Inner windows: " << report.innerWindows << "\n";
+	out() << "Hull windows : " << report.hullWindows << "\n";
+	out() << "Balconies    : " << report.balconies << "\n";
+	out() << "Lifts        : " << report.lifts << " (" << report.liftStops << " stops)\n";
 	out() << "Weapon emit  : " << report.weaponEmitters << "\n";
-	out() << "Stations     : " << report.stations << "\n";
-	out() << "Berths       : " << report.berths << "\n";
+	out() << "Stations     : " << report.stations;
+	if(report.handStations)
+		out() << " (" << report.handStations << " placed by hand)";
+	out() << "\n";
+	out() << "Berths       : " << report.berths;
+	if(report.handBerths)
+		out() << " (" << report.handBerths << " placed by hand)";
+	out() << "\n";
+	if(report.handPads)
+		out() << "Hand pads    : " << report.handPads << "\n";
+	if(report.handPaths)
+		out() << "Hand paths   : " << report.handPaths << "\n";
 	for(const QString& n : report.notes)
 		out() << "Note: " << n << "\n";
 	for(const QString& w : report.warnings)
@@ -2189,7 +2479,9 @@ void usage()
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";
-	out() << "  shipgen faces     <design.SoH> [<part>]  how the faces look: texture slot, paint, opacity, glow, effect\n";
+	out() << "  shipgen faces     <design.SoH> [<part>] [--where]  how the faces look: texture slot, paint, opacity, glow,\n"
+			 "                     effect (--where: and the box the faces of each look take up)\n";
+	out() << "  shipgen walk      <design.SoH> x0 y0 z0 x1 y1 z1 [--closed]  where a straight walk is stopped, as the game moves people\n";
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
 	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
@@ -2197,9 +2489,11 @@ void usage()
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
 	out() << "  shipgen resave    <in.SoH> <out.SoH>  read and write back, keeping parts this build cannot read\n";
 	out() << "  shipgen plan-example <plan.json>     write a small triangle plan to start from\n";
-	out() << "  shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down] [--deck <n>]\n"
-			 "                                       turn a plan around, mirror it or turn it upside down\n";
-	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up]\n";
+	out() << "  shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down]\n"
+			 "                    [--clockwise | --anticlockwise] [--deck <n>]\n"
+			 "                                       turn a plan around, mirror it, turn it upside down, or a\n"
+			 "                                       quarter turn (seen from above), all of it or one deck\n";
+	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up] [--fighter]\n";
 	out() << "                     a triangle plan with its hull filled in from a 3D model\n";
 	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n";
 	out() << "                     turn a triangle plan (from shipgen-designer) into a blueprint\n";
@@ -2209,7 +2503,7 @@ void usage()
 	out() << "  shipgen building-brief <template> <file.json>\n";
 	out() << "  shipgen set-brief      <file.json>\n";
 	out() << "  shipgen generate-set   --set <file.json> [--out <dir>]\n";
-	out() << "  shipgen mesh-info --model <file.3ds|stl|obj>\n";
+	out() << "  shipgen mesh-info --model <model file>\n";
 	out() << "  shipgen reduce     --model <file.3ds|stl|obj> --faces <n> --out <file>\n";
 	out() << "                     [--method quadric|cluster] [--no-repair]\n";
 	out() << "  shipgen generate  --model <file.3ds|file.stl> | --hull <design.SoH> | --base <shape>\n";
@@ -2551,6 +2845,7 @@ int main(int argc, char* argv[])
 	if(command == "cut")				return cmdCut(rest);
 	if(command == "faces")				return cmdFaces(rest);
 	if(command == "sight")				return cmdSight(rest);
+	if(command == "walk")				return cmdWalk(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
 	if(command == "door-check")			return cmdDoorCheck(rest);
 	if(command == "kit")				return cmdKit(rest);

@@ -32,7 +32,12 @@ enum class SimplifyMethod
 	Cluster			// Quick, but the surface goes blocky.
 };
 
-// Reads a model from a 3ds, stl or obj file.
+// Reads a model from a 3ds, stl or obj file, and, when the program was built
+// with the Assimp library, FBX, glTF, Collada (dae), PLY and the other
+// formats in ModelSuffixes().
+bool	AssimpAvailable();		// Built with Assimp (FBX, glTF, ...).
+QStringList	ModelSuffixes();	// The model files LoadMeshFile reads, lower case.
+QString	ModelFileFilter();	// For a file dialog: "3D models (*.stl *.obj ...)".
 bool	LoadMeshFile(const QString& fileName, AuScTriList& tris, QString& error);
 
 // Writes a model out as a binary stl or an obj file. The format follows the
@@ -123,5 +128,16 @@ AuScTriList	SmoothMesh(const AuScTriList& tris);
 
 // The size of a model.
 void	MeshExtents(const AuScTriList& tris, AuPoint& min, AuPoint& max);
+
+// Whether an STL file is binary: its size is 84 bytes plus 50 for each
+// triangle its header counts. (The engine's ASCII reader does not refuse a
+// binary file: a header such as "STLB ATF ... COLOR=" read as a few bad
+// triangles.)
+bool	IsBinaryStl(const QString& fileName);
+// Reads a binary STL file, every triangle 50 bytes. The engine's own reader
+// (AuScFaceList::STLReadBinary) skips as many bytes as a triangle's
+// attribute says, which in files that keep a colour there loses its place.
+// 0 when read, 1 when it cannot be opened, 2 when it has no triangles.
+int		ReadBinaryStl(const QString& fileName, AuScFaceList& faces);
 
 #endif // SHIPGEN_MESH_H

@@ -14,6 +14,7 @@
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
+#include "version.h"
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QStatusBar>
@@ -316,13 +317,12 @@ void MainWindow::OnSaveAs()
 void MainWindow::OnAbout()
 {
 	QMessageBox::about(this, tr("About Shipgen"),
-			tr("<h3>Shipgen</h3>"
-			"<p>A layout generator for Shores of Hazeron blueprints.</p>"
+			SHIPGEN_ABOUT_HTML("Shipgen", "A layout generator for Shores of Hazeron blueprints.</p>"
 			"<p>Give it a ship model, say what the ship is for, and it produces "
 			"spacecraft and building blueprints with a complete interior: rooms, "
 			"crew stations, berths and the hull volume that goes with them. "
 			"Every blueprint it writes is checked with the game's own report "
-			"engine.</p>"));
+			"engine."));
 }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---|

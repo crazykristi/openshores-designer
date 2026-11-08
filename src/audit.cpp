@@ -594,6 +594,23 @@ void AuditDesign(const AuScParts& parts, QList<HullSolidity>& hulls,
 		if(it.value() && (it.value()->IsDoor() || it.value()->IsWindow()))
 			++openings;
 
+	// Window glass closes the hull where it stands: a window that follows
+	// the hull is the hull's own surface taken out of it, so without its
+	// glass the hull is full of holes the rays would leave through.
+	struct Glass { AuPoint mn, mx; AuScFaceList faces; };
+	QList<Glass> glass;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted() || !part->IsWindow())
+			continue;
+		Glass g;
+		if(!PartBounds(part, g.mn, g.mx))
+			continue;
+		part->Faces(g.faces);
+		glass << g;
+	}
+
 	QList<HullSolid> solids;
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
 	{
@@ -609,12 +626,32 @@ void AuditDesign(const AuScParts& parts, QList<HullSolidity>& hulls,
 		solid.id = it.key();
 		solid.mesh = SolidMesh(triangles);
 		solid.mesh.SetOpenings(openings);
-		solids << solid;
 
 		HullSolidity entry;
 		entry.id = solid.id;
 		entry.mesh = solid.mesh.Solidity();
 		hulls << entry;
+
+		AuPoint mn, mx;
+		if(!glass.isEmpty() && PartBounds(part, mn, mx))
+		{
+			const AuPoint margin(1, 1, 1);
+			bool added = false;
+			for(const Glass& g : glass)
+				if(BoxesTouch(mn - margin, mx + margin, g.mn, g.mx))
+				{
+					faces.AddFaces(g.faces);
+					added = true;
+				}
+			if(added)
+			{
+				AuScTriList closed;
+				faces.Triangles(closed);
+				solid.mesh = SolidMesh(closed);
+				solid.mesh.SetOpenings(openings);
+			}
+		}
+		solids << solid;
 	}
 
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)

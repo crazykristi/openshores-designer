@@ -209,6 +209,8 @@ QStringList ShipRoomTypesFor(const QString& templateKey)
 				<< "Store" << "Hall";
 	if(templateKey == "shuttle")
 		return QStringList() << "Bridge" << "Engine Room" << "Hold" << "Hall";
+	if(templateKey == "fighter")
+		return QStringList() << "Bridge" << "Engine Room" << "Hold";
 	return SpacecraftRoomTypes();
 }
 

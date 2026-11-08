@@ -255,7 +255,10 @@ pads at (34.8, -90.6, 0.1) and (34.8, -93.8, 0.1)) owns meshes 262 and 263.
 Each pad costs 3 electronic parts, 1 I/O tube and 1 plastic
 (`ListComponents`). `shipgen parts` prints the pads of each transporter.
 
-The generator's transporter stations have no pads yet.
+Since 7 November 2026 the generator and plan builds give each transporter station
+up to 12 pads in its room (`AddTransporterPads`, `generate.cpp`), and so does
+the building generator, which puts the transporter in a room whose type or name
+says transporter or teleporter when there is one.
 
 ## 4. Part types the engine source does not know
 

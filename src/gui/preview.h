@@ -14,10 +14,24 @@
 #include <QOpenGLWidget>
 #include <QVector>
 #include <QPoint>
+#include <QString>
 
 #include "auscface.h"
 
 class AuDesign;
+
+// On Linux, Qt's default OpenGL context is whatever the driver gives
+// without asking, and some drivers give one older than the 3.3 the preview's
+// shaders need while they would give 3.3 when asked. Called once the
+// application exists: keeps the default when it is new enough, otherwise asks
+// for a 3.3 core context when the driver has one. Returns what is wrong when
+// neither gives OpenGL 3.3 (empty when all is well).
+QString ChooseOpenGLFormat();
+
+// Shown on start when ChooseOpenGLFormat found a problem: says what is
+// missing, links to the issue tracker, and lets the user go on at their own
+// risk (or quit: false). "Do not warn again" is remembered per problem.
+bool WarnAboutPrerequisites(const QString& problem);
 
 // A simple shaded 3D view of a design. The parts are drawn with the engine's
 // own triangle data, so what you see is what the game would show.
@@ -110,6 +124,8 @@ private:
 	bool				m_hasOverlay = false;
 
 	float				m_glVersion = 0.0;
+	// Why the view cannot draw (empty when it can), shown in the view.
+	QString				m_glProblem;
 	QOpenGLShaderProgram*	m_program = 0;
 	QOpenGLBuffer			m_vbo;
 	QOpenGLVertexArrayObject	m_vao;

@@ -19,7 +19,7 @@ as they are done.
 
 ### 0. Groundwork
 - [x] How teleporter pads are associated with a teleporter station: the console's pad locations and pad effect number, and pad meshes drawn with that effect (`docs/SOH_FORMAT.md`, "Transporter pads"; example `exported/buildngs/airport (teleporter).SoH`).
-- [ ] Give the generator's transporter stations pads (ships and buildings).
+- [x] Give the generator's transporter stations pads (ships and buildings). Ships done 2026-11-07; buildings 2026-11-07 (the transporter goes in a transporter or teleporter room when there is one, and gets its pads there).
 - [x] The list of power plant types (from the user, 2026-10-31; see section 1). What each needs, from the engine source: a generator, an office, and the generator module for its fuel, carried in the blueprint (2026-11-01). Full battery storage takes 3,900 to 10,300 m³.
 - [x] Reusable building blocks: halls, towers, domes, chimneys, tanks, gears, fields of light (2026-11-01).
 - [ ] Find the room counts for each type's expanded variant (the scale is settled above), and check the face budget and size limits at that scale.
@@ -86,7 +86,7 @@ One building per type, each minimal and expanded:
 
 ### 6. Airports and space
 - [x] Airport, minimal, without teleporter
-- [x] Airport, minimal, with teleporter (the station; the pads are still to do)
+- [x] Airport, minimal, with teleporter (the station and its pads)
 - [ ] Airport, expanded, without teleporter
 - [ ] Airport, expanded, with teleporter
 - [x] Airport radar
@@ -157,12 +157,14 @@ centrepiece:
   - [x] Fixed ramps at hull doors, in the designer and the generator, done
     2026-10-31 (`AddDoorRamp`); doors over 15 ft up keep the ladder. Not
     yet tried in the game.
-  - [x] A way down per hull door, and tied to the door's state, done
-    2026-11-02 (`exit`, `exitOpenOnly`, `rampRun`); not yet tried in the game.
+  - [x] A way down per hull door, done 2026-11-02 (`exit`, `rampRun`).
+    Tying it to the door's state (`exitOpenOnly`) did nothing in the game and
+    was retired on 2026-11-06.
   - [ ] The deployable version that lowers into sight, if the tied ramp works: the
     door's state meshes for what is seen. Doors do not count for the hull's
     extents, so the ramp's foot needs a small hull part as well.
-  - [ ] Whether ground vehicles can drive up a ramp.
+  - [x] Whether ground vehicles can drive up a ramp: no (the user's game
+    test, 2026-11-06). Vehicles change decks by turbolift instead (track 1a).
 - [x] Windows at an adjustable height (the user: the windows suit tall
   characters): `windowSill`, `windowTop`, 2026-10-31.
 - [x] Windows side by side join into one (the user: an option),
@@ -184,35 +186,99 @@ centrepiece:
   copes with models of several overlapping pieces.
 
 ### Parallel tracks (from the user, 2026-11-06)
-Separate tracks, not in priority order; each can be picked up on its own.
+Separate tracks; each can be picked up on its own. The research, the design
+and the order are in `TRACKS_PLAN.md`.
 - [ ] **1. How the game's own designer places these** (from the original
   game's source code):
+  - [x] Research done (2026-11-06, `TRACKS_PLAN.md`).
   - [ ] 1a. Turbolifts.
-  - [ ] 1b. The empire flag.
-  - [ ] 1c. Landing spots for spacecraft and starships (as at an airport).
+    - [x] Done 2026-11-07: a *Turbo Lift* room drawn on several decks is one
+      car (`AuScLift`) with a stop and a lift door per deck with a door; car
+      height for vehicles; wide doors. Not yet tried in the game.
+    - [ ] A stop at ground level below the hull (vehicles drive straight in).
+    - [ ] A door taller than one deck, into an Open to Deck Below room.
+    - [ ] **Vehicle lifts** (the user, 2026-11-06): vehicles cannot drive up
+      ramps, so they change decks by lift. A bigger car, a height of its own
+      (taller than a deck where needed), a wide door per stop, the car floor
+      level with each deck, optionally a bottom door straight onto the
+      ground. The user confirmed in the game: vehicles ride along if they
+      fit, no limit on door width, ground-level lift doors and tall cars work.
+  - [x] 1b. The empire flag. Done 2026-11-07: flag or name on a hull
+    triangle, upright on the nearest wall; not yet tried in the game.
+  - [x] 1c. Landing spots for spacecraft and starships (as at an airport).
+    Done 2026-11-07: a tool on the Rooms page, kind `spacecraft` in a plan.
 - [ ] **2. Weapon bay flow.** In the game a weapon bay always has a bay type
   and a fire control station, and may have a weapon emitter. We already have
   these types; let the user pick the bay type when placing an emitter. Support
   several weapon bays per ship.
+  - [x] Done 2026-11-07: a bay type per weapon emitter, a fire control station
+    per emitter, right click to change; not yet tried in the game.
 - [ ] **3. Hull voids still trap people in front of the door.** A design
   where nobody could get in during the game: the user's arness-mcrn ship
   (private, outside this repository). Check whether hull voids are switched
   off when a ramp is closed or open.
+  - [x] Ramp foot ledge, ladders at hull doors that could not be grabbed, the
+    inside ladder that threw the player off; "only while open" retired
+    (2026-11-06, not committed).
+  - [ ] The user's game test of these fixes (`door_exit_test3.SoH`,
+    `arness_plain_ramps2.SoH`): ladders A and B, the inside ladder.
+  - [ ] The arness-mcrn ship: 52 of 240 crew routes cannot be followed (its
+    vehicle bays and zero-G shafts; there before these fixes).
+  - [ ] A `door-check` walk from the ground in through each door in `test.sh`.
 - [ ] **4. A second window style: one unified window** where possible (the
   old style stays; windows can look garbled now). Needs windows that can be
-  dragged out, as doors are.
+  dragged out, as doors are. On a model hull, the glass follows the model's
+  own surface and edges, so it blends in (the user, 2026-11-06).
+  - [x] Dragged window runs: one cut and one pane per run. Done 2026-11-07
+    (windows share a `row`; a row joins as `joinWindows` joins).
+  - [x] Windows on a model hull: the model's own triangles become the
+    glass (cut to the window's outline), no frame outside. Done 2026-11-07
+    (`windowStyle` "hull", `HullWindow` in planbuild.cpp).
+  - [ ] Keep the model's detail round windows when it is thinned.
+  - [x] Ceiling windows (skylights) too: a choice per window between following
+    the hull's shape and a flat cutout (the user, 2026-11-07). Done
+    2026-11-07 (`shape`, `HullSkylight`).
+  - [x] Ceiling windows placed per triangle, not per whole cell (the user,
+    2026-11-07). Done 2026-11-07 (`k`; Shift+click for the whole cell).
 - [ ] **5. Hull geometry clips through doors.** The door is its own geometry
   and takes precedence: cut the hull away inside the doorway.
-- [ ] **6. Hull-wide default textures** for walls, doors, ceilings and floors,
-  so they do not have to be picked again for each new room.
-- [ ] **7. Liveries** (working name; also possible: markings, insignia). A
+  - [x] 2026-11-07: window frames (and their tunnel linings) are cut away in
+    interior doorways; found in the arness (two doors on deck 10).
+  - [ ] Ask the user which door they saw it at, in case it was something else.
+- [x] **6. Hull-wide default textures** for walls, doors, ceilings and floors,
+  so they do not have to be picked again for each new room. Done 2026-11-07.
+- [x] **7. Liveries** (working name; also possible: markings, insignia). A
   painted pattern must stay clearly visible: let the user mark a shape as a
   livery so the designer keeps as much of its geometry as it can (no thinning
-  or merging across it).
+  or merging across it). Done 2026-11-07: a livery colour (`livery` on a
+  palette colour); on model and angular hulls the hull is cut along its
+  outline, and its edges are held still in thinning (`CutLiveries`).
+  - [ ] Ask the user which painted design looked wrong, and how.
 - [ ] **8. Balconies:** a wall a third of the room's height between rooms.
+  - [x] Done 2026-11-07 (the door tool's *balcony*); not yet tried in the game:
+    can people climb over the parapet?
 - [ ] **9. Windows between rooms**, if the engine supports them.
+  - [x] Done 2026-11-07 (the door tool's *window between rooms*); not yet tried
+    in the game: does the game draw the other room through the pane?
 - [ ] **10. Audit the room types:** which ones actually do something in the
   game. Rooms and room voids can carry properties; the list has grown very
-  long.
+  long. Found: every room is a cargo hold in the game now. Keep at least
+  (the user): Hold, Bridge, Open to deck below, Medical bay (surgery
+  station), Teleporter room (control station and pads, each pad at least
+  0.5 m from the others).
+  - [x] Each room gets its type's hold access; sick bays their medic,
+    transporter rooms their transporter and pads; the designer's list grouped
+    with tips (2026-11-07).
+  - [ ] Who may enter (personnel access per room): to ask the user.
+  - [ ] Buildings: read `DaBd::InsideRoomType` before changing anything.
+- [ ] **11. Door buttons** (the user, 2026-11-06): after dragging out a
+  door, place a button on a wall nearby that opens and closes it, raised a
+  little from the wall in another colour; Esc skips it. Possible: each door
+  has two switch locations the game lets us place.
+  - [x] Done 2026-11-07: the designer step after a door, the button mesh, the
+    switches on it, manual doors; not yet tried in the game.
+- [x] **12. The flaky `test.sh` check** "room and door textures" (fails
+  about one run in two, since before 2026-11-06). Fixed 2026-11-07
+  (`grep -q` under `pipefail`).
 
 ### Open questions to settle as we go

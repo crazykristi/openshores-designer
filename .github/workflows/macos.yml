@@ -43,7 +43,7 @@ jobs:
           git checkout "$GITHUB_SHA" -- packaging/build-macos-app.sh packaging/macos-readme.txt build.sh
 
       - name: Install Qt 5
-        run: brew install qt@5
+        run: brew install qt@5 assimp
 
       - name: Build
         run: ./build.sh

@@ -1402,6 +1402,9 @@ static void AllocateVolumes(AuScDesign& design, const Brief& brief, const QList<
 			{ &modules.capacitor,		qMax(1u, capacitorVolume) },
 			{ &modules.fuel,			qMax(1u, hullVolume / 20) },
 			{ &modules.lifeSupport,	qMax(1u, lifeSupportMin) },
+			// Some cargo space on every ship, whatever its template (the user,
+			// 2026-11-07): 2 percent of the hull.
+			{ &modules.hold,			qMax(1u, hullVolume / SHIPGEN_HOLD_MIN_SHARE) },
 			{ &modules.skeleton,		1 },
 		};
 		for(const Minimum& m : minimums)
@@ -1457,6 +1460,60 @@ static void AllocateVolumes(AuScDesign& design, const Brief& brief, const QList<
 		design.SetSkeletonVolume(modules.skeleton);
 	}
 
+	// The capacitor has to hold a minute of the idle power (the engine warns
+	// "Capacitor is inadequate" otherwise; small craft got the least, 1 m3).
+	// Grown a step at a time, from the structure.
+	const quint32 capacitorBefore = modules.capacitor;
+	for(int i = 0; i < 40; ++i)
+	{
+		AuScReport report;
+		design.ReportDesign(report);
+		if(report.CapacitorMax() >= report.IdlePowerWithShields() * 60)
+		{
+			if(modules.capacitor != capacitorBefore)
+				warnings << QString("The capacitor was made %1 cubic meters, to hold a minute of the idle power.")
+						.arg(modules.capacitor);
+			break;
+		}
+		const quint32 extra = qMax(1u, quint32(modules.capacitor * .25));
+		if(modules.skeleton <= extra + 1)
+			break;
+		modules.skeleton -= extra;
+		modules.capacitor += extra;
+		design.SetCapacitorVolume(modules.capacitor);
+		design.SetSkeletonVolume(modules.skeleton);
+	}
+
+	// Without an engineer station the power plant and maneuver drive have to
+	// stay under 100 m3 together (the engine warns otherwise): a fighter or
+	// shuttle. Both shrink in step, the rest goes to the structure, as long
+	// as the ship can still climb at 10 m/s2.
+	if(!placedStationTypes.contains("engineer") && modules.powerPlant + modules.maneuverDrive > 100)
+	{
+		const quint32 oldPlant = modules.powerPlant, oldDrive = modules.maneuverDrive;
+		const double scale = 99.0 / double(oldPlant + oldDrive);
+		modules.powerPlant = qMax(1u, quint32(oldPlant * scale));
+		modules.maneuverDrive = qMax(1u, quint32(oldDrive * scale));
+		modules.skeleton += (oldPlant - modules.powerPlant) + (oldDrive - modules.maneuverDrive);
+		design.SetPowerPlantVolume(modules.powerPlant);
+		design.SetManeuverDriveVolume(modules.maneuverDrive);
+		design.SetSkeletonVolume(modules.skeleton);
+		AuScReport report;
+		design.ReportDesign(report);
+		const double powerOutput = report.FuelBurnRate() * report.PowerPerFuel();
+		if(report.ManeuverAccelerationVertical() / FeetPerMeter() < 10. || report.IdlePowerWithShields() > powerOutput)
+		{
+			modules.skeleton -= (oldPlant - modules.powerPlant) + (oldDrive - modules.maneuverDrive);
+			modules.powerPlant = oldPlant;
+			modules.maneuverDrive = oldDrive;
+			design.SetPowerPlantVolume(modules.powerPlant);
+			design.SetManeuverDriveVolume(modules.maneuverDrive);
+			design.SetSkeletonVolume(modules.skeleton);
+		}
+		else
+			warnings << QString("With no engineer station, the power plant and maneuver drive were made %1 and %2 cubic "
+					"meters (under 100 together).").arg(modules.powerPlant).arg(modules.maneuverDrive);
+	}
 }
 
 void AllocateSystemVolumes(AuScDesign& design, const Brief& brief, QStringList& notes)
@@ -1665,6 +1722,138 @@ static DeskLayout MakeDeskLayout(const PlacedRoom& room, int crewCount, bool wan
 	return layout;
 }
 
+// Pads for each transporter: 3 x 3 ft slabs on the floor of its room, drawn
+// with its pad effect, their middles in the console's list of pad locations
+// (as in the user's working airport; SOH_FORMAT.md, "Transporter pads"). At
+// least 0.5 m between pads (the user, 2026-11-06), so their middles are
+// SHIPGEN_PAD_SPACING apart; clear of the room's walls, its stations and
+// furniture, and its doors, ladders and stairs. Up to SHIPGEN_PADS_MAX.
+void AddTransporterPads(AuDesign& design, const QList<PlacedRoom>& rooms, const QList<QPair<AuPoint, AuPoint> >& keepOut,
+		QStringList& warnings, const QHash<QString, QList<AuPoint> >& fixedPads, bool autoPads)
+{
+	const double half = 1.5, spacing = SHIPGEN_PAD_SPACING;
+	int effect = 0;
+	QList<quint16> transporters;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+		if(it.value() && (it.value()->Type() == AuScPart::Part_ConsoleTransporter
+				|| it.value()->Type() == AuScPart::Part_StationTransporter))
+			transporters << it.key();
+	for(quint16 id : transporters)
+	{
+		AuScPart* console = design.Parts().value(id);
+		const AuPoint op = console->OperatorLoc();
+		const PlacedRoom* room = 0;
+		for(const PlacedRoom& r : rooms)
+			if(op.x >= r.min.x - .5 && op.x <= r.max.x + .5 && op.y >= r.min.y - .5 && op.y <= r.max.y + .5
+					&& op.z >= r.min.z - .5 && op.z <= r.max.z + .5)
+				room = &r;
+		if(!room)
+			continue;
+		AuPointArray pads;
+		if(fixedPads.contains(room->label))
+		{
+			// Placed by hand: exactly there.
+			for(const AuPoint& c : fixedPads.value(room->label))
+				pads.append(AuPoint(c.x, c.y, room->min.z + .1));
+		}
+		else if(!autoPads)
+			continue;
+		if(pads.isEmpty())
+		{
+		// What is in the way: everything standing in the room but the room
+		// itself, and the places kept clear.
+		QList<QPair<AuPoint, AuPoint> > inTheWay = keepOut;
+		const double roomArea = (room->max.x - room->min.x) * (room->max.y - room->min.y);
+		for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+		{
+			const AuScPart* p = it.value();
+			if(!p || p->IsRoomVoid() || p->IsHullVoid() || p->IsRoomMesh() || p->IsHullMesh() || p->IsPath())
+				continue;
+			AuPoint mn, mx;
+			p->ModelExtents(mn, mx);
+			if(mx.x < room->min.x || mn.x > room->max.x || mx.y < room->min.y || mn.y > room->max.y
+					|| mx.z < room->min.z || mn.z > room->max.z)
+				continue;
+			if((mx.x - mn.x) * (mx.y - mn.y) > roomArea * .8)
+				continue;		// The room's own shell.
+			if(dynamic_cast<const AuScConsole*>(p))
+				mn.z = qMin(mn.z, room->min.z);		// A console in a building is an icon in the air: its floor too.
+			inTheWay << qMakePair(mn, mx);
+		}
+		inTheWay << qMakePair(op - AuPoint(1.5, 1.5, 0), op + AuPoint(1.5, 1.5, 6));
+		auto clear = [&](const AuPoint& c) {
+			for(const QPair<AuPoint, AuPoint>& b : inTheWay)
+				if(c.x + half + .5 > b.first.x && c.x - half - .5 < b.second.x
+						&& c.y + half + .5 > b.first.y && c.y - half - .5 < b.second.y
+						&& room->min.z + 1.0 > b.first.z && room->min.z < b.second.z)
+					return false;
+			return true;
+		};
+		// On a grid of the spacing, tried at every quarter-foot offset: the
+		// tightest group of the most pads, nearest the console.
+		const double x0 = room->min.x + half + .5, x1 = room->max.x - half - .5;
+		const double y0 = room->min.y + half + .5, y1 = room->max.y - half - .5;
+		double bestScore = 1e30;
+		for(double ox = 0; ox < spacing - 1e-6; ox += .25)
+			for(double oy = 0; oy < spacing - 1e-6; oy += .25)
+			{
+				QList<AuPoint> spots;
+				for(double y = y0 + oy; y <= y1 + 1e-6; y += spacing)
+					for(double x = x0 + ox; x <= x1 + 1e-6; x += spacing)
+					{
+						const AuPoint c(x, y, room->min.z + .1);
+						if(clear(c))
+							spots << c;
+					}
+				for(const AuPoint& seed : spots)
+				{
+					QList<AuPoint> closest = spots;
+					std::sort(closest.begin(), closest.end(), [&seed](const AuPoint& u, const AuPoint& v) {
+						return hypot(u.x - seed.x, u.y - seed.y) < hypot(v.x - seed.x, v.y - seed.y); });
+					const int n = qMin(int(closest.size()), SHIPGEN_PADS_MAX);
+					double spread = 0;
+					AuPoint mid;
+					for(int i = 0; i < n; ++i)
+					{
+						spread += hypot(closest[i].x - seed.x, closest[i].y - seed.y);
+						mid = mid + closest[i] / double(n);
+					}
+					// Fewer pads cost most, then spread, then the walk from the console.
+					const double score = (SHIPGEN_PADS_MAX - n) * 1e6 + spread * 10 + hypot(mid.x - op.x, mid.y - op.y);
+					if(n > 0 && score < bestScore)
+					{
+						bestScore = score;
+						pads.clear();
+						for(int i = 0; i < n; ++i)
+							pads.append(closest[i]);
+					}
+				}
+			}
+		if(pads.isEmpty())
+		{
+			warnings << QString("'%1' has no room for a transporter pad (3 ft square, clear of its stations and doors).")
+					.arg(room->label);
+			continue;
+		}
+		}
+		for(const AuPoint& c : pads)
+		{
+			AuScFaceList slab = BoxFaces(AuPoint(c.x - half, c.y - half, room->min.z), AuPoint(c.x + half, c.y + half, c.z));
+			OrientAsHull(slab);
+			slab.SetEffect(SURFACE_EFFECT(EFF_TransporterPad1 + effect));
+			AuScMesh pad;
+			pad.AddFaces(slab);
+			pad.SetGroupName(room->label);
+			if(pad.IsValid())
+				design.Parts().AddPart(pad);
+		}
+		console = design.Parts().value(id);
+		console->SetPadLocs(pads);
+		console->SetWhichEffect(effect);
+		effect = (effect + 1) % 10;
+	}
+}
+
 static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnalysis& hull, const LayoutOptions& opts,
 		LayoutResult& result, const QList<DoorLink>& doorLinks)
 {
@@ -1706,8 +1895,103 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 	QList<quint16> ftlParts;
 	QList<quint16> weaponParts;
 	int crewStations = 0;
+	// Placed by hand first, exactly where they were put; each counts against
+	// one of the template's stations of its type.
+	QMap<QString, int> fixedLeft;
+	for(const LayoutOptions::FixedStation& f : opts.fixedStations)
+	{
+		AuScPart::PART_TYPE partType;
+		COMMODITYID module;
+		if(!FindStationType(f.type, partType, module))
+		{
+			result.warnings << QString("unknown station type '%1' (placed by hand) was skipped.").arg(f.type);
+			continue;
+		}
+		if(partType == AuScPart::Part_ConsoleFireControl)
+			module = COMMODITYID(f.module > 0 ? f.module : opts.fireControlModule > 0 ? opts.fireControlModule : int(module));
+		if(f.type == "engineer")
+		{
+			if(FtlDriveModule(brief.ftlDrive) == CID_Invalid || !canHaveFtl)
+			{
+				result.warnings << QString("the engineer station placed in '%1' was left out: the ship has no FTL drive.").arg(f.room);
+				continue;
+			}
+			module = FtlDriveModule(brief.ftlDrive);
+		}
+		const AuScPart::PART_TYPE deskType = DeskStationType(partType);
+		const bool desk = deskType != partType && (f.seat == "desk" || (f.seat.isEmpty() && opts.bridgeStyle == "desks"));
+		quint16 partId = 0;
+		if(desk)
+		{
+			// A desk's yaw is from +X; the facing is from +Y.
+			const double yaw = f.facing + M_PI / 2;
+			AuMatrix4x4 screenPlane;
+			AuPoint corner1, corner2;
+			AuScPart* part = AuScPart::Create(deskType);
+			AuScStation* station = dynamic_cast<AuScStation*>(part);
+			if(station && AddStationDesk(design, f.floor, yaw, f.room, screenPlane, corner1, corner2, opts.deskPaint,
+					opts.deskSeatPaint, opts.deskTopFeet, !opts.deskStanding))
+			{
+				const AuPoint seat = opts.deskStanding ? f.floor : f.floor + AuPoint(0, 0, AuStation::SeatHeight());
+				station->MakeStation(opts.deskStanding ? AuScStation::Operator_StandStationary : AuScStation::Operator_SitStationary,
+						seat, seat + AuPoint(cos(yaw), sin(yaw), 0) * FeetPerMeter(), corner1, corner2, screenPlane);
+				station->SetModule(module);
+				if(deskType == AuScPart::Part_StationFireControl)
+					station->SetEmitLoc(f.floor + AuPoint(0, 0, 3.0));
+				if(station->IsValid())
+					partId = design.Parts().AddPart(*station);
+			}
+			delete part;
+		}
+		else
+		{
+			AuScPart* part = AuScPart::Create(partType);
+			AuScConsole* console = dynamic_cast<AuScConsole*>(part);
+			if(console)
+			{
+				console->MakeIcon(f.floor, float(f.facing), AuMatrix4x4());
+				console->SetModule(module);
+				if(AuScConsoleFireControl* fc = dynamic_cast<AuScConsoleFireControl*>(console))
+					fc->SetEmitLoc(f.floor + AuPoint(0, 0, 3.0));
+				if(console->IsValid())
+					partId = design.Parts().AddPart(*console);
+			}
+			delete part;
+		}
+		if(!partId)
+		{
+			result.warnings << QString("the '%1' station placed in '%2' was not taken by the engine.").arg(f.type, f.room);
+			continue;
+		}
+		const AuScPart* added = design.Parts().value(partId);
+		if(added && added->ModuleSystem() == SYS_FTLDrive)
+			ftlParts << partId;
+		else if(added && added->ModuleSystem() == SYS_Weapon)
+			weaponParts << partId;
+		placedStationTypes.insert(f.type);
+		if(partType != AuScPart::Part_ConsoleCommand)
+			++crewStations;
+		++result.stationsPlaced;
+		fixedLeft[f.type] += 1;
+		// The automatic chairs and desks keep clear of it.
+		for(const PlacedRoom& r : result.rooms)
+			if(r.label == f.room)
+			{
+				const QString key = QString("%1,%2,%3").arg(r.min.x).arg(r.min.y).arg(r.min.z);
+				chairSpots[key] << QRectF(f.floor.x - 3, f.floor.y - 3, 6, 6);
+				stationCount[r.type] += 1;
+			}
+	}
 	for(const StationSpec& s : brief.ExpandedStations())
 	{
+		// One of this type was placed by hand.
+		if(fixedLeft.value(s.type) > 0)
+		{
+			fixedLeft[s.type] -= 1;
+			continue;
+		}
+		if(!opts.autoStations)
+			continue;
 		AuScPart::PART_TYPE partType;
 		COMMODITYID module;
 		if(!FindStationType(s.type, partType, module))
@@ -1819,7 +2103,10 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 					else
 						++crew;
 				}
-				deskLayouts.insert(deskKey, MakeDeskLayout(target, crew, captain, opts));
+				LayoutOptions clear = opts;
+				for(const LayoutOptions::FixedStation& f : opts.fixedStations)
+					clear.stationKeepOut << qMakePair(f.floor - AuPoint(3, 3, 0), f.floor + AuPoint(3, 3, 8));
+				deskLayouts.insert(deskKey, MakeDeskLayout(target, crew, captain, clear));
 				chairSpots[QString("%1,%2,%3").arg(target.min.x).arg(target.min.y).arg(target.min.z)] = deskLayouts.value(deskKey).taken;
 			}
 			const DeskLayout& desks = deskLayouts[deskKey];
@@ -1948,8 +2235,13 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 				return r.adjusted(-.3, -.3, .3, .3);
 			};
 			QList<QRectF>& taken = chairSpots[roomKey];
+			// The room's box is the largest box of whole cells in it, so a
+			// chair inside the box is inside the room.
+			auto inside = [&](const QRectF& r) {
+				return !(r.left() < target.min.x || r.right() > target.max.x || r.top() < target.min.y || r.bottom() > target.max.y);
+			};
 			auto free = [&](const QRectF& r) {
-				if(r.left() < target.min.x || r.right() > target.max.x || r.top() < target.min.y || r.bottom() > target.max.y)
+				if(!inside(r))
 					return false;
 				for(const QRectF& o : taken)
 					if(o.intersects(r))
@@ -1987,6 +2279,36 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 					facing = 0.f;
 					placed = true;
 				}
+			}
+			// Then anywhere in the box, any way round, nearest the fore wall
+			// first; then overlapping another chair rather than sticking out
+			// of the room (the user, 2026-11-08: chairs clipped through walls).
+			for(int pass = 0; pass < 2 && !placed; ++pass)
+				for(double y = target.max.y; y >= target.min.y && !placed; y -= .5)
+				{
+					const double middleX = (target.min.x + target.max.x) / 2;
+					for(double off = 0; off <= (target.max.x - target.min.x) / 2 + .5 && !placed; off += .5)
+						for(double x : { middleX - off, middleX + off })
+							for(int w : { 2, 0, 1, 3 })
+								if(!placed && (pass == 0 ? free(footprint(x, y, turns[w])) : inside(footprint(x, y, turns[w]))))
+								{
+									cx = x;
+									cy = y;
+									facing = turns[w];
+									placed = true;
+								}
+				}
+			if(!placed)
+			{
+				// Smaller than a chair: in the middle, along its longer side.
+				cx = (target.min.x + target.max.x) / 2;
+				cy = (target.min.y + target.max.y) / 2;
+				facing = (target.max.x - target.min.x) > (target.max.y - target.min.y) ? turns[0] : 0.f;
+				const QRectF r = footprint(0, 0, facing);
+				cx -= r.center().x();
+				cy -= r.center().y();
+				result.warnings << QString("'%1' is too small for the '%2' station's chair (about 1 by 1.7 m with room "
+						"round it); it reaches out of the room. Give it a bigger block of whole cells.").arg(target.label, s.type);
 			}
 			taken << footprint(cx, cy, facing);
 		}
@@ -2034,17 +2356,41 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 	}
 
 	// Berths.
+	// Berths placed by hand, exactly there; each counts against one of its kind.
+	QMap<QString, int> fixedBerths;
+	for(const LayoutOptions::FixedBerth& f : opts.fixedBerths)
+	{
+		AuScPart::PART_TYPE partType;
+		if(!FindBerthType(f.kind, partType))
+		{
+			result.warnings << QString("unknown berth kind '%1' (placed by hand) was skipped.").arg(f.kind);
+			continue;
+		}
+		AuScPart* part = AuScPart::Create(partType);
+		AuScBerth* berth = dynamic_cast<AuScBerth*>(part);
+		if(berth)
+		{
+			berth->MakeIcon(f.floor + AuPoint(0, 0, 2), float(f.facing), IdentityPlane());
+			if(berth->IsValid())
+			{
+				design.Parts().AddPart(*berth);
+				++result.berthsPlaced;
+				fixedBerths[f.kind] += 1;
+			}
+		}
+		delete part;
+	}
 	if(opts.placeBerths)
 	{
 		struct BerthGroup { const char* key; int count; };
 		// The crew berths come first so that there is always a berth for
-		// every crew station.
+		// every crew station. Those placed by hand count.
 		BerthGroup groups[] = {
-			{ "crew", qMax(brief.berths.crew, crewStations) },
-			{ "capt", brief.berths.capt },
-			{ "officer", brief.berths.officer },
-			{ "passenger", brief.berths.passenger },
-			{ "troop", brief.berths.troop },
+			{ "crew", qMax(brief.berths.crew, crewStations) - fixedBerths.value("crew") },
+			{ "capt", brief.berths.capt - fixedBerths.value("capt") },
+			{ "officer", brief.berths.officer - fixedBerths.value("officer") },
+			{ "passenger", brief.berths.passenger - fixedBerths.value("passenger") },
+			{ "troop", brief.berths.troop - fixedBerths.value("troop") },
 		};
 		// Spread the berths over the rooms, preferring crew quarters.
 		QMap<int, int> berthCount;
@@ -2101,8 +2447,19 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 				const double roomDepth = target.max.y - target.min.y;
 				const int columns = qMax(1, int((roomWidth - 6) / 4));
 				const int index = berthCount.value(targetIndex);
-				const double bx = target.min.x + 3 + (index % columns) * 4;
-				const double by = target.max.y - 3 - (index / columns) * 4;
+				double bx = target.min.x + 3 + (index % columns) * 4;
+				double by = target.max.y - 3 - (index / columns) * 4;
+				// Not on a berth placed by hand.
+				bool onFixed = false;
+				for(const LayoutOptions::FixedBerth& f : opts.fixedBerths)
+					onFixed = onFixed || (fabs(f.floor.x - bx) < 3 && fabs(f.floor.y - by) < 3 && fabs(f.floor.z - target.min.z) < 3);
+				if(onFixed)
+				{
+					berthCount[targetIndex] = index + 1;
+					--i;
+					delete berth;
+					continue;
+				}
 				berth->MakeIcon(AuPoint(bx, by, target.min.z + 2), 0.f, IdentityPlane());
 				if(berth->IsValid())
 				{
@@ -2121,7 +2478,7 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 		PlaceWalkPaths(design, result.rooms, doorLinks);
 
 	// Service panels for the allocated modules.
-	if(opts.placeServicePanels)
+	if(opts.placeServicePanels && opts.placeSystems)
 	{
 		for(const char* key : kPanelTypes)
 		{
@@ -2162,7 +2519,11 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 		}
 	}
 
-	AllocateVolumes(design, brief, ftlParts, weaponParts, placedStationTypes, result.warnings);
+	if(opts.placeSystems)
+		AllocateVolumes(design, brief, ftlParts, weaponParts, placedStationTypes, result.warnings);
+	else
+		result.warnings << QString("the system volumes were left out (Build page), so the game will not take the ship as it is.");
+	AddTransporterPads(design, result.rooms, opts.stationKeepOut, result.warnings, opts.fixedPads, opts.autoPads);
 
 	// Which rooms did we not manage to place?
 	for(const RoomSpec& r : brief.rooms)
@@ -2587,6 +2948,7 @@ LayoutResult GenerateLayout(AuScDesign& design, const Brief& brief, const HullAn
 			result.warnings << QString("could not build room '%1'.").arg(b.label);
 			continue;
 		}
+		SetRoomUse(design, voidId, b.type);
 		PlacedRoom pr;
 		pr.type = b.type;
 		pr.label = b.label;
@@ -2598,6 +2960,15 @@ LayoutResult GenerateLayout(AuScDesign& design, const Brief& brief, const HullAn
 		byType[b.type] << pr;
 		result.rooms << pr;
 		++result.roomsPlaced;
+	}
+
+	{
+		QList<QPair<quint16, QString> > voids;
+		for(const PlacedRoom& pr : result.rooms)
+			voids << qMakePair(pr.voidId, pr.type);
+		if(const int given = GiveCargoAccess(design, voids))
+			result.warnings << QString("No room is a hold, so the cargo is loaded and unloaded in the %1 room(s) "
+					"that have no other use (halls, corridors).").arg(given);
 	}
 
 	// Final safety net. The boxes above are tested against the hull-only
@@ -2895,48 +3266,11 @@ bool ImportHullModel(AuDesign& design, const QStringList& fileNames, const Model
 	QList<AuScTriList> originals;
 	for(const QString& fileName : fileNames)
 	{
-		const QString suffix = QFileInfo(fileName).suffix().toLower();
+		// The same reader as the designer's (stl, 3ds, obj, and FBX, glTF
+		// and more when built with Assimp).
 		AuScTriList tris;
-		if(suffix == "3ds")
-		{
-			AuScParts imported;
-			imported.Import3DS(fileName, 1.0);
-			for(AuScParts::const_iterator it = imported.constBegin(); it != imported.constEnd(); ++it)
-			{
-				const AuScMeshBase* mesh = dynamic_cast<const AuScMeshBase*>(it.value());
-				if(!mesh)
-					continue;
-				AuScFaceList faces;
-				mesh->Faces(faces);
-				AuScTriList partTris;
-				faces.Triangles(partTris);
-				tris.append(partTris);
-			}
-		}
-		else if(suffix == "stl")
-		{
-			AuScFaceList faces;
-			int result = faces.STLReadASCII(fileName);
-			if(result == 2)
-				result = faces.STLReadBinary(fileName);	// Not an ASCII file, so try binary.
-			if(result != 0)
-			{
-				error = result == 1 ? QString("could not open %1").arg(fileName)
-						: QString("could not read %1").arg(fileName);
-				return false;
-			}
-			faces.Triangles(tris);
-		}
-		else
-		{
-			error = QString("unsupported model format '%1' in %2. Use 3ds or stl.").arg(suffix).arg(fileName);
+		if(!LoadMeshFile(fileName, tris, error))
 			return false;
-		}
-		if(tris.isEmpty())
-		{
-			error = QString("%1 has no usable geometry.").arg(fileName);
-			return false;
-		}
 		originals << tris;
 	}
 

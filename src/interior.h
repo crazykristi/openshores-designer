@@ -42,6 +42,9 @@ class AuScPart;
 // a ladder that ends at the floor is never finished: the crew stand at its foot
 // for ever. (The Atlantis's ladders end 3.25 ft above the floor.)
 #define SHIPGEN_LADDER_HOLD 3.25
+// How far a ladder between decks stands from the edge of its hole, which it
+// faces: within the 0.6 ft of a floor a climber needs to let go onto it.
+#define SHIPGEN_LADDER_TO_EDGE 0.45
 #define SHIPGEN_DOORWAY_REACH 2.0
 // How far below the bottom of the hull the ladder from a hull door reaches,
 // as in the working designs (2 to 3 ft): the ground under a landed ship.
@@ -57,6 +60,10 @@ class AuScPart;
 #define SHIPGEN_THRESHOLD_OUTSIDE 0.35
 // How much bigger than the door the hull opening is, on every side but the floor.
 #define SHIPGEN_HULL_VOID_MARGIN 1.5
+// How far round a hull part the game keeps everyone out (d_ObstructMargin in
+// the game's auscparts.cpp: each hull part's silhouette is built this much
+// bigger). A hull void lets people in.
+#define SHIPGEN_OBSTRUCT_MARGIN 2.0
 // A ramp down from a hull door runs this far out for each foot it falls
 // (about 34 degrees; the user's aircraft factory has 45), and is only put
 // where the door is no higher than this above the ground; higher doors get
@@ -71,6 +78,8 @@ class AuScPart;
 #define SHIPGEN_RAMP_BELOW_HULL 0.0
 // How far past the hull surface the hull opening goes.
 #define SHIPGEN_HULL_VOID_OUTSIDE 4.0
+// ... and at most this far, where the game's zone round the hull reaches further.
+#define SHIPGEN_HULL_VOID_OUTSIDE_MOST 80.0
 
 // A closed box. Its faces wind the way the game wants voids.
 AuScFaceList BoxFaces(const AuPoint& mn, const AuPoint& mx);
@@ -190,15 +199,14 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 // over it. 'top' and 'foot' are
 // where a walk path down it goes. False, and nothing added, if the door is
 // too high ('maxRise') or too low for one. 'runPerRise' is how long it is for
-// its fall. With 'openOnlyDoor', it can only be stood on while that door is
-// open, and looks the same either way: a part that shows it cannot be tied to a
-// door. A Barrier cannot do this, because saving one adds a flag to the state it
-// is tied to, so the game never finds it in that state (AuScBarrier::operator>>).
-// So the hull part is what is walked on, with a hull void over it that is there
-// only while the door is closed.
+// its fall. It is always there, whatever the door's state: a Barrier cannot
+// be tied to a door (saving one adds a flag to the state it is tied to, so
+// the game never finds it in that state, AuScBarrier::operator>>), and a hull
+// void tied to the closed door did not take the ramp away in the game (the
+// user's door test, 2026-11-06).
 bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
 		double surface, double groundZ, AuPoint& top, AuPoint& foot,
-		double runPerRise = SHIPGEN_RAMP_RUN_PER_RISE, double maxRise = SHIPGEN_RAMP_MAX_RISE, quint16 openOnlyDoor = 0);
+		double runPerRise = SHIPGEN_RAMP_RUN_PER_RISE, double maxRise = SHIPGEN_RAMP_MAX_RISE);
 
 // The hull part nearest to a point (0 if there is none).
 quint16 HullPartAt(const AuDesign& design, const AuPoint& p);
@@ -211,12 +219,30 @@ const char* LadderGroupPrefix();
 bool AddShaft(AuDesign& design, const QString& groupName, const AuPoint& mn, const AuPoint& mx, quint16& voidId);
 // A room void of any closed shape, with no mesh to see.
 bool AddVoid(AuDesign& design, const QString& groupName, const AuScFaceList& faces, quint16& voidId);
+// What a room of a spacecraft is for, as the game reads it: the hold access
+// of its room void (DaSc::InsideRoomType turns it into the room type the game
+// uses; the room's name and type in the blueprint do nothing there). Galley
+// Pantry, Sick Bay Pharmacy, Engine Room and Fuel Cell FuelCoupling, Brig
+// Feeder, Barracks Armory, Lounge Bar, cabins Wardrobe, Vehicle Bay VehicleBay,
+// Hold Hold, the rest Inaccessible (a corridor). Until 2026-11-07 every room was
+// a cargo hold.
+HOLD_ACCESS ShipRoomHoldAccess(const QString& roomType);
+// What the game does with that: a few words for the designer.
+QString ShipRoomUse(const QString& roomType);
+bool SetRoomUse(AuDesign& design, quint16 voidId, const QString& roomType);
+// A ship's cargo is loaded and unloaded in its rooms with hold access Hold.
+// When none of 'rooms' (room void, room type) has it, the ones that give
+// nothing else (halls, corridors: Inaccessible) get it, lifts and zero-G
+// shafts aside. How many did.
+int GiveCargoAccess(AuDesign& design, const QList<QPair<quint16, QString> >& rooms);
+// Who may be in a room: PERSONNEL_ACCESS bits (PlanRoom::access); the game
+// keeps it on the room's void.
+bool SetRoomAccess(AuDesign& design, quint16 voidId, int access);
 // Sets the gravity of a room void (G_Zero for a zero-G shaft).
 bool SetVoidGravity(AuDesign& design, quint16 voidId, GRAVITY gravity);
 
 // A ladder path from 'bottom' up to 'top'; 'facing' is the way a climber faces.
-// With 'openOnlyDoor', it can only be taken hold of while that door is open.
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing, quint16 openOnlyDoor = 0);
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing);
 
 // What a ladder between decks looks like, beside its path: the opening is
 // cut through the lower room's ceiling and the upper room's floor with the
@@ -226,8 +252,21 @@ bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, 
 bool CutLadderOpening(AuDesign& design, const AuPoint& mn, const AuPoint& mx, quint16 lowerRoomId, quint16 upperRoomId);
 // The same through a closed jig of any shape.
 bool CutOpening(AuDesign& design, const AuScFaceList& jig, quint16 lowerRoomId, quint16 upperRoomId);
+// 'ahead' is how far in front of the path the rungs are, 'above' how far the
+// rails go on above 'top'. 'asHull' makes it a hull part: the game does not
+// take a mesh outside the hull ("Mesh is outside the hull").
 bool AddLadderMesh(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing,
-		const QString& groupName);
+		const QString& groupName, double ahead = .9, double above = 3.0, bool asHull = false);
+
+// The ladder down the outside of a hull from a hull door ('outward' its way
+// out, 'surface' the hull surface along it, 'doorFloor' the floor of the
+// doorway): a hull void round the ladder from the ground up to the doorway.
+// The game keeps everyone 2 ft off a hull (the hull's silhouette is built
+// that much bigger, AuScHull::IsPathBlocked), so without it a ladder 0.75 ft
+// out could not be reached from the ground: the user could not take hold of
+// the ladders in the door test (2026-11-06).
+bool AddOutsideLadderClearance(AuDesign& design, const AuPoint& ladderFoot, const AuPoint& outward, double surface,
+		double doorFloor);
 
 // A flight of stairs, as in the user's aircraft factory: an invisible
 // sloped Barrier that is walked on, from 'foot' (the middle of the bottom
@@ -256,5 +295,19 @@ bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QSt
 
 // A walk path segment. With a door id it is only walkable while that door is open.
 bool AddWalkPath(AuDesign& design, const AuPoint& from, const AuPoint& to, quint16 doorId = 0);
+
+// Doors take precedence over our frames (the user, 2026-11-06, track 5): the
+// faces of the "Frame" hull parts (window frames and the linings of their
+// tunnels to the hull surface) that reach into an interior doorway are cut
+// away there. Returns how many doorways had something cut out of them.
+int ClearDoorways(AuDesign& design);
+
+// A button on a wall that opens and closes a door (the user, 2026-11-06): a
+// dark plate with a lit green button on it, standing 0.15 ft out of the wall.
+// 'onWall' is its middle on the wall, 'inward' the unit direction into the
+// room (level). The door's switch goes at the button's face, where the
+// game's hot zone for it (a foot each way) covers it.
+bool AddDoorButton(AuDesign& design, const AuPoint& onWall, const AuPoint& inward, const QString& groupName,
+		AuPoint& switchLoc);
 
 #endif

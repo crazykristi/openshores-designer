@@ -1,5 +1,313 @@
 # Changes and known issues
 
+## 8 November 2026: release 0.3.7-beta-rc1
+
+The first beta, a release candidate: everything since 0.3.6-alpha (the
+sections from 2 to 8 November below). See `RELEASE_NOTES.md`.
+
+* **Fighter mode (experimental)** (the user, 8 November; researched in
+  `MICRO_MODE_PLAN.md`). *File > New fighter* and *New fighter from a 3D
+  model* (at the model's real length; `shipgen plan-from-model --fighter`),
+  or *Fighter mode* on the Ship page for a plan already drawn. A fighter plan
+  (`"mode": "fighter"`) has 2.5 ft cells and 4.5 ft decks (as the 4 ft
+  cockpit that worked in the game), decks down to 4 ft allowed, the new
+  *Fighter (experimental)* kind of ship (one pilot, a helm, most of the hull
+  for power and drive), no FTL drive (its least volume is more than a
+  fighter's hull), windows that follow the hull (the canopy) and no
+  automatic berths (a cockpit has no room for a bed). The build notes that it
+  is experimental and warns when there is no cockpit (a Bridge room) or no
+  hull door to get in. The Ship page shows a yellow *experimental* banner and
+  the window title says *fighter mode - experimental*. Tried on the F-35
+  model: a cockpit under the canopy hump, hull-following ceiling windows, a
+  side door with a ramp, a helm placed by hand; the engine takes it with no
+  errors or warnings, and the way in is clear. **Known:** not tried in the
+  game; no belly hatch yet (doors stand in walls); thin parts such as wings
+  stay on the hull but have no cells, so a side door over a wing gets a
+  ladder that runs into the wing (the way down is left on *auto*, which
+  gives a low door a ramp).
+* **Small craft no longer get the engine's two power warnings.** The
+  capacitor got the least volume (1 m3) on a ship without FTL or weapons, so
+  "Capacitor is inadequate"; it now grows until it holds a minute of the idle
+  power. Without an engineer station, power plant and maneuver drive together
+  are kept under 100 m3 ("Add an engineer station"), as long as the ship
+  still climbs at 10 m/s2 and the power plant covers the idle power; the
+  build notes both.
+
+## 8 November 2026: AppImage 3D view, FBX, start-up check, livery on a sloping roof, quarter turns
+
+* **The AppImage's 3D view stayed empty on another PC.** On a Wayland
+  desktop (KDE Plasma picks Wayland for Qt programs) the 3D view had no
+  OpenGL: "qt.qpa.wayland: EGL not available". The AppImage brought its own
+  Wayland libraries from Ubuntu 22.04, and the system's newer Mesa driver
+  (libEGL_mesa) needs a newer one (`wl_display_dispatch_queue_timeout`,
+  `wl_fixes_interface`). The Wayland libraries now come from the system, as
+  the other driver-bound libraries do. Reproduced on this machine and fixed.
+* **Linux asks for the OpenGL the 3D view needs.** When the driver's default
+  context is older than 3.3 (some drivers only give 3.3 when asked for a core
+  context), the programs ask for a 3.3 core context. When the 3D view cannot
+  draw, it says why in the view (and on the terminal) instead of staying
+  empty.
+* **A warning on start when something is missing.** The AppImage checks
+  before it starts that the libraries it expects from the system (the
+  graphics driver, X11/xcb, fonts) are there; if not, it names them, says how
+  to install them, gives the issue tracker
+  (https://github.com/crazykristi/openshores-designer/issues) and asks
+  whether to go on at the user's own risk (`kdialog`, `zenity`, the terminal
+  or `xmessage`; the answer is remembered until the list changes;
+  `SHIPGEN_SKIP_CHECK=1` skips it). The designer and the generator's window
+  do the same for OpenGL 3.3, with "Continue at my own risk", "Quit" and
+  "Do not warn me about this again". Runs from a script are not stopped.
+* **FBX, glTF and more models.** With the Assimp library (build.sh finds it
+  with pkg-config), every tool that reads models also reads FBX, glTF (gltf,
+  glb), Collada (dae), PLY, blend, lwo, x3d, off and ac; a model in parts
+  comes in assembled. The file dialogs list them. The generator's own model
+  reader is now the designer's (`LoadMeshFile`), so it reads obj too. The
+  release builds (the Ubuntu container, macOS) install Assimp; the Windows
+  cross build has no Assimp package and reads only stl, obj and 3ds.
+* **A livery drawn on a roof that rises above its deck came out in pieces**
+  (the arness MCRN logo on deck 8: the M's outer strokes were missing). A
+  model's roof can rise most of a deck over the deck it covers. The paint of
+  such a roof looked sideways first and found the hull colour of the higher
+  deck next to it; it now looks straight down the column first, when nothing
+  is above (and up from a keel when nothing is below), after the skin's
+  width sideways, so a wall on a step keeps its own deck's colour. The cut
+  along a livery's outline now reaches up the open column too, and every face
+  over a livery triangle takes its colour again after the cut (the sliver pass
+  before had merged faces across a stroke). `arness_livery_test2`.
+  `SHIPGEN_DUMP_HULL` writes each face's paint as a material.
+* **Quarter turns.** The whole ship, or one deck, can be turned 90°
+  clockwise or anticlockwise (seen from above): Ship page buttons, the Edit
+  menu, `shipgen plan-flip --clockwise | --anticlockwise [--deck n]`.
+  Everything drawn goes with it (rooms, doors and their buttons, windows,
+  skylights, ladders, stairs, parking, emitters, paint) and the 3D model
+  when it is the hull (`model.quarterTurns`). One deck turns about the grid's
+  middle; the grid is made bigger when the turned deck would not fit.
+
+* **Ceiling windows follow the brush** (the user, 8 November): the triangle
+  brush puts in one triangle, the cell brush a whole cell, the 3x3 brush the
+  cell and the eight round it (with the mirror, the other side too). A click
+  on a ceiling window takes out as much as the brush covers.
+* **A door could not be taken away right after its first button.** After the
+  first button the designer waits for a second, and a click on the door
+  counted as a spot on the wall beside it, so it put a second button in the
+  doorway instead. A click on a door now always works on the door, and a
+  button never goes in a doorway (reproduced with a probe, then fixed).
+* **Windows between rooms and balconies are their own tools** (*Place windows
+  between rooms*, *Place balconies*) instead of a choice under the door tool.
+  A click with one of the three on an opening of another kind changes it to
+  that kind. The tool list now goes by keys, not positions.
+* **Swivel chairs never leave their room.** A chair that found no free spot
+  was put at its row spot unchecked, which could reach out of the room's box
+  (a small room, or the half-chair offset after the last row). It now looks
+  over the whole room, any way round, then overlaps another chair rather than
+  leave the room; a room smaller than one chair gets a warning. Checked with
+  a probe over the test blueprints and the game-test ships: no chair reaches
+  out of its room.
+* **A Crew step for placing stations, berths, transporter pads and walk paths
+  by hand** (the user, 8 November; new tab 4, Paint and Build are now 5 and
+  6, and `--step` counts that way). It says plainly that all of it is
+  optional. A station (with its seat: the bridge style's, a swivel chair or
+  an integrated desk, and the weapon bay for fire control), a berth (crew,
+  officer, captain, passenger, troops) or a pad goes where it is clicked, its
+  outline green when it lies on one room's floor; R turns it 45°. Walk paths
+  are dragged between two triangles of one room. What is placed by hand
+  counts towards what the ship needs and the build adds only the rest
+  (fixed stations are placed before the automatic ones, automatic berths keep
+  clear of hand ones, a room with hand pads gets no others), unless the
+  automatic ones are switched off for that kind. The build report counts
+  those placed by hand.
+* **The Build step says what gets built, kind by kind and item by item.**
+  The two check boxes (stations, berths and systems; walk paths) became a
+  list of every kind in the plan; untick a kind, or single items inside it,
+  to leave them out of the blueprint without deleting them. Saved with the
+  plan (`buildLeaveOut`, `"skip"`); `shipgen build-plan` honours them too.
+* **Each window can follow the hull or have a frame** (the user, 8
+  November). The window tool has *Glass*: *Window frame* (cut as a box with a
+  frame), *Follow the hull* (the hull's own triangles become the glass) or as
+  the Hull page's setting, for the windows put in from now on; a row only
+  joins windows made the same way. In the plan `"style"` on the window.
+
+## 7 November 2026: after the features test in the game
+
+* **Windows on a stepped wall under a slanting hull no longer block each
+  other.** A bridge drawn in whole cells has a wall that steps (5 ft facing the
+  side, 5 ft facing fore), while the hull in front of it is smoothed into a
+  slant. Each window's tunnel ran straight out of its own step, so neighbouring
+  tunnels crossed and their linings stood in front of the next window (seen in
+  the game on `features_test2`). A window that follows the hull now looks out
+  square to the hull when the hull runs at an angle to its wall (up to 60
+  degrees off), measured from the hull in front of it, so the tunnels lie side
+  by side. The tunnels are also shorter (2 ft against up to 4.6 ft there), and
+  every window of that bridge now takes the hull as its glass.
+* **The shaft of a ceiling window that follows the hull had no walls.** Its
+  lining was made by extruding an upright outline sideways, which leaves the
+  two big faces of each wall out, so you looked through the shaft and out of
+  the hull. It is now built face by face. `test.sh` looks up the shaft at a
+  slant and expects its wall.
+* **Door buttons no longer show through the wall.** The back of the plate lay
+  in the wall's own plane and showed in the room on the other side; it now
+  stands 0.04 ft off the wall.
+* **Who may enter a room** (*Who may enter* on the Rooms page; `"access"` on a
+  room in the plan): officers, crew, passengers and troops, any mix; all four
+  is everyone, as before. The game keeps it on the room's void and shows it in
+  its own designer. **Known**: the game client does not hold anyone to it yet:
+  `AuScRoomVoid::IsAccessGranted` grants access when `personnelAccess |
+  access` is non-zero, which it always is (it should be `&`).
+* **Every ship has a cargo hold** of at least 2% of its hull, whatever its
+  template, and when no room is a Hold or Store, the rooms that give nothing
+  else (halls, corridors, the bridge) get the hold access, so the cargo can be
+  loaded somewhere; the build notes which.
+* **Up to 12 transporter pads** in a transporter room (was 4).
+* **Pixel art on a model hull came out in blotches** (the MCRN logo on deck 8
+  of the arness): a colour that is not a livery takes whole hull triangles,
+  which on a thinned model hull are much bigger than a cell. Marked as
+  liveries, the hull is cut along what was drawn and the logo keeps its shape.
+  The build now says which painted colours are not liveries on a hull shaped
+  from a model or angular.
+* **Binary STL files that keep a colour in each triangle** (Materialise or
+  VisCAM, `COLOR=` in the header, such as the JAS-39 Gripen model) read as a
+  few nonsense triangles: the engine's ASCII reader took the binary file, and
+  its binary reader skips as many bytes as each triangle's attribute says. A
+  binary STL is now known by its size and read with every triangle 50 bytes
+  (`IsBinaryStl`, `ReadBinaryStl` in `mesh.cpp`); `test.sh` checks one.
+* **Hull doors above the ground could not be reached from outside** (the
+  arness: people stepping out were stopped 1 to 2 m past the door, and could
+  not come in). The game keeps everyone out of a zone round the hull, the
+  hull's outlines seen from above, the side and the front, each 2 ft bigger
+  (`AuScSilhouette3d`), and beside a hull that is wider below the door that
+  zone reached past the cleared space outside it. That space now reaches out
+  until the hull parts themselves no longer block (asked of the game's own
+  test across the door's width and height, at most 80 ft). `shipgen
+  door-check` walks in to each open hull door from 15 ft out, and `shipgen walk`
+  says where any straight walk is stopped and by which part.
+* **About** in the Help menu of the designer (and in the graphical tool):
+  version, author and when that copy was built.
+* `shipgen door-check` also climbs each ladder at a hull door, from the foot to
+  the top and on into the doorway, with the door closed and open, and says
+  where something stops the climber.
+
+## 6 November 2026: after the door test in the game
+
+* **"Only while the door is open" is retired.** In the game a ramp tied to its
+  door stayed walkable with the door closed, and a ladder tied to its door could
+  not be taken hold of. The checkbox is gone; `exitOpenOnly` in an older plan is
+  ignored. Every ramp and ladder is always there.
+* **The ledge at the foot of ramps is gone.** The ramp you see was 1 ft thick at
+  its foot, and the game sets a landed ship down on its lowest hull part, so the
+  ground ended up 1 ft below the end of the slope. People and vehicles were
+  stopped by it. The ramp now comes to an edge at the foot, and the invisible
+  slope walked on goes on into the ground.
+* **The ladders at hull doors can be taken hold of from the ground, and can be
+  seen.** The game keeps everyone 2 ft away from a hull, and the ladder stood
+  0.75 ft out. There is now an opening round the ladder from the ground up to the
+  doorway, and rails and rungs just off the hull. `shipgen door-check` also tries
+  to take hold of each one from the ground, as a player does.
+* **Inside ladders no longer throw you off at the top.** The ladder went on level
+  over the floor at the top, and the game turns a climber's "up" along the
+  ladder, so the player ended up on their side. Ladders are now vertical only,
+  at the edge of the hole, facing the floor you step onto, as the game's own
+  ships have them.
+* **An invisible strip just past the foot of every ramp** (found 7 November,
+  after vehicles could not drive up the ramps in the game). The game keeps
+  everyone out of a zone round the hull that is coarser and bigger than the hull
+  itself (made from three flat outlines, each 2 ft bigger), and it reached out
+  over the ground past the end of the ramp's opening: a strip up to 2.5 ft high
+  that nothing could be seen of. The opening over a ramp now reaches 2.5 ft past
+  its foot and its sides. `shipgen door-check` walks up each ramp from the ground
+  and reports the biggest step; `test.sh` checks it.
+* **Room types now do something in the game.** The game only reads a room's
+  hold access, and every room was a cargo hold. Each room now gets the one its
+  type stands for (galley food, sick bay medicine, engine room refuelling,
+  cabins clothes, and so on; the rest are corridors). See *What a room type does
+  in the game* in `DESIGNER.md`. (A ship without a Hold or Store room loads its
+  cargo in its halls and corridors; 7 November.)
+* **Sick bays get the medic station, transporter rooms their transporter and
+  pads** (up to 12 since 7 November, at least 0.5 m apart), whatever the template says.
+* The designer's room type list is grouped by what each type does, with a tip
+  on each.
+* **Several weapon bays, each of its own type.** Pick the bay type (*Weapon
+  bay*) before placing a weapon emitter; each emitter is a bay with a fire
+  control station of its own running that type (a right click changes an
+  emitter's type). The bays share the weapons volume. Old plans keep the ship's
+  *Fire control* for every emitter.
+* **Ship-wide textures** for walls, floors, ceilings and doors (*Textures (whole
+  ship)* on the Rooms page), for every room and door without one of its own.
+* **Windows and balconies between rooms** (tracks 8 and 9): the door tool can
+  put in a window between two rooms, or a balcony (open above a parapet a third
+  of the room's height). Nobody walks through either. **Known**: not yet tried
+  in the game.
+* **Windows that follow the hull** (track 4): with *Windows follow the hull's
+  own triangles* (Rooms page; `"windowStyle": "hull"` in the plan), a window
+  takes the hull's own surface in front of it as its glass, so on a model hull
+  the glass has the model's shape and no frame shows on the outside. The hull's
+  triangles are cut along the window's outline when they are bigger than it;
+  a lining runs from the room's wall to the glass. Where the hull in front is
+  not found (less than half the window covered), the window is cut the old
+  way. The hull ends up with more triangles than with the old windows (the
+  arness: 16,900 against 10,700) because its triangles are cut at every
+  window. `audit` now counts window glass as part of the hull it closes.
+  **Known**: not yet tried in the game; ceiling windows are still cut flat.
+* **Pads for buildings' transporters**: a generated building with a
+  transporter puts it in its transporter or teleporter room, when it has one,
+  and gives it up to 12 pads there, as ships have. **Known**: not yet tried
+  in the game.
+* **Liveries** (track 7): a colour of the palette can be marked as a livery
+  (*Livery* on the Paint page; `"livery": true`). On a hull shaped from a
+  model, or an angular hull, the paint used to step along the hull's own
+  triangles (a band on the test ellipsoid came out up to 0.6 ft wider than
+  drawn, with faces of the wrong colour along its edges). A livery colour's
+  outline is now cut into the hull and its edge held still while the hull is
+  merged and thinned, so it is exactly as drawn, even under a tight face
+  budget. It can even save faces (the ellipsoid: 3,932 against 4,614, as the
+  clean edges merge better). `shipgen faces --where` shows the box each look's
+  faces take up. **Known**: which painted design looked wrong in the game is
+  still to be asked; a model's own detail round windows is not kept yet.
+* **Dragged window runs** (track 4): drag the window tool along the walls for
+  a row of windows (from a window, the drag takes them out). A row builds as
+  one window, as *Join windows side by side* joins all windows: straight
+  stretches one pane each, and round corners one flat pane with *One flat pane
+  across a zigzag wall*. In the plan the windows share a `"row"`.
+* **Ceiling windows by the triangle, following the hull or flat** (track 4):
+  the ceiling window tool puts one in the triangle clicked (Shift+click: the
+  whole cell). *Glass* below the tool picks its shape: following the hull,
+  neighbouring triangles of a room make one window of any outline, its glass
+  the hull's own surface over it, lined up to the hull; flat, a level pane as
+  before, with two triangles side by side joined into a half cell. Plans
+  without `k` or `shape` build as before. **Known**: not yet tried in the game;
+  the space between the ceiling and the glass has no void of its own.
+* **Window frames no longer run through doorways** (track 5). In the arness a
+  window on a diagonal wall beside a door had a frame lining its 44 ft tunnel to
+  the hull surface, and the lining crossed the doorway of two interior doors.
+  Frames are now cut away inside every interior doorway (a note in the build
+  report says where). The main hull is not touched: no design was found with
+  the hull itself in a doorway (`soh-probes/doorhull` over the user's ships).
+* **Door buttons.** After placing a door, click a wall near it for a button that
+  opens and closes it (and one on the other side if wanted); Esc for none.
+  The button is a raised, lit green panel; the door's switch is on it, and the
+  door becomes a manual one. **Known**: not yet tried in the game.
+* **Turbolifts, for people and vehicles.** Draw a room of type *Turbo Lift* on
+  the same cells of each deck and give it a door on each deck it should stop
+  at: the build makes one lift car with a stop and a lift door per deck, the
+  way the game's own designer does (checked against the Atlantis, whose one
+  car has eleven stops). Wide doors and a taller car (*Car height*) are for
+  vehicles. `crew-check` passes; the game links the stops for the crew when the
+  blueprint is finalized. **Known**: not yet tried in the game; no stop at
+  ground level below the hull yet.
+* **Landing spots for spacecraft** (*Place spacecraft landing spots* on the
+  Rooms page; `"kind": "spacecraft"` in a plan's parking): the game's 238 ft
+  square where a whole ship can land. It need not lie in a room; two on one deck
+  may not overlap, and the build warns when one reaches past the hull.
+* **The empire flag and name on the hull** (*Place empire flags and names* on
+  the Rooms page; `"kind": "flag"` or `"name"` among a plan's emitters): click a
+  hull triangle and the owner's flag (2/3 as high as wide) or the empire's name
+  (1/4 as high) goes upright on the hull's side straight out from it, at
+  mid-deck height, just outside the hull. The game paints the owner's own flag
+  or name on it. **Known**: flat, so on a strongly curved hull its edges stand
+  off or dip in; not yet tried in the game.
+* `test.sh` no longer fails at random: `command | grep -q` under `pipefail`
+  failed whenever grep stopped reading early.
+* **Known**: not yet tried in the game.
+
 ## 2 November 2026: a way down for each hull door
 
 * **Each hull door or row can have its own way down** (*Door's way down* on the

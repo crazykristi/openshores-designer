@@ -5,5 +5,5 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git file ca-certificates desktop-file-utils \
         qtbase5-dev qtbase5-dev-tools libqt5opengl5-dev libqt5sql5-sqlite \
-        qtwayland5 libqt5svg5 libopenal-dev libgl1-mesa-dev \
+        qtwayland5 libqt5svg5 libopenal-dev libgl1-mesa-dev libassimp-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*

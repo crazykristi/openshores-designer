@@ -5,6 +5,7 @@
 #ifndef SHIPGEN_GENERATE_H
 #define SHIPGEN_GENERATE_H
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QStringList>
@@ -44,6 +45,32 @@ struct LayoutOptions
 	double	deskTopFeet = 3.0;			// The top edge of a desk above the floor.
 	// Boxes kept clear of desks: doors, ladders and stairs, in the blueprint's coordinates.
 	QList<QPair<AuPoint, AuPoint> > stationKeepOut;
+
+	// Placed by hand (the designer's Crew page), in the blueprint's
+	// coordinates: put in first, exactly there, and counted against what the
+	// template asks for. 'facing' is in radians about z from the blueprint's
+	// fore (+Y) towards port (-X), as a swivel chair's MakeIcon takes it.
+	struct FixedStation
+	{
+		QString	type;			// As in StationSpec.
+		AuPoint	floor;			// Where the operator stands, on the floor.
+		double	facing = 0;
+		QString	seat;			// "chair", "desk", or "" for bridgeStyle.
+		int		module = 0;		// Fire control: the bay; 0 for fireControlModule.
+		QString	room;			// The room's label.
+	};
+	struct FixedBerth
+	{
+		QString	kind;			// "crew", "officer", "capt", "passenger", "troop".
+		AuPoint	floor;
+		double	facing = 0;
+	};
+	QList<FixedStation>	fixedStations;
+	QList<FixedBerth>	fixedBerths;
+	QHash<QString, QList<AuPoint> >	fixedPads;		// By room label: the pads' middles, on the floor.
+	bool	autoStations = true;		// The template's stations not placed by hand.
+	bool	autoPads = true;			// Pads for a transporter whose room has none placed by hand.
+	bool	placeSystems = true;		// The system volumes.
 };
 
 // What the generator found out about the hull it has to work with.
@@ -92,6 +119,20 @@ struct PlacedRoom
 };
 
 // The outcome of one candidate layout.
+// Transporter pads: their middles at least this far apart (3 ft pads, at least
+// 0.5 m between them, the user, 2026-11-06), and at most this many per station.
+#define SHIPGEN_PAD_SPACING 4.65
+#define SHIPGEN_PADS_MAX 12
+// Every ship's cargo hold is at least 1/this of its hull volume.
+#define SHIPGEN_HOLD_MIN_SHARE 50
+
+// Pads for every transporter station of a design, in the room its operator
+// stands in (generate.cpp). Ships and buildings.
+class AuDesign;
+void AddTransporterPads(AuDesign& design, const QList<PlacedRoom>& rooms, const QList<QPair<AuPoint, AuPoint> >& keepOut,
+		QStringList& warnings, const QHash<QString, QList<AuPoint> >& fixedPads = QHash<QString, QList<AuPoint> >(),
+		bool autoPads = true);
+
 struct LayoutResult
 {
 	QString			strategy;

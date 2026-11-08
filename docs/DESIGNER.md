@@ -74,11 +74,12 @@ The steps are the tabs of the side panel:
 
 | Step | What it does |
 |---|---|
-| 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, adding or removing decks, turning one deck around or mirroring it, and turning the whole ship around (fore and aft), mirroring it (port and starboard) or turning it upside down, for a 3D model that came in the wrong way round (also in the Edit menu; `shipgen plan-flip` on the command line). Everything drawn goes with it, and so does the 3D model when it is the hull; a ladder or stairs that no longer meet after a one-deck flip are taken away, and stairs go when the ship is turned upside down (they would climb down). |
+| 1 Ship | Name, kind of ship (one of the generator's templates: it decides the stations, berths and system volumes), FTL drive (none, warp 1-9, or a P, PN or PNN wormhole drive; default wormhole P), cell size (default 5 ft), deck height (10 ft), floor thickness (1 ft), the grid size, adding or removing decks, turning one deck around, mirroring it or turning it a quarter turn (90°, clockwise or anticlockwise seen from above, about the grid's middle; the grid grows when the turned deck would not fit), and turning the whole ship around (fore and aft), mirroring it (port and starboard), turning it upside down or a quarter turn either way (the grid's width and depth swap), for a 3D model that came in the wrong way round or sideways (also in the Edit menu; `shipgen plan-flip` with `--clockwise` or `--anticlockwise` on the command line). Everything drawn goes with it, and so does the 3D model when it is the hull; a ladder or stairs that no longer meet after a one-deck flip are taken away, and stairs go when the ship is turned upside down (they would climb down). |
 | 2 Hull | Draw the hull. The deck below shows faintly. Hull style (smooth, angular or classic, below), skin (how far the hull surface stands out from the drawn triangles, 2 ft), smoothing (0 to 15, smooth style only) and the face budget (5,000). For a plan from a 3D model: whether the model is the hull, and whether that hull is sharp or smooth. The 3D view follows the drawing after a short pause. |
-| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drawn as a light blue dashed line), vehicle parking spots (ground or space vehicle; an outline of the spot's size follows the mouse, snapped to the nearest grid corner: green fits, red does not, orange means a click takes that spot away; R turns it a quarter turn; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue ball where it ends up on the hull, with an arrow the way the trail goes and a dotted line back to the triangle it was put in from; click the ball or the triangle to take it away; the 3D view shows the same ball and arrow) or weapon emitters (click a hull triangle: the ship's guns fire from the nearest point of the hull; the game keeps one emit location on each fire control station, so the first goes to the first station and any left over are reported; drawn as a red ring with a cross). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
-| 4 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. |
-| 5 Build | Build the blueprint and see the engine's report; save it as `.SoH`. Stations, berths and systems, and walk paths, can be switched off. |
+| 3 Rooms | Add rooms (*Add a room...* asks for the type, one of the engine's own room types, and a name, which has to be unique; the type and name boxes below the list change the room picked in it) and draw them on hull triangles. Switch the tool to doors (click the triangle standing on the cell edge where the door goes; between two rooms it is an interior door, between a room and anything that is not a room it is a hull door; *Hull doors* chooses their way down: a ramp or a ladder, always a ladder, or none for a docking door) ladders (click a cell that is wholly in a room here and in a room on the deck above), windows (click near an edge between a room and the outside: a cell edge, or a diagonal where the room's wall runs across a cell; a click on a room cell that has only one outer wall takes that one; drag along the walls for a row of windows, which build as one window, as *Join windows side by side* joins them, and drag from a window to take a row out; *Glass* below the tool says how the windows put in from now on are made: *Window frame*, a box cut through the hull with a frame round it, *Follow the hull*, the hull's own triangles inside the window become the glass, or as the Hull page's setting; drawn as a light blue line, dashed when framed, dotted when following the hull; in the plan `"style": "frame"` or `"hull"` on the window), vehicle parking spots (ground or space vehicle, or a 238 ft spacecraft landing spot, which need not lie in a room and is taken away by a click anywhere on it; an outline of the spot's size follows the mouse, snapped to the nearest grid corner: green fits, red does not, orange means a click takes that spot away; R turns it a quarter turn; drawn as a yellow dashed box), or stairs (click the triangle of the first cell on the side the stairs climb towards; the run has to be whole cells of one room, and on the deck above the cells over it and the cell after it whole cells of one room; drawn as steps with an arrow, and as a dashed box on the deck above), contrail emitters (click a hull triangle: the emitter goes on the hull's aftmost surface straight aft of it at mid-deck height, facing aft, as wide as *Contrail width*, 2 m by default; drawn as a blue ball where it ends up on the hull, with an arrow the way the trail goes and a dotted line back to the triangle it was put in from; click the ball or the triangle to take it away; the 3D view shows the same ball and arrow) or weapon emitters (click a hull triangle: a weapon bay that fires from the nearest point of the hull, of the type picked in *Weapon bay* below the tool, or the ship's *Fire control* on the Ship page; each emitter gets a fire control station of its own running that bay, and a right click gives an emitter the type picked; drawn as a red ring with a cross, and the bay's first letter when it has its own; in the plan `"module"` on the emitter) or the owner's flag or empire name (*Place empire flags and names*: pick *Flag* or *Name* and a width, then click a hull triangle; it goes upright on the nearest hull wall straight out to the side at mid-deck height, or on the nearest hull surface where there is no wall, 0.1 ft outside it; the game paints the owner's flag or name on it; drawn as a small flag or an "N" plate; in the plan an emitter of kind `flag` or `name`, `size` its width). When a click does nothing, the status bar says why until the mouse leaves that triangle. Triangles outside the shaped hull are hatched red. Fore is to the right; the blueprint is turned so that fore is +Y, the way the game wants it, so the 3D view of the built ship is turned a quarter turn from the plan. |
+| 4 Crew | Optional. Stations, berths, transporter pads and walk paths placed by hand; left alone, the build puts all of them in by itself. Pick *Place stations* (the station, its seat: the bridge style's, a swivel chair or an integrated desk, and for fire control the weapon bay), *Place berths* (crew, officer, captain, passenger or troops), *Place transporter pads* or *Draw walk paths*, then click on a room's floor: an outline of the item follows the mouse, green where all of it is on one room's floor, red where not, orange over one already there (a click takes it away). R turns a station or berth 45° (Shift+R the other way); the mirror puts in the other side's too. A walk path is dragged from one triangle of a room to another of the same room, and runs straight between their middles on the floor, where the automatic paths meet it; a click on one takes it away. Ladders and stairs always get their paths. What is placed by hand counts towards what the ship needs: the build puts in only the rest, unless *Put in the rest automatically* is switched off for that kind (then only those placed by hand). In the plan: `stations`, `berths`, `pads`, `paths`, `autoStations`, `autoBerths`, `autoPads`, `autoPaths`. |
+| 5 Paint | A palette: the base coat, any colours, and the owner's empire colours. Paint the hull triangles; the paint covers the hull over them on that deck, sides included. Double-click a colour to change it. *Livery* marks the colour picked as a pattern to keep sharp (an L in the list): on a hull shaped from a model, or an angular hull, the hull is cut along the outline drawn in it, so the edge is where it was drawn instead of stepping along the hull's own triangles, and thinning the hull to its face budget does not move that edge. A hull made from the drawn triangles keeps every colour edge already. |
+| 6 Build | Build the blueprint and see the engine's report; save it as `.SoH`. *What gets built* lists every kind of thing in the plan (doors, door buttons, windows, ladders, ramps, parking, emitters, stations, berths, pads, system volumes, walk paths, ...): untick a kind to leave all of it out, or open it and untick single items. Nothing is deleted; the plan keeps them (`buildLeaveOut`, and `"skip": true` on an item) and ticking them again builds them. Clicking an item shows its deck. |
 
 Every control has a tooltip saying what it does; the room tools have one
 for each choice in their list.
@@ -91,10 +92,37 @@ the back faces seemed to be the ones shown).
 **File** saves and opens plans (`.json`) and exports the blueprint
 (Ctrl+E).
 
-For scripts and tests the program also takes `--step <1-5>`,
+For scripts and tests the program also takes `--step <1-6>`,
 `--deck <n>`, `--build`, `--export <file.SoH>` (build, save and quit; the exit
 code is 0 when the engine accepts it, 3 when it has errors) and
 `--screenshot <file.png>`.
+
+## Fighter mode (experimental)
+
+For small craft such as fighters (`docs/MICRO_MODE_PLAN.md`). *File > New
+fighter* starts an empty plan of 24 by 12 cells of 2.5 ft and three decks of
+4.5 ft; *File > New fighter from a 3D model* reads a model at its real length
+(an F-35 is 15.7 m) with the model itself as the hull. *Fighter mode* on the
+Ship page turns an existing plan into one (without changing its cell and deck
+sizes). A fighter plan:
+
+* is the *Fighter (experimental)* kind of ship: one pilot at the helm, most
+  of the hull for power plant and maneuver drive;
+* has no FTL drive (the drive's least volume is more than a fighter's hull)
+  and no automatic berths (place one by hand in the Crew step if wanted);
+* makes its windows follow the hull, so a canopy is the hull's own shape;
+* allows decks down to 4 ft (a pilot sits; the 4 ft cockpit worked in the
+  game);
+* shows a yellow *experimental* banner on the Ship page and *fighter mode -
+  experimental* in the window title, and the build notes it.
+
+Draw the cockpit (a Bridge room) where the body is thick enough, a hull door
+on its side (*auto* way down: a ramp when the door is low, else a ladder; the
+game puts a button by the door), a canopy of windows or ceiling windows that
+follow the hull, and place the pilot's seat (and any more seats) in the Crew
+step. The build warns when there is no cockpit or no hull door. Not there
+yet: a hatch in the belly, an opening canopy. In the plan, `"mode":
+"fighter"`.
 
 ## How a plan becomes a blueprint
 
@@ -248,9 +276,16 @@ cell wide less a foot, from the plan's window sill to its window top above
 the floor (3 and 7.5 ft unless changed on the Rooms page; the top stays
 half a foot under the ceiling). With *Join windows side by side*, windows
 next to each other on one straight wall of a room (cell edges or one
-diagonal line) are cut as one long window, as deep as the furthest hull
+diagonal line) are cut as one long window (without it, only windows dragged
+out together, which share a `"row"` in the plan), as deep as the furthest hull
 along it, and gets the
-room's name as its group so that the room's light falls on it. A window on
+room's name as its group so that the room's light falls on it. With
+*Windows follow the hull's own triangles* (`"windowStyle": "hull"`), the
+glass is instead the hull's own surface in front of the window: the hull's
+triangles there (cut along the window's outline when they are bigger than
+it) become the window part, the room's wall gets an opening, and a lining
+runs from the wall out to the glass; a window where less than half of it
+finds hull in front is cut the old way. A window on
 a diagonal is a diagonal's length less 0.7 ft wide; for the cut the hull
 and the room are turned until the wall is square to an axis, so it gets the
 same clean frame, and turned back. Walk paths follow the triangles of a room, by the shortest way, from
@@ -281,12 +316,84 @@ overlap opens. With no room under it at all the floor stays and the build
 warns. The upper part gets no stations or berths, as a zero-G shaft doesn't.
 Each join is counted in the build report (`Open to below` in `build-plan`).
 
-**Ceiling windows** (experimental; `"skylights"` in the plan) go in a whole
-cell of a room with no room on any deck above it, straight up through the
-hull. The room and hull are turned so the ceiling is a wall, cut as a wall
-window is, and turned back. *Join windows side by side* makes neighbouring
-cells of one room one rectangular pane. Deep ones warn that they look down a
-tunnel. A plan turned upside down makes them windows in the floor.
+**Windows and balconies between rooms** (since 7 November 2026; the tools
+*Place windows between rooms* and *Place balconies* on the Rooms page, since
+8 November their own tools rather than a choice under the door tool; `"kind"`
+on a door in the plan). Placed on the edge between two rooms, and dragged
+into rows as doors are. A click with one of the three tools (doors, windows
+between rooms, balconies) on an opening of another kind makes it that kind,
+its whole row; a click on one of its own kind takes it away.
+A *window* cuts both walls from the ship's window sill to its top and fills
+the hole with a pane (a window jig through both room walls, as the game's
+designer does). A *balcony* cuts both walls open above a parapet a third of
+the room's height, up to just under the ceiling; over a room open to the deck
+below it is a gallery. The two rooms' voids stay apart, so nobody walks
+through; they are for looking. Drawn light blue and dashed, and orange and
+dotted. One on an edge with a room on one side only is dropped. **Known**: not
+yet tried in the game: whether the game draws the other room through the pane,
+and whether someone can climb over a parapet.
+
+**Doorways stay clear.** A window's frame, and the lining of its tunnel to
+the hull surface, is cut away where it runs into an interior doorway (a window
+on a wall beside a door, with a long tunnel, did that in the arness).
+
+**Door buttons** (since 7 November 2026). After a door is placed (clicked or
+dragged out), the next click on a wall of one of its rooms, within 12 ft of
+it, puts a button there; a second click can put one on the other side. Esc,
+or a click anywhere else, ends it. Shift and a click on a door places its
+buttons again. The wall that would get the button lights up green under the
+mouse; placed buttons are small green squares. In the build each button is a
+dark plate with a lit green button standing 0.15 ft out of the wall, 4 ft up,
+and the door's switch (the game has two per door, where the player clicks to
+work it, within 3 m) goes on its face. An interior door with a button is no
+longer automatic: the game opens an automatic door for anyone passing near a
+switch, so it would open for people walking past the button. With one button,
+the door's other switch stays on the door itself. A hull door keeps its
+outside switch. In the plan: `"buttons": [[x, y], ...]` on a door, in eighths
+of a cell from grid corner 0,0, an eighth of a cell in from the middle of the
+wall edge, on the button's side.
+
+**Turbolifts** (room type *Turbo Lift* or *Public Lift*, since 7 November
+2026) are drawn as a room on the same cells of every deck they serve. Each deck
+where the lift has a door (placed with the door tool, between the lift and a
+room, or the outside for a hull lift door; doors side by side make one wide
+door for vehicles) is a stop. The build makes one car, the game's `Turbo Lift`
+part (`AuScLift`), on the lowest deck the lift is drawn on: its states are the
+car's mesh and its void, and each stop is the car moved straight up to that
+deck. Each stop's door is cut with the car standing there, as the game's own
+designer does, and is named after its stop, `Deck 2 Bridge 1` (the deck and the
+room it opens into), which makes it a lift door. Through each door a walk path
+runs from inside the car into the room; when the blueprint is finalized the
+game links the stops with these, so the crew use the lift. There is no shaft:
+as in the Atlantis, the car goes from stop to stop. It carries everyone and
+everything standing in it, vehicles too. *Car height* (`"carHeight"` on the
+room, in feet; 0 for the deck's height) makes the car taller, for vehicles;
+the lift's cells must then be drawn on the decks above its highest stop as far
+as the car reaches, or the build warns that the car leaves the hull or runs
+into another room. A lift door is as tall as the deck's room (no taller than
+the car). The lift gets no stations, windows, ladders or parking. `build-plan`
+reports `Lifts: 1 (3 stops)`. **Known**: a stop at ground level below the
+hull, for vehicles to drive straight in, is not made yet.
+
+**Ceiling windows** (experimental; `"skylights"` in the plan) go in a
+triangle of a room (`"k"`, as rooms have; a click with the triangle brush) or
+a whole cell (no `"k"`; the cell brush, or Shift+click), or the cell and the
+eight round it (the 3x3 brush), with no room on any deck above it, straight up
+through the hull. Taking one triangle out of a whole cell leaves the other
+three, and four triangles alike become the whole cell again. Each has a
+glass shape (`"shape"`; *Glass* below the tool): `"hull"` takes the hull's
+own surface over it as the glass, in the hull's shape, where neighbouring
+triangles of one room make one window of whatever outline they draw; the
+hull's and the ceiling's triangles are cut along that outline, and a lining
+stands on its edges up to the hull. `"flat"` is a level pane in a cutout: the
+room and hull are turned so the ceiling is a wall, cut as a wall window is,
+and turned back; *Join windows side by side* makes neighbouring whole cells of
+one room one rectangular pane, and two triangles side by side in a cell one
+half-cell pane. With no shape the plan's *Windows follow the hull's own
+triangles* decides. A hull window that finds hull over less than half of it is
+cut flat. The plan view draws them dotted when they follow the hull and
+dashed when flat. Deep ones warn that they look down a tunnel. A plan turned
+upside down makes them windows in the floor.
 
 **Bridge styles** (`"bridgeStyle"` in the plan, on the Build page) choose how
 stations look. `hazeron`, the default, is the game's swivel chairs, as before.
@@ -366,13 +473,57 @@ Condenser Bay (256), the same list as the game's own station dialog.
 **Vehicle parking spots** are the game's own (`GroundVehicleParkingSpot`,
 6 by 12 m; `SpaceVehicleParkingSpot`, 12 by 17 m), flat on the floor 0.3 ft
 up as in the Atlantis' hold, long side fore and aft unless `across`. A spot
-has to lie on whole cells of one room.
+has to lie on whole cells of one room. A **spacecraft landing spot**
+(`SpacecraftParkingSpot`, kind `spacecraft`) is a square 238 ft each way, the
+largest hull the game lets land (twice `GroundSpawnSizeLimit`). It need not
+lie in a room, only clear of the other landing spots on its deck; the build
+warns when the square reaches past the hull of its deck and the deck below.
 
 **The rest.** `FurnishRooms` in `src/generate.h` puts in the stations,
 berths, service panels, weapons and the hull volume of the systems, exactly
 as the generator does after it has placed its own rooms. It needs a box in
 each room for the stations to stand in, which is the largest rectangle of
 whole cells of that room. A room with no whole cell gets nothing.
+
+**What a room type does in the game.** In a ship, the game reads only a room's
+*hold access* (`DaSc::InsideRoomType`); the name and the type you see are
+labels. The build gives each room the hold access of its type:
+
+| Room type | In the game |
+|---|---|
+| Galley | food (pantry) |
+| Sick Bay | medicine (pharmacy); it also gets the medic (surgery) station |
+| Engine Room, Fuel Cell | refuelling (fuel coupling) |
+| Brig | feeding prisoners |
+| Barracks | the armory; troops' sea chests |
+| Lounge | the bar |
+| Crew Cabin, Officer Cabin, Stateroom, Crew Quarters | clothes (wardrobe) |
+| Vehicle Bay | vehicles park, refuel and rearm |
+| Hold, Store | the cargo hold |
+| everything else | nothing: a corridor |
+
+Bridge, Transporter Room, Sensor, Shield and Weapon rooms get their stations;
+Open to Deck Below and Zero-G Shaft change the room's shape and gravity. A
+**Transporter Room** gets its transporter station even if the template leaves
+it out, and up to 12 **transporter pads** (3 ft square, their middles at
+least 4.65 ft apart, so 0.5 m between pads), grouped near the console and clear
+of its furniture and doors. Before 7 November 2026 every room of every ship
+was a cargo hold in the game. The type list in the designer is grouped by
+this; hover over a type to see what it does.
+
+**Cargo.** Every ship's cargo hold (the hold module) is at least 2% of its
+hull volume, whatever its template. The cargo is loaded and unloaded in the
+rooms with the cargo hold's access; when no room is a Hold or Store, the rooms
+that give nothing else (halls, corridors, the bridge; not lifts or zero-G
+shafts) get it, and the build says so in a note.
+
+**Who may enter a room.** *Who may enter* on the Rooms page (in the plan,
+`"access"` on the room: a list of `"officers"`, `"crew"`, `"passengers"`,
+`"troops"`; left out for everyone) sets the room's personnel access, which the
+game keeps on the room's void and shows in its own designer ("Restricted to
+Officers, Crew"). **Known**: the game client does not hold anyone to it yet
+(`AuScRoomVoid::IsAccessGranted` grants every request); `shipgen parts` shows
+it as `only officers, crew`.
 
 **Room and door textures.** A room can have its own wall, floor and ceiling
 texture from the game's library (*The room picked* on the Rooms page; in the
@@ -382,6 +533,12 @@ palette of 15 textures: one already in it is reused, a new one takes a slot
 nothing uses, and when none is free the build warns and the rest keep their
 usual look. A chosen texture is shown unpainted.
 
+*Textures (whole ship)* on the Rooms page (in the plan, `wallTexture`,
+`floorTexture`, `ceilingTexture` and `doorTexture` at the top level) are for
+every room and door with none of its own, so they need not be picked for each
+new room. A room's or door's own choice comes first; *Same as the ship* in a
+room's lists means it has none.
+
 **Flat windows.** With *Join windows* on, windows that follow a wall zigzagging
 over the triangles are one flat pane on a straight line across the teeth, if
 the teeth stay within one cell of that line. The pane sits at the furthest hull
@@ -390,23 +547,22 @@ hull is cut directly here, because the engine's jig did not finish on an
 opening this wide across a zigzag hull. Turn off *One flat pane across a zigzag
 wall* (`"flatWindows": false`) to cut tooth by tooth.
 
-**A way down for each hull door.** *Door's way down*, *Only while the door is
-open* and *Ramp length per height* on the Rooms page apply to hull doors you
-place from then on; with the door tool, a right click on a door gives it and the
-rest of its row these settings and the door texture. A door with a way of its own
-shows a letter in the plan: L ladder, R ramp, D docking, A ramp or ladder, S same
-as the ship, with a star if it is only there while the door is open.
+**A way down for each hull door.** *Door's way down* and *Ramp length per
+height* on the Rooms page apply to hull doors you place from then on; with the
+door tool, a right click on a door gives it and the rest of its row these
+settings and the door texture. A door with a way of its own shows a letter in the
+plan: L ladder, R ramp, D docking, A ramp or ladder.
 
 * A ramp asked for by name reaches the ground from up to 60 ft (the automatic
   choice stops at 15 ft); higher, the door gets a ladder and the build warns.
 * *Ramp length per height* is feet of ramp for each foot it falls, 1.5 unless you
   change it. At 4, a door 15 ft up has a ramp of about 60 ft.
-* *Only while the door is open* (experimental): a ladder cannot be taken hold of
-  and a ramp cannot be stood on with the door closed, and anyone on one falls when
-  it closes. The ramp stays in sight. The game's own characters do not come aboard
-  by such a ladder, so give a ship that needs them another way in.
+* Ramps and ladders are always there, whether the door is open or closed. (An
+  earlier *Only while the door is open* did not work in the game and is gone;
+  older plans that have it build as if it were off.)
 * Whether ground vehicles can drive up a ramp has not been tried yet.
-  `shipgen door-check` shows what each way down does, closed and open.
+  `shipgen door-check` shows what each way down does, closed and open, and
+  whether each ladder can be taken hold of from the ground.
 
 **Crew routes.** The build warns when the rooms' walking paths fall into
 separate parts, naming the rooms in each. `shipgen sight` shows what is seen
@@ -422,20 +578,26 @@ JSON, written by `TriPlan::Save` (`src/triplan.cpp`):
   "name": "Wedge", "template": "military_frigate",
   "cellFeet": 5, "deckFeet": 10, "floorFeet": 1, "skinFeet": 2,
   "smoothing": 6, "maxFaces": 5000,
-  "windowSill": 3, "windowTop": 7.5, "joinWindows": false, "slopedDecks": false,
+  "windowSill": 3, "windowTop": 7.5, "joinWindows": false, "windowStyle": "", "slopedDecks": false,
   "hullStyle": "angular", "hullDoorExit": "ladder",
   "width": 36, "depth": 16, "decks": 2,
   "rooms":   [ { "type": "Bridge", "label": "Bridge 1", "colour": "#5a8cdc" } ],
   "ftl": "wormhole-p",
   "doors":   [ { "deck": 0, "x": 7, "y": 7, "side": 1, "row": 1, "texture": 111,
-                 "exit": "ramp", "exitOpenOnly": true, "rampRun": 4 } ],
-  "windows": [ { "deck": 1, "x": 12, "y": 13, "side": 2 } ],
+                 "exit": "ramp", "rampRun": 4 } ],
+  "windows": [ { "deck": 1, "x": 12, "y": 13, "side": 2, "style": "hull" } ],
   "ladders": [ { "deck": 0, "x": 13, "y": 7 } ],
   "parking": [ { "deck": 0, "x": 4, "y": 8, "kind": "ground", "across": true } ],
-  "skylights": [ { "deck": 1, "x": 12, "y": 8 } ],
+  "skylights": [ { "deck": 1, "x": 12, "y": 8 }, { "deck": 1, "x": 13, "y": 8, "k": 3, "shape": "hull" } ],
   "stairs":  [ { "deck": 0, "x": 14, "y": 8, "side": 1 } ],
-  "emitters": [ { "deck": 0, "x": 2, "y": 8, "side": 3, "kind": "contrail", "size": 6.56 } ],
-  "palette": [ { "colour": "#969ba5", "theme": -1, "name": "Hull" } ],
+  "emitters": [ { "deck": 0, "x": 2, "y": 8, "side": 3, "kind": "contrail", "size": 6.56 },
+                { "deck": 0, "x": 30, "y": 8, "side": 1, "kind": "weapon", "module": 261 } ],
+  "stations": [ { "deck": 1, "x": 18.5, "y": 8.5, "yaw": 90, "type": "helm", "seat": "chair" } ],
+  "berths":  [ { "deck": 0, "x": 14.5, "y": 3.5, "yaw": 0, "kind": "crew" } ],
+  "pads":    [ { "deck": 0, "x": 20, "y": 6 } ],
+  "paths":   [ { "deck": 1, "from": [19, 4, 0], "to": [25, 8, 1] } ],
+  "autoBerths": false, "buildLeaveOut": [ "windows" ],
+  "palette": [ { "colour": "#969ba5", "theme": -1, "name": "Hull" }, { "colour": "#c02020", "theme": -1, "name": "Stripe", "livery": true } ],
   "layers":  [ { "hull": "1234*0,8*1,...", "room": "...", "paint": "..." } ]
 }
 ```
@@ -447,15 +609,21 @@ room, `paint` an index into the palette. A door's `side` is the cell edge
 0 S, 1 E, 2 N, 3 W. A ladder goes up from its deck. Stairs start at cell
 (`x`, `y`) of their deck and climb towards `side`, onto the cell after the
 run on the deck above. A parking spot is
-centred on the grid corner (`x`, `y`); `kind` is `ground` or `space`. An
-emitter stands on triangle `side` of cell (`x`, `y`); `kind` is `contrail`
-or `weapon`, `size` a contrail's width in feet. A plan made from a 3D model
+centred on the grid corner (`x`, `y`); `kind` is `ground`, `space` or `spacecraft`. An
+emitter stands on triangle `side` of cell (`x`, `y`); `kind` is `contrail`,
+`weapon`, `flag` or `name`, `size` a contrail's or a flag's width in feet. A plan made from a 3D model
 has a `"model"` object (the file, how it was placed, `"asHull"`,
 `"sharp"` when the model hull is sharp, and `"mirror"`, three booleans,
 when it was flipped). `hullStyle` is `smooth` (the default, then left out),
 `angular` or `classic`; `hullDoorExit` is `auto` (the default, left out),
 `ladder` or `none`. `theme` is 0, 1 or 2 for
-the owner's three exterior colours, -1 for the plain colour.
+the owner's three exterior colours, -1 for the plain colour. Stations,
+berths and pads placed by hand (Crew step) stand at (`x`, `y`) in cells from
+the grid's corner 0,0 (fractions allowed), `yaw` in degrees from fore towards
+port; a path runs from triangle `from` to triangle `to` (`[x, y, side]`).
+`autoStations`, `autoBerths`, `autoPads` and `autoPaths` are written only
+when false. `buildLeaveOut` lists the kinds the Build step leaves out
+(`TriPlan::BuildKinds`), and any item can have `"skip": true`.
 
 ## Units
 
@@ -542,7 +710,8 @@ came through) says so too. Below half it also suggests a lower
 *Inside at least*.
 
 *File > New plan from a 3D model* (or `shipgen plan-from-model`) fills in
-the hull triangles from an stl, 3ds or obj model (`PlanFromModel`,
+the hull triangles from an stl, 3ds or obj model, or FBX, glTF and the other
+formats Assimp reads when the program was built with it (`PlanFromModel`,
 `src/planbuild.h`). A model of more than 20,000 faces is first thinned to
 that, the way `shipgen reduce` does it (`--faces` to change it). The model is
 repaired when it needs it (and only kept repaired when that helps), split

@@ -42,8 +42,11 @@ for program in shipgen-gui shipgen-designer shipgen; do
 done
 
 # The libraries never bundled (from the AppImage project's excludelist:
-# they must match the system's kernel, drivers or C library).
-EXCLUDE='^(ld-linux.*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec|libthread_db|libBrokenLocale|libnss_.*|libstdc\+\+|libgcc_s|libGL|libEGL|libGLX|libGLdispatch|libOpenGL|libGLESv2|libdrm|libgbm|libglapi|libxcb|libX11|libX11-xcb|libxshmfence|libfontconfig|libfreetype|libharfbuzz|libexpat|libz|libasound|libjack|libpipewire-.*|libpulse.*|libsystemd|libudev|libdbus-1|libgpg-error|libcom_err|libuuid|libICE|libSM|libusb-1\.0)\.so'
+# they must match the system's kernel, drivers or C library). The Wayland
+# libraries are among them: the system's OpenGL driver (Mesa's libEGL) needs
+# one as new as itself, and with Ubuntu 22.04's bundled the 3D view stayed
+# empty on a Wayland desktop ("EGL not available").
+EXCLUDE='^(ld-linux.*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libanl|libnsl|libmvec|libthread_db|libBrokenLocale|libnss_.*|libstdc\+\+|libgcc_s|libGL|libEGL|libGLX|libGLdispatch|libOpenGL|libGLESv2|libdrm|libgbm|libglapi|libxcb|libX11|libX11-xcb|libxshmfence|libfontconfig|libfreetype|libharfbuzz|libexpat|libz|libasound|libjack|libpipewire-.*|libpulse.*|libsystemd|libudev|libdbus-1|libgpg-error|libcom_err|libuuid|libICE|libSM|libusb-1\.0|libwayland-[a-z]+)\.so'
 
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/plugins" "$APPDIR/usr/share/applications" \
@@ -102,6 +105,54 @@ cat > "$APPDIR/AppRun" <<'EOF'
 HERE="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins"
+
+# The libraries that have to come from this system (the graphics driver,
+# X11, fonts, the C library) are not in the AppImage. When one is missing,
+# say which, with where to report it, and let the user go on at their own
+# risk. SHIPGEN_SKIP_CHECK=1 skips this; the answer "go on" is remembered
+# until the list of missing libraries changes.
+check_libraries() {
+	command -v ldd >/dev/null 2>&1 || return 0
+	files="$HERE/usr/bin/$1"
+	[ "$1" = shipgen ] || files="$files $HERE/usr/plugins/platforms/libqxcb.so $HERE/usr/plugins/xcbglintegrations/libqxcb-glx-integration.so"
+	missing="$(for f in $files; do [ -e "$f" ] && ldd "$f" 2>/dev/null; done | awk '/not found/ { print $1 }' | sort -u | tr '\n' ' ')"
+	[ -n "$missing" ] || return 0
+	remembered="${XDG_CONFIG_HOME:-$HOME/.config}/shipgen-missing-libraries-accepted"
+	[ "$(cat "$remembered" 2>/dev/null)" = "$missing" ] && return 0
+	text="This system lacks libraries that Shipgen expects it to have:
+
+$missing
+
+The program may not start, or parts of it (the 3D view) may not work. Installing them with the system's package manager usually helps (the graphics driver for libGL/libEGL, the X11 libraries for libxcb/libX11, fontconfig and freetype for the fonts).
+
+If it does not work, please report it, with your distribution and this list, at
+https://github.com/crazykristi/openshores-designer/issues
+
+Go on anyway, at your own risk?"
+	echo "$text" >&2
+	if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null 2>&1; then
+		kdialog --title "Shipgen: missing libraries" --warningcontinuecancel "$text" || exit 1
+	elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null 2>&1; then
+		zenity --question --title "Shipgen: missing libraries" --ok-label "Go on at my own risk" --cancel-label "Quit" --no-wrap --text "$text" || exit 1
+	elif [ -t 0 ]; then
+		printf "Go on? [y/N] " >&2
+		read -r answer
+		case "$answer" in y|Y|yes) ;; *) exit 1 ;; esac
+	elif [ -n "${DISPLAY:-}" ] && command -v xmessage >/dev/null 2>&1; then
+		xmessage -buttons "Go on at my own risk:0,Quit:1" -default "Quit" "$text" || exit 1
+	else
+		return 0	# Nobody to ask: the warning above is all.
+	fi
+	mkdir -p "$(dirname "$remembered")" && printf "%s" "$missing" > "$remembered"
+}
+
+case "$1" in
+	gui)      program=shipgen-gui ;;
+	shipgen)  program=shipgen ;;
+	*)        program=shipgen-designer ;;
+esac
+[ "${SHIPGEN_SKIP_CHECK:-0}" = "1" ] || check_libraries "$program"
+
 case "$1" in
 	gui)      shift; exec "$HERE/usr/bin/shipgen-gui" "$@" ;;
 	shipgen)  shift; exec "$HERE/usr/bin/shipgen" "$@" ;;

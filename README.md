@@ -18,9 +18,12 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.6-alpha](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.6-alpha),
-a pre-release: crew can get around big ships, integrated desks, fixes from trying
-a battleship in the game, a Mac download) are an AppImage holding the designer, `shipgen-gui` and the
+is [0.3.7-beta-rc1](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7-beta-rc1),
+the first beta, a release candidate: stations, berths and paths placed by hand,
+choosing what gets built, turbolifts, landing spots, door buttons, liveries,
+quarter turns, FBX and glTF models, and fighter mode (experimental). Problems:
+contact the author or open an issue at
+<https://github.com/crazykristi/openshores-designer/issues>) are an AppImage holding the designer, `shipgen-gui` and the
 command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below. **Code, git and making a release:**
 `docs/GIT_AND_RELEASES.md`.
 
@@ -511,16 +514,21 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in
 `docs/GIT_AND_RELEASES.md`.
-It bundles Qt 5 with its X11 and Wayland plugins, OpenAL and the other
-libraries, but not the C library, the OpenGL drivers, X11/xcb or the font
-libraries, which come from the system (the AppImage project's rules). It
+It bundles Qt 5 with its X11 and Wayland plugins, OpenAL, Assimp and the
+other libraries, but not the C library, the OpenGL drivers, X11/xcb, the
+Wayland libraries or the font libraries, which come from the system (the
+AppImage project's rules; Mesa's OpenGL driver needs a Wayland library as new
+as itself). When one of those is missing, the AppImage says which before it
+starts, with where to report it, and lets the user go on at their own risk
+(`SHIPGEN_SKIP_CHECK=1` skips the check). The programs themselves warn on
+start when the 3D view will not work (no OpenGL 3.3). It
 runs on systems with a glibc at least as new as the one it was built on,
 so the release is built on Ubuntu 22.04 in a container:
 `packaging/build-appimage-portable.sh` (glibc 2.35 and newer). For
@@ -567,7 +575,13 @@ the Project panel on the left, one row for each file.
   palette has **14 user slots** (the material slot in the middle belongs to the
   engine). The tool puts images in the user slots and gives the hull faces the
   matching slot and coordinates. See **Painting a model** above.
-* **3ds**, **stl** and **obj** models can be imported. The mesh tool reads the
+* **3ds**, **stl** and **obj** models can be imported, and, when the program
+  was built with the Assimp library (build.sh finds it with pkg-config and
+  says so; `dnf install assimp-devel`, `apt install libassimp-dev`,
+  `brew install assimp`, MSYS2 `mingw-w64-x86_64-assimp`), **FBX**, **glTF**
+  (gltf, glb), **Collada** (dae), **PLY**, blend, lwo, x3d, off and ac too.
+  A model in parts is put together the way its file places them. FBX and
+  glTF models usually have y up: tick *y is up* (`--y-up`). The mesh tool reads the
   texture coordinates of an obj file and writes them back out; the blueprint
   importer keeps its own coordinates until the painter replaces them.
 * Room sizes are scaled down automatically when the hull is too small, and

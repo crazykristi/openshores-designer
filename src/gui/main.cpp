@@ -13,6 +13,7 @@
 #include "dgdata.h"
 #include "logging.h"
 #include "mainwindow.h"
+#include "preview.h"
 #include "version.h"
 
 int main(int argc, char* argv[])
@@ -39,6 +40,8 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 	QApplication::setApplicationName("Shipgen");
+	// What the 3D view needs, checked before any window opens.
+	const QString glProblem = ChooseOpenGLFormat();
 	QApplication::setApplicationVersion(SHIPGEN_VERSION);
 	QApplication::setApplicationDisplayName("Shipgen - Shores of Hazeron blueprint generator");
 
@@ -95,6 +98,13 @@ int main(int argc, char* argv[])
 			modelFiles << args.at(++i);
 		else if(args.at(i) == "--fit" && i + 1 < args.size())
 			modelFit = args.at(++i).toDouble();
+	}
+
+	if(!glProblem.isEmpty() && screenShot.isEmpty() && previewShot.isEmpty() && generateFile.isEmpty() && generateBuildingFile.isEmpty())
+	{
+		std::fprintf(stderr, "warning: %s\n", qPrintable(glProblem));
+		if(!WarnAboutPrerequisites(glProblem))
+			return 1;
 	}
 
 	MainWindow window;

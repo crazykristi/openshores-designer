@@ -136,7 +136,7 @@ MeshWindow::MeshWindow(QWidget* parent) :
 	QGroupBox* fileBox = new QGroupBox(tr("Models"), panel);
 	QVBoxLayout* fileLayout = new QVBoxLayout(fileBox);
 	QPushButton* addButton = MakeButton(tr("Add..."),
-			tr("Choose one or more model files to add to the list. 3ds, stl and obj are all read."),
+			tr("Choose one or more model files to add to the list. 3ds, stl and obj are all read, and FBX, glTF and more when built with Assimp."),
 			fileBox);
 	connect(addButton, &QPushButton::clicked, this, &MeshWindow::OnOpen);
 	QPushButton* removeButton = MakeButton(tr("Remove"),
@@ -459,7 +459,7 @@ void MeshWindow::RebuildOriginal()
 void MeshWindow::OnOpen()
 {
 	const QStringList files = QFileDialog::getOpenFileNames(this, tr("Choose a model"), QString(),
-			tr("Models (*.stl *.3ds *.obj);;All files (*)"));
+			ModelFileFilter() + ";;" + tr("All files (*)"));
 	if(files.isEmpty())
 		return;
 	AddFiles(files);

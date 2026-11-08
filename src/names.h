@@ -31,6 +31,15 @@ inline bool IsOpenToDeckBelowType(const QString& type)
 	return type.compare(QStringLiteral("Open to Deck Below"), Qt::CaseInsensitive) == 0;
 }
 
+// A turbolift (the user, 2026-11-06): drawn as a room on the same cells of
+// every deck it serves; it is built as one car (AuScLift) that stops at each
+// deck where it has a door.
+inline bool IsLiftRoomType(const QString& type)
+{
+	return type.compare(QStringLiteral("Turbo Lift"), Qt::CaseInsensitive) == 0 ||
+		type.compare(QStringLiteral("Public Lift"), Qt::CaseInsensitive) == 0;
+}
+
 // How a plan's stations look: its key in the plan, and its name. More to come.
 inline QList<QPair<QString, QString> > BridgeStyles()
 {

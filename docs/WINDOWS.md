@@ -51,6 +51,7 @@ pacman -S --needed \
     mingw-w64-x86_64-qt5-base \
     mingw-w64-x86_64-qt5-tools \
     mingw-w64-x86_64-openal \
+    mingw-w64-x86_64-assimp \
     mingw-w64-x86_64-pkgconf
 ```
 
@@ -62,7 +63,8 @@ The important pieces are:
 | `mingw-w64-x86_64-qt5-base` | Qt Core, Gui, Widgets, Network, Sql and OpenGL; also `moc` and `rcc` |
 | `mingw-w64-x86_64-qt5-tools` | `windeployqt` for the deployment step |
 | `mingw-w64-x86_64-openal` | OpenAL Soft headers and `libopenal-1.dll` |
-| `mingw-w64-x86_64-pkgconf` | optional; finds the OpenAL include directory |
+| `mingw-w64-x86_64-assimp` | optional; reads FBX, glTF, Collada and other models (without it, only stl, obj and 3ds) |
+| `mingw-w64-x86_64-pkgconf` | optional; finds the OpenAL include directory, and Assimp |
 
 Check that the shell is the right one:
 

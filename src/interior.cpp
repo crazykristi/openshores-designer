@@ -4,6 +4,7 @@
 
 #include "interior.h"
 #include "austation.h"
+#include "names.h"
 
 #include <QMap>
 #include <QSet>
@@ -602,6 +603,99 @@ static void SetUpRoomVoid(AuScRoomVoid& roomVoid, const QString& groupName, bool
 	roomVoid.SetPersonnelAccess(PERSONNEL_Everyone);
 }
 
+HOLD_ACCESS ShipRoomHoldAccess(const QString& roomType)
+{
+	const QString t = roomType.toLower();
+	if(t == "galley")
+		return HOLD_Pantry;
+	if(t == "sick bay")
+		return HOLD_Pharmacy;
+	if(t == "engine room" || t == "fuel cell")
+		return HOLD_FuelCoupling;
+	if(t == "brig")
+		return HOLD_Feeder;
+	if(t == "barracks")
+		return HOLD_Armory;
+	if(t == "lounge")
+		return HOLD_Bar;
+	if(t == "crew cabin" || t == "officer cabin" || t == "stateroom" || t == "crew quarters")
+		return HOLD_Wardrobe;
+	if(t == "vehicle bay")
+		return HOLD_VehicleBay;
+	if(t == "hold" || t == "cargo hold" || t == "store")
+		return HOLD_Hold;
+	return HOLD_Inaccessible;
+}
+
+QString ShipRoomUse(const QString& roomType)
+{
+	switch(ShipRoomHoldAccess(roomType))
+	{
+	case HOLD_Pantry:		return "food (a galley)";
+	case HOLD_Pharmacy:		return "medicine (a sick bay); the medic station goes here";
+	case HOLD_FuelCoupling:	return "refuelling (an engine room)";
+	case HOLD_Feeder:		return "feeding prisoners (a brig)";
+	case HOLD_Armory:		return "the armory; troops' sea chests (barracks)";
+	case HOLD_Bar:			return "the bar (a lounge)";
+	case HOLD_Wardrobe:		return "clothes (a stateroom)";
+	case HOLD_VehicleBay:	return "vehicles park, refuel and rearm here (a vehicle bay)";
+	case HOLD_Hold:			return "the cargo hold";
+	default:				break;
+	}
+	const QString t = roomType.toLower();
+	if(t == "bridge")
+		return "the bridge stations go here; no hold";
+	if(t == "transporter room")
+		return "the transporter station and its pads go here; no hold";
+	if(t == "open to deck below")
+		return "no floor: the room below reaches up through it";
+	if(t == "zero-g shaft" || t == "gravity well")
+		return "no gravity: people float up and down";
+	if(t == "sensor room" || t == "shield room" || t == "weapon bay")
+		return "its station goes here; no hold";
+	if(t == "turbo lift" || t == "public lift")
+		return "a turbolift: draw it on the same cells of each deck; it stops where it has a door, and carries "
+				"people and vehicles";
+	return "nothing in the game (a corridor)";
+}
+
+bool SetRoomUse(AuDesign& design, quint16 voidId, const QString& roomType)
+{
+	AuScPart* part = design.Parts().value(voidId);
+	AuScRoomVoid* roomVoid = dynamic_cast<AuScRoomVoid*>(part);
+	if(!roomVoid)
+		return false;
+	roomVoid->SetHoldAccess(ShipRoomHoldAccess(roomType));
+	return true;
+}
+
+int GiveCargoAccess(AuDesign& design, const QList<QPair<quint16, QString> >& rooms)
+{
+	auto voidOf = [&design](quint16 id) { return dynamic_cast<AuScRoomVoid*>(design.Parts().value(id)); };
+	for(const auto& r : rooms)
+		if(AuScRoomVoid* v = voidOf(r.first))
+			if(v->HoldAccess() == HOLD_Hold)
+				return 0;
+	int given = 0;
+	for(const auto& r : rooms)
+		if(AuScRoomVoid* v = voidOf(r.first))
+			if(v->HoldAccess() == HOLD_Inaccessible && !IsLiftRoomType(r.second) && !IsZeroGRoomType(r.second))
+			{
+				v->SetHoldAccess(HOLD_Hold);
+				++given;
+			}
+	return given;
+}
+
+bool SetRoomAccess(AuDesign& design, quint16 voidId, int access)
+{
+	AuScRoomVoid* roomVoid = dynamic_cast<AuScRoomVoid*>(design.Parts().value(voidId));
+	if(!roomVoid)
+		return false;
+	roomVoid->SetPersonnelAccess(quint8(access & PERSONNEL_Everyone));
+	return true;
+}
+
 bool AddBoxRoom(AuDesign& design, const QString& groupName, const AuPoint& mn, const AuPoint& mx,
 		quint16& voidId, quint16& meshId, bool naturalGravity, const QColor& wallTint)
 {
@@ -901,8 +995,49 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	// the threshold outwards (as in the scout, where it starts 0.9 ft out, so
 	// that it does not take the floor of the doorway away), and from where
 	// the hull stops being in the way of the ladder to above the door.
+	//
+	// Outwards as far as the game's zone round the hull reaches: it keeps
+	// everyone out of the hull's outlines seen from above, the side and the
+	// front, each 2 ft bigger (AuScSilhouette3d), so beside a hull that is
+	// wider below the door, people stepping out were stopped 1 to 2 m past
+	// the door, and could not come in from outside (the arness, 7 November
+	// 2026). Asked of the hull parts themselves, across the door's width and
+	// height.
+	double reach = SHIPGEN_HULL_VOID_OUTSIDE;
+	{
+		design.RefreshObstructionsCache();
+		QList<const AuScPart*> hulls;
+		for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+			if(it.value() && it.value()->IsHullMesh())
+				hulls << it.value();
+		auto blocked = [&](double d) {
+			for(double fu : { .05, .5, .95 })
+				for(double fz : { .05, .5, .95 })
+				{
+					AuPoint p(slabMin.x + (slabMax.x - slabMin.x) * fu, slabMin.y + (slabMax.y - slabMin.y) * fu,
+							slabMin.z + .5 + (slabMax.z - slabMin.z - .5) * fz);
+					if(alongX)
+						p.x = surface + sgn * d;
+					else
+						p.y = surface + sgn * d;
+					AuPoint hit, normal;
+					for(const AuScPart* hull : hulls)
+						if(hull->IsPathBlocked(p, p, hit, normal))
+							return true;
+				}
+			return false;
+		};
+		for(double d = SHIPGEN_HULL_VOID_OUTSIDE; d < SHIPGEN_HULL_VOID_OUTSIDE_MOST; d += .5)
+			if(!blocked(d))
+			{
+				reach = qMax(reach, d + 1.0);
+				break;
+			}
+			else
+				reach = d + 1.0;
+	}
 	AuPoint omn = slabMin, omx = slabMax;
-	span(omn, omx, surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), surface + sgn * SHIPGEN_HULL_VOID_OUTSIDE);
+	span(omn, omx, surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), surface + sgn * reach);
 	widen(omn, omx, SHIPGEN_HULL_VOID_MARGIN);
 	omx.z += SHIPGEN_HULL_VOID_MARGIN;
 	omn.z = qMin(slabMin.z, clearBelowZ);
@@ -937,7 +1072,7 @@ static AuScFaceList ProfilePrism(const AuPointArray& profile, const AuPoint& dir
 }
 
 bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, const AuPoint& outward,
-		double surface, double groundZ, AuPoint& top, AuPoint& foot, double runPerRise, double maxRise, quint16 openOnlyDoor)
+		double surface, double groundZ, AuPoint& top, AuPoint& foot, double runPerRise, double maxRise)
 {
 	const bool alongX = fabs(outward.x) > fabs(outward.y);
 	const double sgn = alongX ? (outward.x > 0 ? 1. : -1.) : (outward.y > 0 ? 1. : -1.);
@@ -954,10 +1089,18 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	// factory (a level barrier, then a sloped one).
 	const double u0 = -.2, uLanding = SHIPGEN_THRESHOLD_OUTSIDE + 1.0;
 	const double u1 = uLanding + rise * runPerRise;
-	const double thick = 1.0;
+	// A wedge: thick under the landing, coming to an edge at the foot. The
+	// visible ramp is a hull part, and the game sets a landed ship down on
+	// its lowest hull part, so a ramp as thick at the foot as at the top
+	// put the ground a foot below the end of the slope: a ledge that stopped
+	// people and vehicles alike (the user's door test, 2026-11-06).
+	// The full thickness holds until the slope is that close to the ground:
+	// the game misses thin parts of a part.
+	const double thick = qMin(1.0, rise);
+	const double uFlat = qMax(uLanding, u1 - thick * runPerRise);
 	AuPointArray profile;
 	profile.append(AuPoint(u0, -thick, 0));
-	profile.append(AuPoint(u1, -rise - thick, 0));
+	profile.append(AuPoint(uFlat, -rise, 0));
 	profile.append(AuPoint(u1, -rise, 0));
 	profile.append(AuPoint(uLanding, 0, 0));
 	profile.append(AuPoint(u0, 0, 0));
@@ -966,7 +1109,19 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 
 	// What is walked on (invisible), and what is seen, a little narrower.
 	AuScBarrier barrier;
-	barrier.AddFaces(ramp(width/2));
+	// The Barrier goes on down the slope a foot into the ground, at its full
+	// thickness: the game does not find the last thin part of a slope (the
+	// probe found the walk ending 0.6 ft above the ground), and a Barrier does
+	// not count when the game sets the ship down, so it does not move the
+	// ground.
+	const double sink = 1.0, u2 = u1 + sink * runPerRise;
+	AuPointArray deeper;
+	deeper.append(AuPoint(u0, -1.0, 0));
+	deeper.append(AuPoint(u2, -rise - sink - 1.0, 0));
+	deeper.append(AuPoint(u2, -rise - sink, 0));
+	deeper.append(AuPoint(uLanding, 0, 0));
+	deeper.append(AuPoint(u0, 0, 0));
+	barrier.AddFaces(ProfilePrism(deeper, outward, origin, width/2));
 	barrier.SetGroupName("Hull Door");
 	// The visible ramp is a hull part, not a mesh: the engine only looks for
 	// barriers inside the extents of the hull parts (AuScParts::
@@ -974,7 +1129,7 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	// side was a ghost in the user's test. The hull void over it keeps it
 	// from blocking anyone itself.
 	AuScHull mesh;
-	mesh.AddFaces(ramp(openOnlyDoor ? width/2 : width/2 - .1));
+	mesh.AddFaces(ramp(width/2 - .1));
 	mesh.SetGroupName("Frame");
 	if(!barrier.IsValid() || !mesh.IsValid())
 		return false;
@@ -982,59 +1137,32 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 		return false;
 	top = alongX ? AuPoint(surface + sgn * uLanding, across, z0) : AuPoint(across, surface + sgn * uLanding, z0);
 	foot = alongX ? AuPoint(surface + sgn * u1, across, groundZ) : AuPoint(across, surface + sgn * u1, groundZ);
-	if(openOnlyDoor)
-	{
-		// While the door is closed, nothing out here stops anyone.
-		AuPoint cmn = slabMin, cmx = slabMax;
-		const double c0 = surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), c1 = surface + sgn * (u1 + .5);
-		(alongX ? cmn.x : cmn.y) = qMin(c0, c1);
-		(alongX ? cmx.x : cmx.y) = qMax(c0, c1);
-		(alongX ? cmn.y : cmn.x) -= SHIPGEN_HULL_VOID_MARGIN;
-		(alongX ? cmx.y : cmx.x) += SHIPGEN_HULL_VOID_MARGIN;
-		cmn.z = groundZ - thick - 1.0;
-		cmx.z = z0 - .01;
-		AuScHullVoid whileClosed;
-		whileClosed.AddFaces(BoxFaces(cmn, cmx));
-		whileClosed.SetGroupName("Hull Door");
-		whileClosed.SetAssociatedPart(openOnlyDoor, AuScDoor::Closed);
-		if(!whileClosed.IsValid() || !design.Parts().AddPart(whileClosed))
-			return false;
-		// Always, the hull does not stop anyone above the slope.
-		const double headroom = slabMax.z - z0 + SHIPGEN_HULL_VOID_MARGIN;
-		const double ua = SHIPGEN_THRESHOLD_OUTSIDE + .05;
-		AuPointArray above;
-		above.append(AuPoint(ua, 0, 0));
-		above.append(AuPoint(uLanding, 0, 0));
-		above.append(AuPoint(u1, -rise, 0));
-		above.append(AuPoint(u1 + .5, -rise, 0));
-		above.append(AuPoint(u1 + .5, headroom, 0));
-		above.append(AuPoint(ua, headroom, 0));
-		AuScFaceList aboveFaces = ProfilePrism(above, outward, origin, width/2 + SHIPGEN_HULL_VOID_MARGIN);
-		OrientAsVoid(aboveFaces);
-		AuScHullVoid overSlope;
-		overSlope.AddFaces(aboveFaces);
-		overSlope.SetGroupName("Hull Door");
-		return overSlope.IsValid() && design.Parts().AddPart(overSlope) != 0;
-	}
 	if(!design.Parts().AddPart(barrier))
 		return false;
 
 	// The hull does not stop anyone anywhere over the ramp.
 	AuPoint vmn = slabMin, vmx = slabMax;
-	const double a = surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), b = surface + sgn * (u1 + .5);
+	// Out past the foot by more than the 2 ft the game keeps clear round a hull
+	// part (the visible ramp is one): with only 1.5 ft, an invisible strip
+	// 2.5 ft high stood just past the foot (door-check's walk up the ramp).
+	const double pastFoot = SHIPGEN_OBSTRUCT_MARGIN + .5;
+	// And past the end of the Barrier sunk into the ground, which on a long,
+	// gentle ramp reaches further: past it, the end stood 1 ft out of the
+	// ground.
+	const double a = surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), b = surface + sgn * (qMax(u1, u2) + pastFoot);
 	if(alongX)
 	{
 		vmn.x = qMin(a, b);
 		vmx.x = qMax(a, b);
-		vmn.y -= SHIPGEN_HULL_VOID_MARGIN;
-		vmx.y += SHIPGEN_HULL_VOID_MARGIN;
+		vmn.y -= pastFoot;
+		vmx.y += pastFoot;
 	}
 	else
 	{
 		vmn.y = qMin(a, b);
 		vmx.y = qMax(a, b);
-		vmn.x -= SHIPGEN_HULL_VOID_MARGIN;
-		vmx.x += SHIPGEN_HULL_VOID_MARGIN;
+		vmn.x -= pastFoot;
+		vmx.x += pastFoot;
 	}
 	vmn.z = groundZ - 1.0;
 	vmx.z += SHIPGEN_HULL_VOID_MARGIN;
@@ -1055,6 +1183,7 @@ bool AddShaft(AuDesign& design, const QString& groupName, const AuPoint& mn, con
 	AuScRoomVoid shaft;
 	shaft.AddFaces(BoxFaces(mn, mx));
 	SetUpRoomVoid(shaft, groupName, false);
+	shaft.SetHoldAccess(HOLD_Inaccessible);		// A way through, not a hold.
 	if(!shaft.IsValid())
 		return false;
 	voidId = design.Parts().AddPart(shaft);
@@ -1107,12 +1236,12 @@ bool CutOpening(AuDesign& design, const AuScFaceList& jigFaces, quint16 lowerRoo
 }
 
 bool AddLadderMesh(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing,
-		const QString& groupName)
+		const QString& groupName, double ahead, double above, bool asHull)
 {
 	const bool alongX = fabs(facing.x) > fabs(facing.y);
 	const double sgn = alongX ? (facing.x > 0 ? 1. : -1.) : (facing.y > 0 ? 1. : -1.);
-	const double ahead = .9, rail = .15, halfWidth = .75;
-	const double z0 = bottom.z, z1 = top.z + 3.0;
+	const double rail = .15, halfWidth = .75;
+	const double z0 = bottom.z, z1 = top.z + above;
 	auto box = [&](double a0, double a1, double b0, double b1, double c0, double c1) {
 		// 'a' is ahead of the climber, 'b' across, 'c' up.
 		const double ax = alongX ? bottom.x : bottom.y, bx = alongX ? bottom.y : bottom.x;
@@ -1126,12 +1255,44 @@ bool AddLadderMesh(AuDesign& design, const AuPoint& bottom, const AuPoint& top, 
 	for(double z = z0 + 1.0; z < z1 - .2; z += 1.0)
 		faces.AddFaces(box(ahead, ahead + rail, -halfWidth, halfWidth, z, z + rail * .7));
 	OrientAsHull(faces);
+	if(asHull)
+	{
+		AuScHull ladder;
+		ladder.AddFaces(faces);
+		ladder.SetGroupName(groupName);
+		return ladder.IsValid() && design.Parts().AddPart(ladder) != 0;
+	}
 	AuScMesh ladder;
 	ladder.AddFaces(faces);
 	ladder.SetGroupName(groupName);
 	if(!ladder.IsValid())
 		return false;
 	return design.Parts().AddPart(ladder) != 0;
+}
+
+bool AddOutsideLadderClearance(AuDesign& design, const AuPoint& ladderFoot, const AuPoint& outward, double surface,
+		double doorFloor)
+{
+	const bool alongX = fabs(outward.x) > fabs(outward.y);
+	const double sgn = alongX ? (outward.x > 0 ? 1. : -1.) : (outward.y > 0 ? 1. : -1.);
+	// From just beyond the doorway's floor to well past the 2 ft the game
+	// keeps clear round the hull, and round the ladder's own rails (a hull
+	// part), and wide enough to come at it slantwise.
+	const double out0 = surface + sgn * (SHIPGEN_THRESHOLD_OUTSIDE + .05), out1 = surface + sgn * 3.5;
+	const double halfWidth = 3.5;
+	AuPoint mn, mx;
+	(alongX ? mn.x : mn.y) = qMin(out0, out1);
+	(alongX ? mx.x : mx.y) = qMax(out0, out1);
+	(alongX ? mn.y : mn.x) = (alongX ? ladderFoot.y : ladderFoot.x) - halfWidth;
+	(alongX ? mx.y : mx.x) = (alongX ? ladderFoot.y : ladderFoot.x) + halfWidth;
+	mn.z = ladderFoot.z - 1.0;
+	mx.z = doorFloor - .01;
+	if(mx.z - mn.z < .5)
+		return false;
+	AuScHullVoid clear;
+	clear.AddFaces(BoxFaces(mn, mx));
+	clear.SetGroupName("Hull Door");
+	return clear.IsValid() && design.Parts().AddPart(clear) != 0;
 }
 
 bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, double width, double run, double rise,
@@ -1319,13 +1480,11 @@ bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QSt
 	return design.Parts().AddPart(barrier) != 0 && design.Parts().AddPart(mesh) != 0;
 }
 
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing, quint16 openOnlyDoor)
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing)
 {
 	AuScPathLadder ladder;
 	ladder.MakePath(bottom, top);
 	ladder.SetFacing(facing);
-	if(openOnlyDoor)
-		ladder.SetAssociatedPart(openOnlyDoor, AuScDoor::Open);
 	if(!ladder.IsValid())
 		return false;
 	return design.Parts().AddPart(ladder) != 0;
@@ -1342,4 +1501,126 @@ bool AddWalkPath(AuDesign& design, const AuPoint& from, const AuPoint& to, quint
 	if(!path.IsValid())
 		return false;
 	return design.Parts().AddPart(path) != 0;
+}
+
+bool AddDoorButton(AuDesign& design, const AuPoint& onWall, const AuPoint& inward, const QString& groupName,
+		AuPoint& switchLoc)
+{
+	// Built facing +x at the origin, then turned to face 'inward'. The plate
+	// stands a little off the wall: with its back in the wall's plane, the
+	// back showed through the room on the other side.
+	const double off = .04;
+	AuScFaceList plate = BoxFaces(AuPoint(off, -.35, -.45), AuPoint(off + .05, .35, .45));
+	AuScFaceList button = BoxFaces(AuPoint(off + .05, -.22, -.28), AuPoint(off + .15, .22, .28));
+	OrientAsHull(plate);
+	OrientAsHull(button);
+	auto paint = [](AuScFaceList& faces, const QColor& colour, float glow) {
+		AuScSelectInfo all;
+		for(int i = 0; i < faces.size(); ++i)
+			all.m_Faces.insert(i);
+		faces.TextureUnwrap(all, quint8(kSlotWall), 6.0, AuScFaceList::UNWRAP_ByFace, 45.f, true, 0, AuMatrix4x4::IdentityMatrix());
+		for(AuScFace* f : faces)
+		{
+			f->SetTextureIndex(quint8(kSlotWall));
+			f->SetPaint(colour);
+			f->SetSelfIllumination(glow);
+		}
+	};
+	paint(plate, QColor(60, 64, 70), 0.f);
+	paint(button, QColor(70, 230, 110), .8f);
+	AuScFaceList faces;
+	faces.AddFaces(plate);
+	faces.AddFaces(button);
+	AuPoint in(inward.x, inward.y, 0);
+	if(in.Length() < 1e-6)
+		return false;
+	in.Unit();
+	AuMatrix4x4 turn;
+	turn.RotateZ(atan2(in.y, in.x));
+	AuMatrix4x4 at;
+	at.Translate(onWall);
+	faces.Transform(turn);
+	faces.Transform(at);
+	AuScMesh mesh;
+	mesh.AddFaces(faces);
+	mesh.SetGroupName(groupName);
+	if(!mesh.IsValid() || !design.Parts().AddPart(mesh))
+		return false;
+	switchLoc = onWall + in * (off + .15);
+	return true;
+}
+
+int ClearDoorways(AuDesign& design)
+{
+	// The doorways: the void tied to each interior door's open state, a
+	// little smaller, so what only touches its sides (the walls the door is
+	// cut through, a frame round the opening) stays.
+	QList<QPair<AuPoint, AuPoint> > doorways;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* door = it.value();
+		if(!door || !door->IsDoor() || door->IsHullDoor())
+			continue;
+		for(AuScParts::const_iterator v = design.Parts().constBegin(); v != design.Parts().constEnd(); ++v)
+			if(v.value() && v.value()->IsRoomVoid() && v.value()->AssociatedPartId() == it.key())
+			{
+				AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+				QSet<quint32> ids;
+				v.value()->VertexIds(ids);
+				for(quint32 id : ids)
+				{
+					mn = mn.Min(v.value()->VertexLoc(id));
+					mx = mx.Max(v.value()->VertexLoc(id));
+				}
+				if(mn.x < mx.x)
+					doorways << qMakePair(mn + AuPoint(.2, .2, .2), mx - AuPoint(.2, .2, .2));
+			}
+	}
+	int cleared = 0;
+	for(const auto& box : doorways)
+	{
+		const AuPoint mn = box.first, mx = box.second;
+		bool any = false;
+		QList<quint16> frames;
+		for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+			if(it.value() && it.value()->IsHullMesh() && it.value()->GroupName() == "Frame")
+				frames << it.key();
+		for(quint16 id : frames)
+		{
+			AuScPart* part = design.Parts().value(id);
+			AuScFaceList faces;
+			part->Faces(faces);
+			AuPoint fmn, fmx;
+			faces.Extents(fmn, fmx);
+			if(fmx.x <= mn.x || fmn.x >= mx.x || fmx.y <= mn.y || fmn.y >= mx.y || fmx.z <= mn.z || fmn.z >= mx.z)
+				continue;
+			// Cut along the doorway's sides, then drop what is inside it.
+			AuScFaceList cutters = BoxFaces(mn, mx);
+			for(const AuScFace* cutter : cutters)
+				faces.Slice(*cutter);
+			AuScFaceList kept;
+			bool cut = false;
+			for(const AuScFace* f : faces)
+			{
+				const AuPoint c = f->FaceLocation();
+				if(c.x > mn.x && c.x < mx.x && c.y > mn.y && c.y < mx.y && c.z > mn.z && c.z < mx.z)
+					cut = true;
+				else
+					kept.AddFace(*f);
+			}
+			if(!cut)
+				continue;
+			any = true;
+			if(kept.isEmpty())
+			{
+				AuScParts deleted;
+				design.Parts().DeletePart(id, deleted);
+			}
+			else
+				part->SetFaces(kept);
+		}
+		if(any)
+			++cleared;
+	}
+	return cleared;
 }

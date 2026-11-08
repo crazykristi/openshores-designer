@@ -30,6 +30,7 @@
 
 #include <QColor>
 #include <QList>
+#include <QPoint>
 #include <QPointF>
 #include <QString>
 #include <QStringList>
@@ -67,6 +68,13 @@ struct PlanRoom
 	int		wallTex = -1;
 	int		floorTex = -1;
 	int		ceilingTex = -1;
+	// A turbolift's car (IsLiftRoomType): how high it is inside, in feet; 0
+	// for the deck's room height. Taller for vehicles; the cells above its
+	// highest stop must then be drawn as the lift too.
+	double	carFeet = 0;
+	// Who may be in it, as the game's PERSONNEL_ACCESS bits: 1 officers
+	// (captain and officers), 2 crew, 4 passengers, 8 troops; 15 everyone.
+	int		access = 15;
 };
 
 // A door on the edge of a cell. The edge is the one triangle 'side' of the
@@ -81,9 +89,12 @@ struct PlanDoor
 	// diagonals of triangle 'side' (TriPlan::Across), where a room's wall runs
 	// across a cell.
 	int		edge = 0;
-	// Doors only. Neighbours on one wall with the same row are one wide door;
-	// a dragged row shares a number, a single click gets its own. 0 is for plans
-	// from before rows existed: every neighbour with 0 joins.
+	// Doors: neighbours on one wall with the same row are one wide door; a
+	// dragged row shares a number, a single click gets its own. 0 is for plans
+	// from before rows existed: every neighbour with 0 joins. Windows: a
+	// dragged run shares a number and is joined into one window (straight
+	// stretches, and round corners one flat pane), as joinWindows joins all
+	// windows; 0 joins only with joinWindows.
 	int		row = 0;
 	int		tex = -1;		// A texture from the game's library, or -1 for the usual look.
 	// Hull doors only; a row takes these from the door in its middle, and the
@@ -91,11 +102,26 @@ struct PlanDoor
 	// hullDoorExit, or "auto", "ladder", "ramp" (up to SHIPGEN_RAMP_LONGEST_RISE,
 	// where "auto" stops at SHIPGEN_RAMP_MAX_RISE) or "none" (a docking door).
 	QString	exit;
-	// The way down can only be used while the door is open. A ramp stays visible
-	// when the door is closed, but can no longer be stood on.
-	bool	exitOpenOnly = false;
+	// (Plans from 2 to 6 November 2026 may have "exitOpenOnly", a way down tied
+	// to the door's state. It did not work in the game and is ignored.)
 	// Feet of ramp for each foot it falls; 0 for the usual SHIPGEN_RAMP_RUN_PER_RISE.
 	double	rampRun = 0;
+	// Doors only: what is in the opening (tracks 8 and 9). Empty for a door;
+	// "window" for a window between two rooms (a pane from the plan's sill to
+	// its top), "balcony" for an opening above a parapet a third of the
+	// room's height. Both only between two rooms; nobody walks through them.
+	QString	kind;
+	// Doors only: buttons that open and close it (the user, 2026-11-06), at
+	// most two for a row (one each side). Each is a point an eighth of a cell
+	// in from the middle of a wall edge of one of the door's rooms, in eighths
+	// of a cell from the grid's corner 0,0: the triangle it lies in says on
+	// which side of the wall the button is. 4 ft above the floor.
+	QList<QPoint> buttons;
+	// Wall windows only: how this one is made. "" as the plan's windowStyle,
+	// "frame" cut with a window jig (a frame round it), "hull" the hull's own
+	// triangles become the glass (follows the hull).
+	QString	style;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // A ladder up from a cell of one deck into the same cell of the deck above.
@@ -105,18 +131,24 @@ struct PlanLadder
 	int		deck = 0;		// The lower deck.
 	int		cx = 0;
 	int		cy = 0;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // A window in the ceiling of a cell of a room, straight out through the hull
 // above it (experimental). No room may be above it, on any deck. 'floor' is the
 // same in the floor: it is what a ceiling window becomes when a plan is turned
-// upside down.
+// upside down. 'k' is one triangle of the cell (a TriSide), or -1 for the
+// whole cell. 'shape' is "hull" (the glass is the hull's own surface above
+// it), "flat" (a level pane in a cutout) or "" (the plan's windowStyle).
 struct PlanSkylight
 {
 	int		deck = 0;
 	int		cx = 0;
 	int		cy = 0;
+	int		k = -1;
 	bool	floor = false;
+	QString	shape;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // A flight of stairs up from one deck to the deck above. It starts at cell
@@ -132,6 +164,7 @@ struct PlanStair
 	int		cx = 0;
 	int		cy = 0;
 	int		side = TRI_E;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // A vehicle parking spot on the floor of a room, centred on a cell corner
@@ -146,6 +179,12 @@ struct PlanParking
 	int		cy = 0;
 	bool	space = false;		// A space vehicle; a ground vehicle otherwise.
 	bool	across = false;
+	// A landing spot for a whole spacecraft (AuScSpacecraftParkingSpot): a
+	// square 238 ft each way (twice GroundSpawnSizeLimit), on a deck or on
+	// top of the hull. It does not have to lie in one room; it only must not
+	// overlap another landing spot on the same deck.
+	bool	spacecraft = false;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // An emitter on the hull, put in from a hull triangle of a deck (seen from
@@ -164,7 +203,17 @@ struct PlanEmitter
 	int		cy = 0;
 	int		k = 0;				// TriSide.
 	bool	weapon = false;		// A weapon emitter; a contrail emitter otherwise.
+	// A weapon emitter's bay: the module its own fire control station runs
+	// (FireControlModules in names.h); 0 for the plan's fireControlModule. Each
+	// weapon emitter is a weapon bay of its own (the user, 2026-11-06).
+	int		module = 0;
+	// A marking instead of an emitter: 1 the owner's empire flag
+	// (AuScEmpireFlag), 2 the empire's name (AuScEmpireName), flat on the
+	// nearest point of the hull, sizeFeet wide (a flag 2/3 as high, a name
+	// 1/4). The game draws the owner's flag or name on it.
+	int		marking = 0;
 	double	sizeFeet = 6.5616798;	// 2 m.
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
 // A colour in the paint palette: a plain colour, or one of the owner's
@@ -174,6 +223,11 @@ struct PlanPaint
 	QColor	colour = QColor(150, 155, 165);
 	int		theme = -1;		// 0, 1 or 2 for an empire colour; -1 for the plain colour.
 	QString	name;
+	// A livery colour (a painted pattern to keep sharp): on a hull shaped from
+	// a model or angular, the hull is cut along its drawn outline, so the
+	// colour edge is where it was drawn, not stepped along the hull's own
+	// triangles. Costs faces.
+	bool	livery = false;
 };
 
 // The 3D model a plan was made from, and how it was placed: turned (y up
@@ -200,8 +254,60 @@ struct PlanModel
 	bool	mirrorY = false;
 	bool	mirrorZ = false;
 	double	height = 0;			// The decks' height when it was turned upside down.
+	// Quarter turns clockwise (seen from above) about the grid's middle, after
+	// the mirrors (TriPlan::Rotate): 0 to 3.
+	int		quarterTurns = 0;
 
 	bool	IsSet() const { return !file.isEmpty(); }
+};
+
+// Placed by hand on the Crew page (since 8 November 2026); the build puts in
+// what is still missing by itself (TriPlan::autoStations and the rest).
+// Points are in cells from the grid's corner 0,0 (as a door's buttons are in
+// eighths), so they move with the grid; 'yaw' is the way the operator or the
+// berth faces, in degrees from fore (+x) towards port (+y).
+struct PlanStation
+{
+	int		deck = 0;
+	double	x = 0;
+	double	y = 0;
+	double	yaw = 0;
+	QString	type;			// A station of the template: "helm", "sensor", "engineer", "firecontrol", ... (StationChoices).
+	QString	seat;			// "chair" (the game's swivel chair), "desk" (an integrated desk), "" the ship's bridge style.
+	int		module = 0;		// Fire control only: the weapon bay it runs; 0 for the ship's.
+	bool	skip = false;
+};
+
+// A berth (bed) placed by hand: "crew", "officer", "capt", "passenger" or "troop".
+struct PlanBerth
+{
+	int		deck = 0;
+	double	x = 0;
+	double	y = 0;
+	double	yaw = 0;
+	QString	kind = "crew";
+	bool	skip = false;
+};
+
+// A transporter pad placed by hand (3 ft square), for the transporter station
+// in the same room. A room with pads placed by hand gets no others.
+struct PlanPad
+{
+	int		deck = 0;
+	double	x = 0;
+	double	y = 0;
+	bool	skip = false;
+};
+
+// A walk path drawn by hand: straight from the middle of one triangle to the
+// middle of another, on the floor of one room (the automatic paths run
+// through triangle middles too, so they meet).
+struct PlanPath
+{
+	int		deck = 0;
+	int		ax = 0, ay = 0, ak = 0;
+	int		bx = 0, by = 0, bk = 0;
+	bool	skip = false;
 };
 
 class TriPlan
@@ -243,8 +349,20 @@ public:
 			return deskHeightFeet > 0 ? qBound(2.8, deskHeightFeet, 5.5) : 4.2;
 		return deskHeightFeet > 0 ? qBound(2.2, deskHeightFeet, 4.5) : 3.0;
 	}
+	// Textures from the game's library for the whole ship, for every room and
+	// door that does not ask for one of its own (-1: none, the usual look).
+	int		wallTex = -1;
+	int		floorTex = -1;
+	int		ceilingTex = -1;
+	int		doorTex = -1;
 	bool	joinWindows = false;		// Windows side by side on one straight wall make one long window.
 	bool	flatWindows = true;			// Joined windows along a zigzag wall are one flat pane, not one per tooth.
+	// How wall windows are made: "" cut with a window jig (a box through the
+	// hull, a frame round it), or "hull": the hull's own triangles inside the
+	// window's outline become the glass, so the window follows the hull's
+	// shape and edges (the user, 2026-11-06: for model hulls). Where too few
+	// whole triangles fit, the window is cut as usual.
+	QString	windowStyle;
 	// The way out of the hull doors: "auto" a ramp where the door is low
 	// enough, else a ladder down to the ground; "ladder" always a ladder;
 	// "none" no way down (a docking door, for a ship that stays in space).
@@ -266,6 +384,40 @@ public:
 	QList<PlanParking>	parking;
 	QList<PlanEmitter>	emitters;
 	QList<PlanPaint>	palette;		// Entry 0 is the base coat.
+	// Placed by hand on the Crew page; the build fills in the rest unless
+	// these are off (then only what was placed by hand).
+	QList<PlanStation>	stations;
+	QList<PlanBerth>	berths;
+	QList<PlanPad>		pads;
+	QList<PlanPath>		paths;
+	bool	autoStations = true;		// The template's other stations, wherever the build finds room.
+	bool	autoBerths = true;
+	bool	autoPads = true;			// Pads for transporters whose room has none placed by hand.
+	bool	autoPaths = true;			// Paths through every door, ladder and stairs.
+	// What the build leaves out, by kind (Build page, BuildKinds()): "doors",
+	// "stations", "paths", ...
+	QStringList	buildLeaveOut;
+	// "" a ship as usual, or "fighter": fighter mode (experimental, the user
+	// 2026-11-08): a small craft, often from a 3D model, with small cells and
+	// low decks; the build has no FTL drive (it would not fit) and checks
+	// that there is a cockpit and a way in.
+	QString	mode;
+	bool	IsFighter() const { return mode == "fighter"; }
+	// Makes this plan a fighter: the mode, the fighter template, no FTL,
+	// windows that follow the hull (a canopy), no automatic berths, a
+	// Cockpit room when there is no Bridge; with 'sizes' also the small
+	// cells and low decks (2.5 ft, 4.5 ft, as the cockpit tried in the game
+	// on 8 November 2026), for a plan with nothing drawn yet.
+	void	MakeFighter(bool sizes);
+	static const double kFighterCellFeet, kFighterDeckFeet;
+	// Of the kinds the Build page lists: key and label.
+	static QList<QPair<QString, QString> > BuildKinds();
+	// A copy with what the build leaves out taken away: the kinds in
+	// buildLeaveOut and the items marked skip.
+	TriPlan	ForBuild() const;
+	// The room at a point (in cells from the corner) of a deck; -1 if none.
+	int		RoomAtPoint(int deck, double x, double y) const;
+	QPointF	CellPointToWorld(double x, double y) const { return Corner(0, 0) + QPointF(x, y) * cellFeet; }
 
 	int		Width() const { return m_width; }		// Cells along x.
 	int		Depth() const { return m_depth; }		// Cells along y.
@@ -284,6 +436,13 @@ public:
 	// from too; what no longer fits is taken away (Tidy). Returns how many
 	// ladders, stairs and parking spots were taken away.
 	int		Flip(bool foreAft, bool portStarboard, bool upsideDown = false, int deck = -1);
+	// Turns the plan a quarter turn about the grid's middle, clockwise or
+	// anticlockwise seen from above, or only one deck of it (deck >= 0).
+	// Everything drawn goes with it as with Flip; the whole plan's grid swaps
+	// its width and depth, and for one deck the grid is made bigger first
+	// when the turned deck would not fit (then 'grew' is set). Returns how
+	// many ladders, stairs and parking spots were taken away.
+	int		Rotate(bool clockwise, int deck = -1, bool* grew = 0);
 
 	bool	Valid(const TriRef& t) const;
 	bool	Hull(const TriRef& t) const;
@@ -295,6 +454,8 @@ public:
 
 	// Where things are, in feet. The grid is centred on the origin.
 	QPointF	Corner(int ix, int iy) const;			// Grid corner (0..Width, 0..Depth).
+	QPointF	EighthPoint(const QPoint& q) const;		// A point in eighths of a cell from corner 0,0 (PlanDoor::buttons).
+	bool	TriAt(int deck, const QPointF& world, TriRef& out) const;	// The triangle a point lies in.
 	QPointF	CellCentre(int cx, int cy) const;
 	void	TriCorners(const TriRef& t, QPointF out[3]) const;	// Counter-clockwise from above.
 	QPointF	TriCentre(const TriRef& t) const;
@@ -323,10 +484,17 @@ public:
 	// diagonals, as Across numbers them).
 	void	EdgeEnds(const TriRef& t, int edge, QPointF& a, QPointF& b) const;
 	int		LadderAt(int deck, int cx, int cy) const;			// Index in ladders, -1 if none.
+	int		NewWindowRow() const;								// A row number no window has yet.
 	int		SkylightAt(int deck, int cx, int cy) const;			// Index in skylights, -1 if none.
-	bool	SkylightFits(const PlanSkylight& window) const;		// A whole cell of room with no room beyond it.
+	int		SkylightOn(const TriRef& t) const;					// The skylight over a triangle (its own or its cell's), -1 if none.
+	bool	SkylightFits(const PlanSkylight& window) const;		// Room (a whole cell, or the triangle) with no room beyond it.
+	bool	WindowIsHull(const PlanDoor& window) const
+	{
+		return window.style == "hull" || (window.style.isEmpty() && windowStyle == "hull");
+	}
+	bool	SkylightIsHull(const PlanSkylight& window) const;		// Its glass follows the hull.
 	int		ParkingAt(int deck, int cx, int cy) const;			// Index in parking, -1 if none.
-	int		EmitterAt(const TriRef& t, bool weapon) const;		// Index in emitters, -1 if none.
+	int		EmitterAt(const TriRef& t, bool weapon, int marking = 0) const;		// Index in emitters, -1 if none.
 	// How many cells a flight of stairs runs over, for a slope of about 34
 	// degrees (like the stairs in the user's aircraft factory).
 	int		StairCells() const;

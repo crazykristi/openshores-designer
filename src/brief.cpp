@@ -287,6 +287,28 @@ QList<ShipTemplate> AllTemplates()
 		list << t;
 	}
 
+	{
+		// Fighter mode (experimental, TriPlan::mode "fighter"): one pilot
+		// in a cockpit, no FTL drive (its least volume is more than a
+		// fighter's whole hull), most of the volume for the drive.
+		ShipTemplate t;
+		t.key = "fighter";
+		t.label = "Fighter (experimental)";
+		t.description = "Small craft for one pilot: a cockpit with the helm, most of the hull for power and drive. "
+						"No FTL drive.";
+		t.crew = 1;
+		t.rooms << RoomSpec("Bridge", "Cockpit", 1, 6, 4, 4);
+		t.stations << StationSpec("helm", 1, "Bridge");
+		t.modules.powerPlant = 60;
+		t.modules.maneuverDrive = 140;
+		t.modules.capacitor = 25;
+		t.modules.fuel = 60;
+		t.modules.lifeSupport = 8;
+		t.modules.armor = 40;
+		t.modules.skeleton = 90;
+		list << t;
+	}
+
 	return list;
 }
 // clang-format on

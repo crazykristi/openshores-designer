@@ -1,4 +1,4 @@
-# Shipgen Designer 0.3.6-alpha
+# Shipgen Designer 0.3.7-beta-rc1
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
@@ -6,66 +6,116 @@ triangles, paint it, and build a blueprint the game loads. The download
 also holds `shipgen-gui` (the automatic generator's window) and the
 `shipgen` command line.
 
-0.3.6-alpha is a pre-release. It comes from trying a large ship in the game:
-crew can now get around it, doors and door rows behave, and bridges can have
-real desks, for sitting or standing. There is also a Mac download now.
+0.3.7-beta-rc1 is the first beta and a **release candidate**: please try it
+and report what goes wrong before the final 0.3.7. It brings everything since
+0.3.6-alpha: three rounds of testing in the game (doors, features, liveries),
+a new Crew step for placing stations, beds and walk paths yourself, a choice of
+what gets built, and a first, experimental fighter mode.
 
-## New in 0.3.6-alpha
+**Problems?** If something goes wrong, please either contact the author
+(Kristiana Moretti, `crazykristi` on GitHub) or report an issue at
+<https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
+plan file (`.json`) and what you expected help most.
 
-* **Integrated desks (experimental).** A choice on the Build page: stations on
-  desks in curved rows round the captain instead of the game's swivel chairs.
-  For the whole ship, operators can sit or stand, and you can set the desk's
-  height.
-* **Fire control** can run any of the ten modules the game's own station dialog
-  offers, chosen on the Ship page.
-* **Open to Deck Below** now does what it says: the room below reaches up into
-  it, and people fall to the lower floor.
-* **Ceiling windows (experimental):** a new room tool cuts a window straight up
-  through the hull.
-* **Textures per room and per door**, from the game's library.
-* **Door rows are your choice:** dragging along a wall makes one wide door, and
-  a click makes a separate one.
-* **Parking spots** show an outline that follows the mouse, coloured by whether
-  the spot fits, and R turns it. **Contrail emitters** are drawn where they end
-  up on the hull.
-* **`shipgen crew-check`** follows every room-to-room route with the game's own
-  route finding, and reports natural gravity in doorways and mirrored screens.
-  **`shipgen sight`** shows what is seen along a line of sight.
-* **A Mac download**, for Apple and Intel processors, built on GitHub. It starts
-  there and passes the tests, but nobody has tried it on a real Mac yet, so
-  please report how it goes.
+## New
+
+* **A Crew step (tab 4)** for placing stations, berths, transporter pads and
+  walk paths by hand. It is optional: anything you do not place is still put
+  in automatically, and you can switch the automatic part off per kind. A
+  station can have a swivel chair or an integrated desk; an outline shows
+  green where it fits in one room, R turns it, and the mirror places the
+  other side too.
+* **Choose what gets built.** The Build step lists every kind of thing in
+  the plan (doors, door buttons, windows, ladders, ramps, parking, emitters,
+  stations, berths, pads, systems, walk paths, ...). Untick a kind, or single
+  items in it, to leave them out of the blueprint without deleting them. It
+  is saved with the plan.
+* **Turbolifts** for people and vehicles (a room of type *Turbo Lift*).
+* **Landing spots for spacecraft**, on a deck or on top of the hull.
+* **The owner's empire flag and name** painted on the hull.
+* **Door buttons**: after placing a door, click the walls beside it.
+* **Windows between rooms and balconies**, each its own tool.
+* **Windows that follow the hull**: the hull's own triangles become the
+  glass, for model hulls. Now chosen per window (*Window frame* or *Follow
+  the hull*) as well as for the whole ship.
+* **Dragged window rows** that build as one window, and **ceiling windows**
+  per triangle, following the hull or flat; they follow the brush size.
+* **Liveries**: mark a colour to keep its edges sharp on a model or angular
+  hull (stripes, insignia, pixel art).
+* **Who may enter a room** (officers, crew, passengers, troops).
+* **Several weapon bays**, each of its own type, and **ship-wide textures**
+  for walls, floors, ceilings and doors.
+* **Each hull door or row has its own way down** (ramp, ladder or none) and
+  ramp length.
+* **Quarter turns**: turn the whole ship or one deck 90° either way.
+* **FBX, glTF, Collada, PLY, Blender and more** 3D models can be read (on
+  Linux and macOS; the Windows build still reads STL, OBJ and 3DS).
+* **A check on start**: when libraries the 3D view needs are missing, a clear
+  warning with the issue tracker's address, and you may go on at your own
+  risk.
+* **Help > About** shows the version, author and build time.
+* New commands: `shipgen walk`, `shipgen faces --where`, `plan-flip
+  --clockwise/--anticlockwise`, `plan-from-model --fighter`.
+
+## Experimental
+
+Marked as experimental in the program as well; please try them in the game
+before relying on them, and tell us how they behave.
+
+* **Fighter mode.** *File > New fighter* or *New fighter from a 3D model*
+  (or *Fighter mode* on the Ship page): small cells (2.5 ft) and low decks
+  (4.5 ft), the model itself as the hull, one pilot at the helm, no FTL drive,
+  windows that follow the hull for the canopy. Draw the cockpit, a hull door
+  on its side and the canopy, and place the seat in the Crew step. Not there
+  yet: a hatch in the belly, an opening canopy.
+* **Turbolifts**, **landing spots**, **liveries**, **ceiling windows** and
+  **windows that follow the hull** have not all been tried in every
+  combination in the game yet.
+* **Integrated desks** (from 0.3.6-alpha) and the **Windows** and **macOS**
+  downloads (built and tested automatically, little tried on real machines).
+
+## Changes
+
+* The steps are now 1 Ship, 2 Hull, 3 Rooms, **4 Crew**, 5 Paint, 6 Build
+  (`--step` counts that way).
+* Room types now matter in the game: sick bays get the medic station,
+  transporter rooms their transporter, and so on.
+* Every ship has a cargo hold of at least 2% of its hull; up to 12
+  transporter pads per room.
+* The AppImage uses the system's own Wayland libraries, and asks for OpenGL
+  3.3 where a driver only gives it on request.
+* Small craft get a capacitor big enough for their idle power, and without an
+  engineer station their power plant and drive stay under 100 m³, so the
+  engine's two power warnings are gone.
 
 ## Bug fixes
 
-* **Crew stuck at ladders.** Ladders ended too close to the floor for the game
-  to count the climb as finished. Crew routes on the test battleship that can
-  be followed went from 80 of 240 to all 240.
-* **Crew could not get around big ships.** Walking paths and ladders did not
-  meet, and zero-G shafts had no path. The build now warns when a ship's paths
-  fall into separate parts.
-* **Doorways turned people round near a planet.** They now have the rooms'
-  gravity.
-* **Mirrored console screens.** The image on an integrated desk's screen is now
-  the right way round.
-* **Hull and bay door rows split up:** a row of ten could come out as seven
-  doors.
-* **Holes in shaft walls** where rooms join across decks, and **phantom walls
-  and ledges** at flat window panes and joins between decks.
-* **Windows:** joined windows on a zigzag wall are one flat pane, panes no
-  longer take hull paint, and ceiling windows join whatever order the cells were
-  clicked in.
-* **The same plan now builds the same blueprint.** Two builds of one plan used
-  to differ.
+* **The 3D view stayed empty in the AppImage on some PCs** (KDE Plasma on
+  Wayland: "EGL not available").
+* **Hull doors above the ground could not be reached from outside**, and
+  ladders at hull doors could not be taken hold of from the ground.
+* **Inside ladders threw you off at the top**; **a ledge and an invisible
+  strip at the foot of ramps** are gone.
+* **A door could not be taken away right after placing its first button.**
+* **Swivel chairs could stick out of small rooms.**
+* **Liveries and pixel art on rising roofs came out in pieces** (the MCRN
+  logo).
+* **Window frames ran through doorways**; windows on stepped walls blocked
+  each other; the shaft of a hull-following ceiling window had no walls; door
+  buttons showed through the wall.
+* **Binary STL files with colours** could not be read.
+* "Only while the door is open" ramps did not work in the game and are
+  retired (old plans keep loading).
 
 ## Running it
 
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.6-alpha-x86_64.AppImage
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.6-alpha-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc1-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -73,14 +123,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.6-alpha-windows-x86_64.zip` and start
+`shipgen-designer-0.3.7-beta-rc1-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.6-alpha-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc1-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The
@@ -116,20 +166,19 @@ downloads, once GitHub has built them.
 
 ## Tried in the game, and not yet
 
-A test battleship was tried in the game for this release, with sitting and with
-standing desks, and looked good. Everything else has only been measured from the
-built blueprints and the game's code. New in this release and not yet tried in
-the game: fire control modules other than the
-Energy Weapon Bay, Open to Deck Below and ceiling windows. From before and still
-untried: zero-G shafts, the paint fix on model hulls, the new parts of generated
-buildings, ramps at hull doors, stairs, the sloped hull, the smooth and sharp
-model hulls, the angular and classic hull styles, the hull door choices and the
-contrail and weapon emitters. Please report how they behave.
+Tried in the game for this release: door rows, ramps and ladders at hull doors,
+door buttons, windows that follow the hull, ceiling windows, liveries (the MCRN
+logo, fixed after the test), a cockpit only 4 ft high. Not yet tried: the Crew
+step's hand-placed items, leaving things out of the build, turbolifts, landing
+spots, flags and names, quarter turns, FBX models, and fighter mode.
 
 ## Known limits
 
+* Fighter mode: no belly hatch yet; wings and other thin parts stay on the
+  hull but get no cells, so a side door over a wing gets a ladder that runs
+  into it (a low door gets a ramp instead).
+
 * Rooms are one deck high; hull doors are one deck high.
-* The way down from hull doors is one choice for the whole ship.
 * Coming down a ladder from the top, crew may lie level for a moment.
 * Desks do not block walking, and at unusual heights a seated or standing
   character's hands may not meet the desk. A bridge over several decks is not

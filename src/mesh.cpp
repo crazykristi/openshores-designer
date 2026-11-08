@@ -4,6 +4,13 @@
 
 #include "mesh.h"
 
+#include <QDataStream>
+#ifdef SHIPGEN_HAVE_ASSIMP
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <assimp/config.h>
+#endif
 #include <QFile>
 
 #include <cstdio>
@@ -17,6 +24,49 @@
 #include <queue>
 
 #include "auscparts.h"
+
+bool IsBinaryStl(const QString& fileName)
+{
+	QFile file(fileName);
+	if(!file.open(QFile::ReadOnly) || file.size() < 84)
+		return false;
+	const QByteArray head = file.read(84);
+	const quint32 count = quint32(quint8(head[80])) | quint32(quint8(head[81])) << 8
+			| quint32(quint8(head[82])) << 16 | quint32(quint8(head[83])) << 24;
+	return file.size() == 84 + qint64(count) * 50;
+}
+
+int ReadBinaryStl(const QString& fileName, AuScFaceList& faces)
+{
+	faces.Clear();
+	QFile file(fileName);
+	if(!file.open(QFile::ReadOnly))
+		return 1;
+	QDataStream in(&file);
+	in.setByteOrder(QDataStream::LittleEndian);
+	in.setFloatingPointPrecision(QDataStream::SinglePrecision);
+	in.skipRawData(80);
+	quint32 count = 0;
+	in >> count;
+	while(count-- && !in.atEnd())
+	{
+		float f[12];
+		for(float& x : f)
+			in >> x;
+		quint16 attribute;
+		in >> attribute;		// A colour in some files; never more bytes.
+		AuPoint normal(f[0], f[1], f[2]);
+		normal.Unit();
+		// Counterclockwise round the normal, turned the way the engine's own
+		// reader turns them.
+		AuScPoint v1(f[3], f[4], f[5], 0, 0, normal), v2(f[6], f[7], f[8], 0, 0, normal), v3(f[9], f[10], f[11], 0, 0, normal);
+		AuScFaceTri tri(v1, v3, v2);
+		if(normal.IsZero())
+			tri.FlattenVertexNormals();
+		faces.AddFace(tri);
+	}
+	return faces.isEmpty() ? 2 : 0;
+}
 
 namespace {
 
@@ -868,6 +918,75 @@ bool Simplifier::Run(int targetFaces, AuScTriList& out)
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+//-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+// Reading other formats (FBX, glTF, Collada, PLY, ...) with the Assimp
+// library, when the program was built with it (build.sh finds it).
+
+#ifdef SHIPGEN_HAVE_ASSIMP
+static bool ReadWithAssimp(const QString& fileName, AuScTriList& tris, QString& error)
+{
+	Assimp::Importer importer;
+	// Lines and points are of no use for a hull.
+	importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE, aiPrimitiveType_LINE | aiPrimitiveType_POINT);
+	// Every mesh is moved to where its node puts it, so a model made of
+	// parts (wings, canopy, fuselage) comes in assembled.
+	const aiScene* scene = importer.ReadFile(QFile::encodeName(fileName).constData(),
+			aiProcess_Triangulate | aiProcess_PreTransformVertices | aiProcess_SortByPType
+			| aiProcess_JoinIdenticalVertices | aiProcess_FindDegenerates);
+	if(!scene || !scene->mRootNode)
+	{
+		error = QString("could not read %1: %2").arg(fileName, QString::fromUtf8(importer.GetErrorString()));
+		return false;
+	}
+	for(unsigned m = 0; m < scene->mNumMeshes; ++m)
+	{
+		const aiMesh* mesh = scene->mMeshes[m];
+		for(unsigned f = 0; f < mesh->mNumFaces; ++f)
+		{
+			const aiFace& face = mesh->mFaces[f];
+			if(face.mNumIndices != 3)
+				continue;
+			double p[3][3];
+			for(int i = 0; i < 3; ++i)
+			{
+				const aiVector3D& v = mesh->mVertices[face.mIndices[i]];
+				p[i][0] = v.x;
+				p[i][1] = v.y;
+				p[i][2] = v.z;
+			}
+			tris.append(MakeTri(p));
+		}
+	}
+	return true;
+}
+#endif
+
+bool AssimpAvailable()
+{
+#ifdef SHIPGEN_HAVE_ASSIMP
+	return true;
+#else
+	return false;
+#endif
+}
+
+QStringList ModelSuffixes()
+{
+	QStringList suffixes { "stl", "obj", "3ds" };
+#ifdef SHIPGEN_HAVE_ASSIMP
+	suffixes << "fbx" << "gltf" << "glb" << "dae" << "ply" << "blend" << "lwo" << "x3d" << "off" << "ac";
+#endif
+	return suffixes;
+}
+
+QString ModelFileFilter()
+{
+	QStringList patterns;
+	for(const QString& s : ModelSuffixes())
+		patterns << "*." + s;
+	return QString("3D models (%1)").arg(patterns.join(' '));
+}
+
 bool LoadMeshFile(const QString& fileName, AuScTriList& tris, QString& error)
 {
 	const QString suffix = QFileInfo(fileName).suffix().toLower();
@@ -890,7 +1009,9 @@ bool LoadMeshFile(const QString& fileName, AuScTriList& tris, QString& error)
 	else if(suffix == "stl")
 	{
 		AuScFaceList faces;
-		int result = faces.STLReadASCII(fileName);
+		// A binary file is known by its size; the engine's ASCII reader
+		// takes a binary one too and reads nonsense from it.
+		int result = IsBinaryStl(fileName) ? ReadBinaryStl(fileName, faces) : faces.STLReadASCII(fileName);
 		if(result == 2)
 			result = faces.STLReadBinary(fileName);	// Not an ASCII file, so try binary.
 		if(result != 0)
@@ -903,11 +1024,19 @@ bool LoadMeshFile(const QString& fileName, AuScTriList& tris, QString& error)
 	}
 	else if(suffix == "obj")
 	{
-		return ReadObj(fileName, tris, error);
+		if(!ReadObj(fileName, tris, error))
+			return false;
 	}
+#ifdef SHIPGEN_HAVE_ASSIMP
+	else if(ModelSuffixes().contains(suffix))
+	{
+		if(!ReadWithAssimp(fileName, tris, error))
+			return false;
+	}
+#endif
 	else
 	{
-		error = QString("unsupported model format '%1' in %2. Use 3ds, stl or obj.").arg(suffix).arg(fileName);
+		error = QString("unsupported model format '%1' in %2. Use %3.").arg(suffix, fileName, ModelSuffixes().join(", "));
 		return false;
 	}
 

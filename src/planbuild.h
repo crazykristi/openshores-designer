@@ -85,16 +85,29 @@ struct PlanBuildReport
 	int				windows = 0;
 	int				walkAreas = 0;			// Parts of the ship the crew can walk between.
 	int				skylights = 0;			// Windows in a ceiling.
+	int				hullSkylights = 0;		// Of them, following the hull.
 	int				ladders = 0;
 	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
 	int				openJoins = 0;		// "Open to Deck Below" rooms opened into the room below.
 	int				stairs = 0;
 	int				parking = 0;			// Vehicle parking spots.
 	int				contrails = 0;			// Contrail emitters.
+	int				markings = 0;			// Empire flags and names on the hull.
+	int				lifts = 0;				// Turbolifts.
+	int				liftStops = 0;			// Their stops, all together.
+	int				doorButtons = 0;		// Buttons on walls that open doors.
+	int				innerWindows = 0;		// Windows between two rooms.
+	int				balconies = 0;			// Openings between two rooms above a parapet.
+	int				hullWindows = 0;		// Windows whose glass is the hull's own faces.
 	int				weaponEmitters = 0;		// Fire control stations given a weapon emitter.
 	int				ramps = 0;				// Hull doors with a ramp down to the ground.
 	int				stations = 0;
 	int				berths = 0;
+	// Of them, placed by hand on the Crew page; and paths drawn by hand.
+	int				handStations = 0;
+	int				handBerths = 0;
+	int				handPads = 0;
+	int				handPaths = 0;
 	QStringList		notes;
 	QStringList		warnings;
 	QStringList		errors;			// The engine's own report.

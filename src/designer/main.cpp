@@ -14,6 +14,7 @@
 #include "designerwindow.h"
 #include "dgdata.h"
 #include "logging.h"
+#include "preview.h"
 #include "version.h"
 
 int main(int argc, char* argv[])
@@ -41,6 +42,8 @@ int main(int argc, char* argv[])
 
 	QApplication app(argc, argv);
 	QApplication::setApplicationName("Shipgen designer");
+	// What the 3D view needs, checked before any window opens.
+	const QString glProblem = ChooseOpenGLFormat();
 	QApplication::setApplicationVersion(SHIPGEN_VERSION);
 	QApplication::setApplicationDisplayName("Shipgen - draw a Shores of Hazeron ship with triangles");
 
@@ -57,7 +60,7 @@ int main(int argc, char* argv[])
 	parser.addVersionOption();
 	QCommandLineOption openOption(QStringList() << "o" << "open", "The plan to open.", "plan.json");
 	parser.addOption(openOption);
-	QCommandLineOption stepOption(QStringList() << "step", "The step to show: 1 ship, 2 hull, 3 rooms, 4 paint, 5 build.", "n");
+	QCommandLineOption stepOption(QStringList() << "step", "The step to show: 1 ship, 2 hull, 3 rooms, 4 crew, 5 paint, 6 build.", "n");
 	parser.addOption(stepOption);
 	QCommandLineOption deckOption(QStringList() << "deck", "The deck to show, from 1.", "n");
 	parser.addOption(deckOption);
@@ -67,11 +70,20 @@ int main(int argc, char* argv[])
 	parser.addOption(exportOption);
 	QCommandLineOption shotOption(QStringList() << "screenshot", "Save a picture of the window and quit.", "file.png");
 	parser.addOption(shotOption);
-	QCommandLineOption modelOption(QStringList() << "from-model", "Start a new plan from a 3D model (STL, 3DS or OBJ).", "model");
+	QCommandLineOption modelOption(QStringList() << "from-model", "Start a new plan from a 3D model (STL, 3DS, OBJ, and FBX, glTF and more when built with Assimp).", "model");
 	parser.addOption(modelOption);
 	QCommandLineOption lengthOption(QStringList() << "length", "With --from-model: the length in feet.", "feet");
 	parser.addOption(lengthOption);
 	parser.process(app);
+
+	// Run from a script nobody is there to answer; otherwise say what is
+	// missing and let the user decide.
+	if(!glProblem.isEmpty() && !parser.isSet(shotOption) && !parser.isSet(exportOption))
+	{
+		std::fprintf(stderr, "warning: %s\n", qPrintable(glProblem));
+		if(!WarnAboutPrerequisites(glProblem))
+			return 1;
+	}
 
 	DesignerWindow window;
 	if(parser.isSet(openOption) && !window.OpenPlan(parser.value(openOption)))
@@ -93,7 +105,7 @@ int main(int argc, char* argv[])
 
 	if(parser.isSet(exportOption))
 	{
-		window.ShowStep(4);
+		window.ShowStep(5);		// Build.
 		const bool accepted = window.BuildNow();
 		const bool saved = window.SaveBlueprint(parser.value(exportOption), false);
 		return saved ? (accepted ? 0 : 3) : 1;

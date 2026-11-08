@@ -1079,6 +1079,16 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			{ brief.volumes.surgery > 0, AuScPart::Part_ConsoleMedic, CID_SurgeryMedicalModule },
 			{ brief.volumes.transporters > 0, AuScPart::Part_ConsoleTransporter, CID_PersonnelTransporterModule },
 		};
+		// The transporter goes in a transporter (teleporter) room when there
+		// is one, against its back wall, and gets its pads there.
+		const BuildingRoom* padRoom = 0;
+		for(const BuildingRoom& br : allRooms)
+			if(br.voidId && (br.type.contains("Transporter", Qt::CaseInsensitive) || br.type.contains("Teleporter", Qt::CaseInsensitive)
+					|| br.label.contains("Transporter", Qt::CaseInsensitive) || br.label.contains("Teleporter", Qt::CaseInsensitive)))
+			{
+				padRoom = &br;
+				break;
+			}
 		int slot = 0;
 		for(const StationEntry& e : entries)
 		{
@@ -1094,7 +1104,10 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 				continue;
 			}
 			const double px = -brief.footprintX/4 + slot * 8;
-			console->MakeIcon(AuPoint(px, brief.footprintY/4, wall + 4), 0.f, plane);
+			if(e.type == AuScPart::Part_ConsoleTransporter && padRoom)
+				console->MakeIcon(AuPoint((padRoom->mn.x + padRoom->mx.x) / 2, padRoom->mx.y - 4, padRoom->mn.z + 4), 0.f, plane);
+			else
+				console->MakeIcon(AuPoint(px, brief.footprintY/4, wall + 4), 0.f, plane);
 			console->SetModule(e.module);
 			if(console->IsValid())
 			{
@@ -1104,6 +1117,23 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			delete part;
 			++slot;
 		}
+	}
+
+	// Pads for the transporter, in its room (AddTransporterPads).
+	{
+		QList<PlacedRoom> rooms;
+		for(const BuildingRoom& br : allRooms)
+			if(br.voidId)
+			{
+				PlacedRoom r;
+				r.type = br.type;
+				r.label = br.label;
+				r.min = br.mn;
+				r.max = br.mx;
+				r.voidId = br.voidId;
+				rooms << r;
+			}
+		AddTransporterPads(design, rooms, QList<QPair<AuPoint, AuPoint> >(), result.warnings);
 	}
 
 	// Citizen and guard posts.

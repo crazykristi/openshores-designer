@@ -212,6 +212,19 @@ else
 	QLIBS="-L$QT_LIBS -lQt5Core -lQt5Gui -lQt5Widgets -lQt5Network -lQt5Sql -lQt5OpenGL -lopenal -lGL"
 fi
 
+# The Assimp library, when it is installed, lets the tools read FBX, glTF,
+# Collada and other model formats (stl, obj and 3ds need nothing extra).
+# SHIPGEN_ASSIMP=0 builds without it.
+if [ "${SHIPGEN_ASSIMP:-1}" != "0" ] && "${PKG_CONFIG:-pkg-config}" --exists assimp 2>/dev/null; then
+	ASSIMP_CFLAGS="-DSHIPGEN_HAVE_ASSIMP $("${PKG_CONFIG:-pkg-config}" --cflags assimp)"
+	CXXFLAGS="$CXXFLAGS $ASSIMP_CFLAGS"
+	CXXFLAGS_TOOL="$CXXFLAGS_TOOL $ASSIMP_CFLAGS"
+	QLIBS="$QLIBS $("${PKG_CONFIG:-pkg-config}" --libs assimp)"
+	echo "==> Assimp $("${PKG_CONFIG:-pkg-config}" --modversion assimp): FBX, glTF and other models can be read"
+else
+	echo "==> No Assimp (pkg-config assimp): only stl, obj and 3ds models can be read"
+fi
+
 # Compile every .cpp in a directory into objects under $OBJ/<tag>/
 #   compile_tree <tag> <srcdir> <defines...> -- <extra include dirs...>
 compile_tree() {

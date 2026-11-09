@@ -18,7 +18,7 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.7-beta-rc2](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7-beta-rc2),
+is [0.3.7-beta-rc3](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7-beta-rc3),
 the second release candidate of the first beta: a finish per colour
 (see-through, shiny, glowing), canopies for fighters, less geometry outside
 the hull, a check of what the pilot sees, door buttons where you click and
@@ -518,9 +518,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc2-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`; the steps of a release are in

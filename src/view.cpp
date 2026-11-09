@@ -43,9 +43,9 @@ struct Target
 };
 
 // Where a ray from 'a' along unit 'd' meets the box, or a negative value.
-double BoxEntry(const AuPoint& a, const AuPoint& d, const AuPoint& mn, const AuPoint& mx, double far)
+double BoxEntry(const AuPoint& a, const AuPoint& d, const AuPoint& mn, const AuPoint& mx, double maxDist)
 {
-	double t0 = 0, t1 = far;
+	double t0 = 0, t1 = maxDist;
 	const double o[3] = { a.x, a.y, a.z }, v[3] = { d.x, d.y, d.z };
 	const double lo[3] = { mn.x, mn.y, mn.z }, hi[3] = { mx.x, mx.y, mx.z };
 	for(int i = 0; i < 3; ++i)
@@ -101,7 +101,7 @@ QList<StationView> CheckStationViews(const AuScParts& parts, double eyeAboveSeat
 		targets << t;
 	}
 
-	const double far = 2000;
+	const double maxDist = 2000;
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
 	{
 		// Consoles and integrated desks are not AuScStations; the part itself
@@ -164,12 +164,12 @@ QList<StationView> CheckStationViews(const AuScParts& parts, double eyeAboveSeat
 						const double ry = yaw * M_PI / 180 * lr, rp = pitch * M_PI / 180;
 						AuPoint d = (ahead * cos(ry) + side * sin(ry)) * cos(rp) + AuPoint(0, 0, sin(rp));
 						d.Unit();
-						const AuPoint end = view.eye + d * far;
-						double best = far;
+						const AuPoint end = view.eye + d * maxDist;
+						double best = maxDist;
 						const Target* hit = 0;
 						for(const Target& t : targets)
 						{
-							const double entry = BoxEntry(view.eye, d, t.mn, t.mx, far);
+							const double entry = BoxEntry(view.eye, d, t.mn, t.mx, maxDist);
 							if(entry < 0 || entry >= best)
 								continue;
 							AuPoint at = end;

@@ -1,5 +1,11 @@
 # Changes and known issues
 
+## 9 November 2026: release 0.3.7-beta-rc3
+
+rc2 with one fix: the Windows build failed, because `src/view.cpp` used
+`far` as a name, which MinGW's headers define as a macro (now `maxDist`).
+rc2 was tagged but never released as downloads.
+
 ## 8 November 2026: release 0.3.7-beta-rc2
 
 The second release candidate: everything since 0.3.7-beta-rc1, below. See

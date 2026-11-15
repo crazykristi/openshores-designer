@@ -36,6 +36,9 @@
 #include <QStringList>
 #include <QVector>
 
+#include "building.h"
+#include "decal.h"
+
 // The four triangles of a cell, named after the cell edge they stand on.
 enum TriSide
 {
@@ -123,7 +126,9 @@ struct PlanDoor
 	QList<QPointF> buttons;
 	// Wall windows only: how this one is made. "" as the plan's windowStyle,
 	// "frame" cut with a window jig (a frame round it), "hull" the hull's own
-	// triangles become the glass (follows the hull).
+	// triangles become the glass (follows the hull) the plan's way
+	// (hullWindowGlass), or one of those ways for this window alone:
+	// "faces", "pane" or "slope" (see hullWindowGlass).
 	QString	style;
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
@@ -188,7 +193,56 @@ struct PlanParking
 	// top of the hull. It does not have to lie in one room; it only must not
 	// overlap another landing spot on the same deck.
 	bool	spacecraft = false;
+	bool	rocket = false;		// A space rocket spot (10 by 10 m), buildings only.
+	bool	water = false;		// A water vehicle spot (24 by 12 m), buildings only.
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
+	// A generic vehicle spot (the game's "Vehicle Spot", part type 93) for
+	// one vehicle, by its key in PlanVehicles(): "SUV", "Helicopter", ...
+	// Empty for the typed spots above. The box follows the vehicle's size.
+	QString	vehicle;
+};
+
+// A vehicle a generic vehicle spot can hold: the ones the game's road and
+// air vehicle factories make (DaVehicle::ParkingSpotType). The sizes are
+// the boxes of the game's own models (libAuModelRes, feet, marker objects
+// left out) with a foot to spare all round; where the model is not known,
+// the size of the typed spot of the same kind.
+struct PlanVehicle
+{
+	const char*	key;		// As kept in the plan and in commodity names (CID_<key>).
+	const char*	name;		// For the user.
+	const char*	kind;		// "ground", "water", "space" or "rocket".
+	double		length;		// Feet, along the spot's long side.
+	double		width;
+	bool		measured;	// From the model; otherwise the typed spot's size.
+};
+const QList<PlanVehicle>& PlanVehicles();
+const PlanVehicle* FindPlanVehicle(const QString& key);
+
+// Building mode: an area of the ground (or of a roof or deck), a rectangle of
+// whole cells from (cx0, cy0) up to but not including (cx1, cy1):
+//  * "field": cracked earth the game counts as field (4,000 m² a field);
+//  * "paving": paved ground; "grass": a lawn;
+//  * "buildzone": where other buildings may be built (platforms), on top of
+//    the hull of the deck below, or on the ground on deck 1.
+struct PlanArea
+{
+	int		deck = 0;
+	int		cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
+	QString	kind;
+	bool	skip = false;
+};
+
+// Building mode: a thing put on the ground, a floor or a roof, at a point in
+// cells: "tree", "shrub", "lamp" (a street lamp), "citizen", "guard" or
+// "livestock" (posts).
+struct PlanProp
+{
+	int		deck = 0;
+	double	x = 0;
+	double	y = 0;
+	QString	kind;
+	bool	skip = false;
 };
 
 // An emitter on the hull, put in from a hull triangle of a deck (seen from
@@ -292,7 +346,7 @@ struct PlanStation
 	double	yaw = 0;
 	QString	type;			// A station of the template: "helm", "sensor", "engineer", "firecontrol", ... (StationChoices).
 	QString	seat;			// "chair" (the game's swivel chair), "desk" (an integrated desk), "" the ship's bridge style.
-	int		module = 0;		// Fire control only: the weapon bay it runs; 0 for the ship's.
+	int		module = 0;		// Fire control: the weapon bay it runs; engineer: the FTL drive module it runs; 0 for the ship's.
 	bool	skip = false;
 };
 
@@ -337,6 +391,7 @@ public:
 	QString	name = "Drawn ship";
 	QString	templateKey = "military_frigate";	// What the furnishing follows (shipgen.h, AllTemplates()).
 	QString	ftlDrive = "wormhole-p";			// The FTL drive (Brief::ftlDrive).
+	bool	station = false;				// A space station (SC_Station): built in space, no FTL drive.
 	// Stations of the template left out, and what goes with them:
 	// "shield" (and the shields), "firecontrol" (and the weapon bay),
 	// "transporter".
@@ -381,6 +436,18 @@ public:
 	// shape and edges (the user, 2026-11-06: for model hulls). Where too few
 	// whole triangles fit, the window is cut as usual.
 	QString	windowStyle;
+	// How a window that follows the hull gets its glass (the user,
+	// 2026-11-14: a model's thinned hull has big, odd faces, which stood in the
+	// view as shards):
+	//   "pane"  the hull in front of the window is pressed flat onto one
+	//           upright plane: one clean pane, the hull round it bent in to
+	//           meet it (the default);
+	//   "slope" the same, on a plane along the hull's own slope there;
+	//   "faces" the hull's faces as they are (the way before 14 Nov).
+	QString	hullWindowGlass = "pane";
+	// Inward copies of the hull faces seen from inside through a window
+	// (windowleak.h), so the sky does not show through them.
+	bool	windowLining = true;
 	// The way out of the hull doors: "auto" a ramp where the door is low
 	// enough, else a ladder down to the ground; "ladder" always a ladder;
 	// "none" no way down (a docking door, for a ship that stays in space).
@@ -400,8 +467,13 @@ public:
 	QList<PlanSkylight>	skylights;
 	QList<PlanStair>	stairs;
 	QList<PlanParking>	parking;
+	QList<PlanArea>		areas;			// Building mode.
+	QList<PlanProp>		props;			// Building mode.
 	QList<PlanEmitter>	emitters;
 	QList<PlanPaint>	palette;		// Entry 0 is the base coat.
+	// Images laid over the finished hull (decal.h), in the blueprint's feet.
+	// A relative image path is taken from the plan file's folder.
+	QList<DecalOptions>	decals;
 	// Placed by hand on the Crew page; the build fills in the rest unless
 	// these are off (then only what was placed by hand).
 	QList<PlanStation>	stations;
@@ -428,6 +500,16 @@ public:
 	// on 8 November 2026), for a plan with nothing drawn yet.
 	void	MakeFighter(bool sizes);
 	static const double kFighterCellFeet, kFighterDeckFeet;
+	// Building mode: the plan is a building, not a ship. Deck 1 stands on
+	// the ground; the build makes a building blueprint (AuBdDesign) and
+	// furnishes it from 'building' (industry, structure, volumes, parking)
+	// with the building generator, which leaves the drawn rooms as they are.
+	BuildingBrief	building;
+	bool	IsBuilding() const { return mode == "building"; }
+	// Makes this plan a building of the template (building.h,
+	// AllBuildingTemplates): the mode, the brief, and for a plan with
+	// nothing drawn yet storeys of a building's height.
+	void	MakeBuilding(const QString& buildingTemplate, bool sizes);
 	// Of the kinds the Build page lists: key and label.
 	static QList<QPair<QString, QString> > BuildKinds();
 	// A copy with what the build leaves out taken away: the kinds in
@@ -446,6 +528,21 @@ public:
 	// Adds a deck on top, or below with 'below'.
 	void	AddDeck(bool below = false);
 	void	RemoveDeck(int deck);
+	// Puts `times` copies of a deck straight on top of it; the decks above
+	// move up. With `withRooms` the copies have the deck's rooms (as new
+	// rooms with their own names, but a turbolift stays the same room, so
+	// its shaft carries on up), doors, windows and everything else placed
+	// on it; without, only its hull and paint (the floor). Then tidied:
+	// ladders and stairs that no longer meet go. Returns the rooms added.
+	int		CopyDeck(int deck, int times, bool withRooms);
+
+	// Turbolifts (IsLiftRoomType) only work on one vertical axis: the car
+	// runs straight up and down, in the shape it has on its lowest deck.
+	// What breaks that, one line each: a stop drawn on other cells than the
+	// lowest one, or a deck missing in the middle of the shaft.
+	QStringList	LiftProblems() const;
+	// The lowest deck a room is drawn on, or -1.
+	int		RoomLowestDeck(int room) const;
 	// Flips the plan, or only one deck of it (deck >= 0): fore and aft
 	// swapped (x mirrored), port and starboard (y mirrored), and, for the
 	// whole plan only, upside down (the decks in the opposite order). Both x
@@ -514,7 +611,15 @@ public:
 	bool	SkylightFits(const PlanSkylight& window) const;		// Room (a whole cell, or the triangle) with no room beyond it; a canopy may be over hull too.
 	bool	WindowIsHull(const PlanDoor& window) const
 	{
-		return window.style == "hull" || (window.style.isEmpty() && windowStyle == "hull");
+		return window.style == "hull" || window.style == "faces" || window.style == "pane" || window.style == "slope"
+				|| (window.style.isEmpty() && windowStyle == "hull");
+	}
+	// How a hull window gets its glass: "faces", "pane" or "slope".
+	QString	WindowGlass(const PlanDoor& window) const
+	{
+		if(window.style == "faces" || window.style == "pane" || window.style == "slope")
+			return window.style;
+		return hullWindowGlass;
 	}
 	bool	SkylightIsHull(const PlanSkylight& window) const;		// Its glass follows the hull.
 	int		ParkingAt(int deck, int cx, int cy) const;			// Index in parking, -1 if none.

@@ -33,6 +33,8 @@
 #include "audit.h"
 #include "view.h"
 #include "building.h"
+#include "decal.h"
+#include "windowleak.h"
 #include "dgdata.h"
 #include "generate.h"
 #include "interior.h"
@@ -765,6 +767,30 @@ int cmdViewCheck(const QStringList& given)
 	return allAhead ? 0 : 1;
 }
 
+// Holes round the windows (windowleak.h).
+int cmdWindowCheck(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		out() << "usage: shipgen window-check <design.SoH>\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	if(!design)
+	{
+		out() << "cannot read " << args[0] << "\n";
+		return 1;
+	}
+	const WindowLeaks leaks = FindWindowLeaks(*design);
+	out() << "Windows      : " << leaks.windows << "\n";
+	out() << "Leaky windows: " << leaks.leaky << " (" << leaks.leaks << " of " << leaks.rays << " rays; " << leaks.escapes
+			<< " through an open hole, the rest at the hull's inside)\n";
+	for(const QString& l : leaks.lines)
+		out() << "  " << l << "\n";
+	delete design;
+	return leaks.leaky ? 1 : 0;
+}
+
 int cmdCrewCheck(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -1115,6 +1141,121 @@ int cmdResave(const QStringList& args)
 	return 0;
 }
 
+// shipgen decal <in.SoH> <out.SoH> <image> [options]
+int cmdDecal(const QStringList& args)
+{
+	const char* usageText =
+		"usage: shipgen decal <in.SoH> <out.SoH> <image> [--from <side|x,y,z>] [--at <x,y,z>] [--width <ft>]\n"
+		"                     [--rotate <deg>] [--mirror] [--flat | --wrap] [--sides one|both|both-mirrored]\n"
+		"                     [--self-lit <0..1>] [--opacity <0..1>] [--max-faces <n>] [--force]\n";
+	if(args.size() < 3)
+	{
+		err() << usageText;
+		return 2;
+	}
+	DecalOptions opts;
+	opts.image = args[2];
+	int maxFaces = 0;
+	bool force = false;
+	for(int i = 3; i < args.size(); ++i)
+	{
+		const QString a = args.at(i);
+		const bool hasNext = i + 1 < args.size();
+		if(a == "--from" && hasNext)
+		{
+			if(!DecalFromDirection(args.at(++i), opts.fromX, opts.fromY, opts.fromZ))
+			{
+				err() << "unknown direction: " << args.at(i) << "\n";
+				return 2;
+			}
+		}
+		else if(a == "--at" && hasNext)
+		{
+			const QStringList p = args.at(++i).split(',');
+			if(p.size() != 3)
+			{
+				err() << "--at takes x,y,z in feet\n";
+				return 2;
+			}
+			opts.haveAim = true;
+			opts.aimX = p.at(0).toDouble();
+			opts.aimY = p.at(1).toDouble();
+			opts.aimZ = p.at(2).toDouble();
+		}
+		else if(a == "--width" && hasNext)		opts.width = args.at(++i).toDouble();
+		else if(a == "--rotate" && hasNext)		opts.rotate = args.at(++i).toDouble();
+		else if(a == "--mirror")				opts.mirror = true;
+		else if(a == "--flat")					opts.projection = DecalProjection::Flat;
+		else if(a == "--wrap")					opts.projection = DecalProjection::Wrap;
+		else if(a == "--sides" && hasNext)
+		{
+			if(!DecalSidesFromName(args.at(++i), opts.sides))
+			{
+				err() << "--sides takes one, both or both-mirrored\n";
+				return 2;
+			}
+		}
+		else if(a == "--self-lit" && hasNext)	opts.selfLit = args.at(++i).toDouble();
+		else if(a == "--opacity" && hasNext)	opts.opacity = args.at(++i).toDouble();
+		else if(a == "--max-faces" && hasNext)	maxFaces = args.at(++i).toInt();
+		else if(a == "--force")					force = true;
+		else
+		{
+			err() << "unknown option: " << a << "\n" << usageText;
+			return 2;
+		}
+	}
+
+	DesignLoadReport report;
+	AuDesign* design = LoadDesign(args[0], &report);
+	if(!design)
+	{
+		err() << "could not load: " << args[0] << "\n";
+		return 1;
+	}
+	if(report.truncated)
+	{
+		err() << "refusing to write an incomplete design\n";
+		delete design;
+		return 1;
+	}
+	const int facesBefore = DesignFaceCount(*design);
+	DecalResult result;
+	QString error;
+	if(!AddDecal(*design, opts, result, error))
+	{
+		err() << "decal: " << error << "\n";
+		delete design;
+		return 1;
+	}
+	for(const QString& note : result.notes)
+		out() << note << "\n";
+	const int facesAfter = DesignFaceCount(*design);
+	const double size = DesignSizePercent(*design);
+	out() << QString("the design now has %1 faces (was %2) and is at %3% of the game's size limit.\n")
+			.arg(facesAfter).arg(facesBefore).arg(size, 0, 'f', 1);
+	const bool overFaces = maxFaces > 0 && facesAfter > maxFaces;
+	if((overFaces || size > 100) && !force)
+	{
+		if(overFaces)
+			err() << "that is over the face budget of " << maxFaces << ".";
+		else
+			err() << "that is over the game's size limit.";
+		err() << " Nothing was written; add --force to write it anyway.\n";
+		delete design;
+		return 3;
+	}
+	if(!SaveDesign(*design, args[1], report.opaque))
+	{
+		err() << "could not write: " << args[1] << "\n";
+		delete design;
+		return 1;
+	}
+	out() << "wrote " << args[1] << "\n";
+	delete design;
+	return 0;
+}
+
 int cmdPlanExample(const QStringList& args)
 {
 	if(args.size() != 1)
@@ -1190,6 +1331,50 @@ int cmdPlanFlip(const QStringList& args)
 	if(lost > 0)
 		out() << " (" << lost << " ladder(s), stairs or parking spot(s) no longer fitted)";
 	out() << "\n";
+	return 0;
+}
+
+int cmdPlanFromBlueprint(const QStringList& args)
+{
+	// shipgen plan-from-blueprint <design.SoH> <plan.json> [--cell <ft>] [--deck <ft>]
+	QString designFile, planFile;
+	PlanFromModelOptions options;
+	for(int i = 0; i < args.size(); ++i)
+	{
+		const QString& a = args.at(i);
+		if((a == "--cell" || a == "--deck") && i + 1 < args.size())
+			(a == "--cell" ? options.cellFeet : options.deckFeet) = args.at(++i).toDouble();
+		else if(designFile.isEmpty())
+			designFile = a;
+		else if(planFile.isEmpty())
+			planFile = a;
+		else
+		{
+			err() << "unknown option: " << a << "\n";
+			return 2;
+		}
+	}
+	if(designFile.isEmpty() || planFile.isEmpty())
+	{
+		err() << "usage: shipgen plan-from-blueprint <design.SoH> <plan.json> [--cell <ft>] [--deck <ft>]\n";
+		return 2;
+	}
+	TriPlan plan;
+	QStringList notes;
+	QString error;
+	if(!PlanFromBlueprint(designFile, options, plan, notes, error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	for(const QString& n : notes)
+		out() << n << "\n";
+	if(!plan.Save(planFile, error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	out() << "wrote " << planFile << "\n";
 	return 0;
 }
 
@@ -1361,7 +1546,7 @@ int cmdBuildPlan(const QStringList& args)
 		outFile = QFileInfo(planFile).dir().filePath(SanitiseName(plan.name) + ".SoH");
 
 	PlanBuildReport report;
-	AuScDesign* design = BuildPlanDesign(plan, options, report);
+	AuDesign* design = BuildPlanDesign(plan, options, report);
 	out() << "Plan         : " << plan.name << " (" << plan.Width() << " x " << plan.Depth() << " cells of "
 		  << plan.cellFeet << " feet, " << plan.Decks() << " decks)\n";
 	out() << "Hull         : " << report.hullFaces << " faces, about " << qRound(report.hullVolumeM3) << " cubic meters\n";
@@ -1376,13 +1561,20 @@ int cmdBuildPlan(const QStringList& args)
 	if(report.canopies)
 		out() << "Canopies     : " << report.canopies << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
-	out() << "Zero-G joins : " << report.zeroGJoins << "\n";
+	if(report.windowLining)
+		out() << "Window lining: " << report.windowLining << " faces\n";
+	out() << "Zero-G joins : " << report.zeroGJoins;
+	if(report.zeroGNoLadder)
+		out() << " (" << report.zeroGNoLadder << " without a ladder)";
+	out() << "\n";
 	out() << "Open to below: " << report.openJoins << "\n";
 	out() << "Parking      : " << report.parking << "\n";
 	out() << "Ramps        : " << report.ramps << "\n";
 	out() << "Stairs       : " << report.stairs << "\n";
 	out() << "Contrails    : " << report.contrails << "\n";
 	out() << "Markings     : " << report.markings << "\n";
+	if(report.decals)
+		out() << "Decals       : " << report.decals << " (" << report.decalFaces << " faces)\n";
 	out() << "Door buttons : " << report.doorButtons << "\n";
 	out() << "Inner windows: " << report.innerWindows << "\n";
 	out() << "Hull windows : " << report.hullWindows << "\n";
@@ -1413,7 +1605,9 @@ int cmdBuildPlan(const QStringList& args)
 	for(const QString& w : report.engineWarnings)
 		out() << "  " << w << "\n";
 
-	const bool saved = design->SaveToFile(outFile, SOH_FILE_TYPE);
+	const bool saved = SaveDesign(*design, outFile, QList<OpaquePart>(), report.vehicleSpots);
+	if(!report.vehicleSpots.isEmpty())
+		out() << "Vehicle spots: " << report.vehicleSpots.size() << " (saved as part type 93)\n";
 	out() << (saved ? "\nsaved as " : "\ncould not write ") << outFile << "\n";
 	delete design;
 	return saved ? (report.ok ? 0 : 3) : 1;
@@ -1463,7 +1657,7 @@ int cmdInspect(const QStringList& args)
 	}
 
 	if(sc)
-		out() << "Structure    : " << int(sc->Structure()) << " (spacecraft)\n";
+		out() << "Structure    : " << int(sc->Structure()) << (sc->Structure() == SC_Station ? " (space station)\n" : " (spacecraft)\n");
 	else
 	{
 		out() << "Structure    : " << int(bd->Structure()) << " (building)\n";
@@ -2098,6 +2292,7 @@ int cmdGenerate(const QStringList& args)
 	bool repair = true;
 	bool allowOpenHull = false;
 	bool keepAxes = false;
+	bool station = false;
 	QString ftlDrive;
 	QString presetKey;
 	int variations = 1;
@@ -2140,6 +2335,7 @@ int cmdGenerate(const QStringList& args)
 		else if(a == "--no-repair")			repair = false;
 		else if(a == "--allow-open-hull")		allowOpenHull = true;
 		else if(a == "--keep-axes")			keepAxes = true;
+		else if(a == "--station")			station = true;
 		else if(a == "--ftl" && hasNext)		ftlDrive = args.at(++i);
 		else if(a == "--vary" && hasNext)	variations = args.at(++i).toInt();
 		else if(a == "--wall" && hasNext)		wall = args.at(++i).toDouble();
@@ -2213,6 +2409,8 @@ int cmdGenerate(const QStringList& args)
 	}
 	if(!brief.templateName.isEmpty())
 		ApplyTemplate(brief, brief.templateName);
+	if(station && ftlDrive.isEmpty())
+		ftlDrive = "none";	// A station has no FTL drive.
 	if(!ftlDrive.isEmpty())
 	{
 		if(ftlDrive != "none" && FtlDriveModule(ftlDrive) == CID_Invalid)
@@ -2261,7 +2459,7 @@ int cmdGenerate(const QStringList& args)
 		baseDesign.SetArchitectId(AuId(0));
 		baseDesign.SetArchitectName("shipgen");
 		baseDesign.SetName(variations > 1 ? QString("%1 %2").arg(brief.name).arg(variation + 1) : brief.name);
-		baseDesign.SetStructure(SC_Spaceship);
+		baseDesign.SetStructure(station ? SC_Station : SC_Spaceship);
 		baseDesign.SetStreamline(SLINE_None);
 		if(!brief.description.isEmpty())
 			baseDesign.SetDescription(brief.description);
@@ -2567,10 +2765,15 @@ void usage()
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
 	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
+	out() << "  shipgen window-check <design.SoH>  holes round the windows: rays from the room that see out past the glass\n";
 	out() << "  shipgen view-check <design.SoH> [--eye ft]  what the helm and the captain see from their seats\n";
 	out() << "  shipgen cut       <in.SoH> <out.SoH> window|door <hull part> <room part|0> x0 y0 z0 x1 y1 z1\n";
 	out() << "                     cut a window or door through the hull (and a room) the way the game's designer does\n";
 	out() << "  shipgen resave    <in.SoH> <out.SoH>  read and write back, keeping parts this build cannot read\n";
+	out() << "  shipgen decal     <in.SoH> <out.SoH> <image> [--from <side|x,y,z>] [--at <x,y,z>] [--width <ft>]\n"
+			 "                    [--rotate <deg>] [--mirror] [--flat | --wrap] [--sides one|both|both-mirrored]\n"
+			 "                    [--self-lit <0..1>] [--opacity <0..1>] [--max-faces <n>] [--force]\n"
+			 "                                       put an image onto the hull as a decal (at most 256 pixels)\n";
 	out() << "  shipgen plan-example <plan.json>     write a small triangle plan to start from\n";
 	out() << "  shipgen plan-flip <plan.json> <out.json> [--turn] [--mirror] [--fore-aft] [--upside-down]\n"
 			 "                    [--clockwise | --anticlockwise] [--deck <n>]\n"
@@ -2578,6 +2781,8 @@ void usage()
 			 "                                       quarter turn (seen from above), all of it or one deck\n";
 	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up] [--fighter]\n";
 	out() << "                     a triangle plan with its hull filled in from a 3D model\n";
+	out() << "  shipgen plan-from-blueprint <design.SoH> <plan.json> [--cell <ft>] [--deck <ft>]\n";
+	out() << "                     a triangle plan from a blueprint: its hull, rooms, doors, ladders and lifts\n";
 	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n";
 	out() << "                     turn a triangle plan (from shipgen-designer) into a blueprint\n";
 	out() << "  shipgen validate  <design.SoH>\n";
@@ -2601,6 +2806,7 @@ void usage()
 	out() << "                     [--allow-open-hull]  place rooms in a hull that is not closed (unverified)\n";
 	out() << "                     [--ftl none|warp1..warp9|wormhole-p|wormhole-pn|wormhole-pnn]  default wormhole-p\n";
 	out() << "                     [--keep-axes]  do not turn a hull that is longer along X (the game's fore is +Y)\n";
+	out() << "                     [--station]  a space station: built in space, no FTL drive (experimental)\n";
 	out() << "  shipgen generate-building --brief <file.json> [--out <dir>] [--name <name>]\n";
 	out() << "                     [--layout grid|corridor|auto] [--model <file>] [--fit <feet>]\n";
 	out() << "                     [--texture <file.png|#rrggbb>]... [--paint <mode>] [--paint-scale <feet>]\n";
@@ -2924,18 +3130,21 @@ int main(int argc, char* argv[])
 	if(command == "inspect")			return cmdInspect(rest);
 	if(command == "audit")				return cmdAudit(rest);
 	if(command == "resave")				return cmdResave(rest);
+	if(command == "decal")				return cmdDecal(rest);
 	if(command == "parts")				return cmdParts(rest);
 	if(command == "cut")				return cmdCut(rest);
 	if(command == "faces")				return cmdFaces(rest);
 	if(command == "sight")				return cmdSight(rest);
 	if(command == "walk")				return cmdWalk(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
+	if(command == "window-check")		return cmdWindowCheck(rest);
 	if(command == "view-check")			return cmdViewCheck(rest);
 	if(command == "door-check")			return cmdDoorCheck(rest);
 	if(command == "kit")				return cmdKit(rest);
 	if(command == "plan-example")		return cmdPlanExample(rest);
 	if(command == "plan-flip")			return cmdPlanFlip(rest);
 	if(command == "plan-from-model")	return cmdPlanFromModel(rest);
+	if(command == "plan-from-blueprint")	return cmdPlanFromBlueprint(rest);
 	if(command == "build-plan")			return cmdBuildPlan(rest);
 	if(command == "validate")			return cmdValidate(rest);
 	if(command == "templates")			return cmdTemplates();

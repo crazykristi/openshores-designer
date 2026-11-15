@@ -684,6 +684,12 @@ void MainWindow::RunWizardRequest(const GenerationRequest& request)
 	m_statusLabel->setText(tr("%1 candidate(s) generated.").arg(m_candidates.size()));
 }
 
+void MainWindow::SetPreviewView(float yaw, float pitch, float zoom)
+{
+	if(m_preview)
+		m_preview->SetViewAngles(yaw, pitch, zoom);
+}
+
 QImage MainWindow::PreviewImage()
 {
 	if(!m_preview)

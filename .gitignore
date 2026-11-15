@@ -21,3 +21,10 @@ third_party/SoH-source/
 .idea/
 __pycache__/
 build-appimage.log
+
+# Documentation, exported blueprints, and handoff and internal notes kept
+# for working with Claude: local only, not in the repository.
+docs/
+exported/
+HANDOFF.md
+STATUS_*.md

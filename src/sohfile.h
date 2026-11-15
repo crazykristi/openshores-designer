@@ -42,6 +42,19 @@ struct DesignLoadReport
 	QStringList			notes;					// What happened, for the user.
 };
 
+// A generic vehicle spot (the game's AuScVehicleSpot, part type 93), which
+// the engine we build against does not know. The build puts a ground
+// vehicle parking spot in its place; SaveDesign writes that part's record
+// as type 93 with the vehicle's commodity and a rotation after the icon
+// data, the layout the game's AuScVehicleSpot::operator>> writes.
+struct VehicleSpotSave
+{
+	quint16		id = 0;			// The ground parking spot standing in for it.
+	qint16		commodity = 0;	// The vehicle (COMMODITYID, e.g. CID_SUV).
+	double		rotation = 0;	// The vehicle's turn on the spot, in radians.
+};
+const quint8 kPartTypeVehicleSpot = 93;
+
 // The group name of the placeholder that holds an opaque part's id.
 const char* OpaquePlaceholderGroup();
 
@@ -52,7 +65,9 @@ AuDesign* LoadDesign(const QString& fileName, DesignLoadReport* report = 0);
 
 // Saves a design. Placeholders are replaced by the opaque parts they stand
 // for; an opaque part whose placeholder has gone (deleted) is left out.
-bool SaveDesign(const AuDesign& design, const QString& fileName, const QList<OpaquePart>& opaque = QList<OpaquePart>());
+// The ground parking spots named in `vehicles` are written as vehicle spots.
+bool SaveDesign(const AuDesign& design, const QString& fileName, const QList<OpaquePart>& opaque = QList<OpaquePart>(),
+		const QList<VehicleSpotSave>& vehicles = QList<VehicleSpotSave>());
 
 // The decrypted, uncompressed design bytes of a .SoH file, as
 // AuDesign::Pack() writes them. Empty when the file cannot be read.

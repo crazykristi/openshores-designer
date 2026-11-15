@@ -7,6 +7,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QSet>
 #include <QStringList>
 #include <QStringList>
 
@@ -142,6 +143,7 @@ struct LayoutResult
 	int				roomsMissing = 0;
 	QStringList		missingRooms;
 	int				stationsPlaced = 0;
+	QSet<quint16>	handModuleParts;	// Fire control stations placed by hand with their own weapon bay chosen.
 	int				berthsPlaced = 0;
 	int				doorsPlaced = 0;
 	int				windowsPlaced = 0;

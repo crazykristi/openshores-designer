@@ -59,7 +59,7 @@ for f in "$DESIGNS"/*.soh "$DESIGNS"/*.SoH; do
 done
 
 TEMPLATES=(military_frigate cargo_hauler science_lab colony_transport patrol_cutter shuttle)
-BUILDING_TEMPLATES=(office_block residential barracks command_post warehouse factory biodome)
+BUILDING_TEMPLATES=(office_block residential barracks command_post warehouse factory biodome power_plant farm park street_light sea_platform ground_platform aerial_platform)
 
 pass=0
 fail=0
@@ -218,6 +218,23 @@ if [ -n "$frigate" ]; then
 	fi
 fi
 
+# A blueprint back into a plan: its hull, rooms and doors; the plan builds
+# into a blueprint the engine accepts.
+if [ -n "$frigate" ]; then
+	"$SHIPGEN" plan-from-blueprint "$frigate" "$WORK/frigate-plan.json" > "$WORK/frigate-import.txt" 2>&1
+	rooms=$(grep -o "From the blueprint: [0-9]* rooms" "$WORK/frigate-import.txt" | grep -o "[0-9]*")
+	"$SHIPGEN" build-plan "$WORK/frigate-plan.json" --out "$WORK/frigate-again.SoH" > "$WORK/frigate-again.txt" 2>&1
+	doors=$(grep -o "triangles, [0-9]* doors" "$WORK/frigate-import.txt" | grep -o "[0-9]*")
+	if [ -n "$rooms" ] && [ "$rooms" -ge 4 ] && [ "${doors:-0}" -ge 4 ] && grep -q "Errors (0)" "$WORK/frigate-again.txt"; then
+		pass=$((pass+1))
+		echo "  ok    a blueprint becomes a plan with its rooms ($rooms) and doors ($doors), and builds again without errors"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a blueprint did not become a plan that builds"
+		grep -E "From the blueprint|Error" "$WORK/frigate-import.txt" "$WORK/frigate-again.txt" | head -4
+	fi
+fi
+
 echo
 echo "== Buildings =="
 for t in "${BUILDING_TEMPLATES[@]}"; do
@@ -237,6 +254,41 @@ for t in "${BUILDING_TEMPLATES[@]}"; do
 		check_audit "$t / $(basename "$design")" "$design"
 	done
 done
+# Lots of generated parking: no spot overlaps another, a berth or the
+# hull, and the site covers them all.
+"$SHIPGEN" building-brief office_block "$WORK/parking.json" > /dev/null
+python3 - "$WORK/parking.json" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+b.update(groundParking=14, spaceParking=6, rocketParking=3, spacecraftParking=1)
+json.dump(b, open(sys.argv[1], 'w'))
+PY
+rm -rf "$WORK/bout/parking"
+"$SHIPGEN" generate-building --brief "$WORK/parking.json" --out "$WORK/bout/parking" > /dev/null 2>&1
+pdesign=$(ls "$WORK"/bout/parking/*.SoH 2>/dev/null | head -1)
+if [ -n "$pdesign" ] && "$SHIPGEN" parts "$pdesign" | python3 -c '
+import re, sys
+R = []; site = None
+for l in sys.stdin:
+    m = re.search(r"\d+  (.*?)  \d+ tris.*x (\S+)\.\.(\S+)  y (\S+)\.\.(\S+)", l)
+    if not m: continue
+    n = m.group(1); r = tuple(map(float, m.group(2, 3, 4, 5)))
+    if "Parking" in n or n == "Hull": R.append(r)
+    if n == "Site": site = r
+if len(R) != 25 or not site: sys.exit(1)
+for i in range(len(R)):
+    for j in range(i + 1, len(R)):
+        a, b = R[i], R[j]
+        if a[0] < b[1] - .01 and b[0] < a[1] - .01 and a[2] < b[3] - .01 and b[2] < a[3] - .01: sys.exit(1)
+for r in R:
+    if r[0] < site[0] - .1 or r[1] > site[1] + .1 or r[2] < site[2] - .1 or r[3] > site[3] + .1: sys.exit(1)
+'; then
+	pass=$((pass+1))
+	echo "  ok    generated parking spots never overlap and lie on the site"
+else
+	fail=$((fail+1))
+	echo "  FAIL  generated parking spots overlap, or stick out of the site"
+fi
 # A building with a teleporter room: its transporter stands in that room
 # and has pads on the floor there, clear of it and of each other.
 "$SHIPGEN" building-brief office_block "$WORK/teleporter.json" > /dev/null
@@ -313,6 +365,43 @@ else
 		echo "  FAIL  the hull faces have no texture coordinates"
 	fi
 	check "painted ship / $(basename "$paint_design")" "$paint_design"
+
+	# Decals: an image laid over the hull as the game's Decal part, trimmed to
+	# the image and lifted off the hull. A soft-edged image (half-transparent
+	# pixels) has to be blended, which only faces below full opacity are.
+	printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAQCAYAAAB3AH1ZAAAAZ0lEQVR42mNgGGDAiEvihJzcf3Qxi0ePGGnuAGwW09IhTKRaToo6kkKAHEORQ0Iu6k4DqfofLVNpYBroRMhESZBSIyoGRwiMOmDAHUBuwUKNAolpUNUFpGQrahXHTOQYSs26YMBrQwBlriga0aBd1AAAAABJRU5ErkJggg==' | base64 -d > "$WORK/decal.png"
+	decal_out="$out/decal.SoH"
+	if "$SHIPGEN" decal "$paint_design" "$decal_out" "$WORK/decal.png" --from starboard --width 12 --sides both \
+			> "$WORK/decal.txt" 2>&1 && grep -q 'in 2 part(s)' "$WORK/decal.txt" && grep -q 'soft edges' "$WORK/decal.txt" \
+			&& [ "$("$SHIPGEN" parts "$decal_out" 2>/dev/null | grep -c ' Decal ')" -eq 2 ]; then
+		pass=$((pass+1))
+		echo "  ok    a decal goes on both sides of the hull as two Decal parts"
+		check "decal on the painted ship" "$decal_out"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the decal did not go on both sides"
+		head -3 "$WORK/decal.txt"
+	fi
+	if "$SHIPGEN" decal "$paint_design" "$out/decal-wrap.SoH" "$WORK/decal.png" --from top --width 10 --wrap \
+			> "$WORK/decal.txt" 2>&1 && grep -q 'in 1 part(s), wrap' "$WORK/decal.txt"; then
+		pass=$((pass+1))
+		echo "  ok    a decal wraps round the hull from the top"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the wrapped decal failed"
+		head -3 "$WORK/decal.txt"
+	fi
+	# Over the face budget: nothing is written unless forced.
+	rm -f "$out/over.SoH"
+	"$SHIPGEN" decal "$paint_design" "$out/over.SoH" "$WORK/decal.png" --max-faces 10 > /dev/null 2>&1
+	code=$?
+	if [ "$code" -eq 3 ] && [ ! -e "$out/over.SoH" ]; then
+		pass=$((pass+1))
+		echo "  ok    a decal over the face budget is refused"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a decal over the face budget was not refused (exit $code)"
+	fi
 fi
 
 echo
@@ -732,6 +821,63 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		echo "  FAIL  the example plan lost doors or the ladder"
 		sed -n 1,12p "$WORK/plan/build.txt"
 	fi
+	# Decals kept in the plan, with the image next to it, go on at the end of
+	# the build.
+	cp "$WORK/decal.png" "$WORK/plan/decal.png"
+	sed 's/"format": "shipgen-triplan",/"format": "shipgen-triplan", "decals": [ { "image": "decal.png", "projection": "flat", "from": [1, 0, 0], "width": 8, "sides": "both" } ],/' \
+		"$WORK/plan/example.json" > "$WORK/plan/decals.json"
+	if "$SHIPGEN" build-plan "$WORK/plan/decals.json" --out "$WORK/plan/decals.SoH" > "$WORK/plan/decals.txt" 2>&1 \
+			&& grep -q '^Decals       : 2 ' "$WORK/plan/decals.txt"; then
+		pass=$((pass+1))
+		echo "  ok    the plan's decals go on the built hull"
+		check "the example plan with decals" "$WORK/plan/decals.SoH"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the plan's decals did not go on"
+		grep -i 'decal' "$WORK/plan/decals.txt" | head -3
+	fi
+	# A building's decals as well (its build used to end before them, silently).
+	sed 's/"format": "shipgen-triplan",/"format": "shipgen-triplan", "mode": "building", "decals": [ { "image": "decal.png", "projection": "flat", "from": [0, -1, 0], "width": 8 } ],/' \
+		"$WORK/plan/example.json" > "$WORK/plan/bdecals.json"
+	if "$SHIPGEN" build-plan "$WORK/plan/bdecals.json" --out "$WORK/plan/bdecals.SoH" > "$WORK/plan/bdecals.txt" 2>&1 \
+			&& grep -q '^Decals       : 1 ' "$WORK/plan/bdecals.txt" &&
+			[ "$("$SHIPGEN" parts "$WORK/plan/bdecals.SoH" 2>&1 | grep -c '  Decal  ')" = 1 ]; then
+		pass=$((pass+1))
+		echo "  ok    a building's decals go on it"
+		check "the building with a decal" "$WORK/plan/bdecals.SoH"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a building's decals did not go on"
+		grep -i 'decal' "$WORK/plan/bdecals.txt" | head -3
+	fi
+	# Maintenance consoles (service panels): on a real wall of the engine
+	# room, never in a doorway or out of the hull; none without an engine room.
+	"$SHIPGEN" parts "$WORK/plan/example.SoH" > "$WORK/plan/example-parts.txt" 2>&1
+	sed 's/"type": "Engine Room"/"type": "Hall"/' "$WORK/plan/example.json" > "$WORK/plan/no-engine.json"
+	"$SHIPGEN" build-plan "$WORK/plan/no-engine.json" --out "$WORK/plan/no-engine.SoH" > /dev/null 2>&1
+	if [ "$(grep -c 'Service Panel' "$WORK/plan/example-parts.txt")" = 5 ] &&
+			! grep 'Service Panel' "$WORK/plan/example-parts.txt" | grep -qv 'y -50.0..-50.0' &&
+			! "$SHIPGEN" audit "$WORK/plan/example.SoH" 2>&1 | grep -q 'Service Panel' &&
+			[ "$("$SHIPGEN" parts "$WORK/plan/no-engine.SoH" 2>&1 | grep -c 'Service Panel')" = 0 ]; then
+		pass=$((pass+1))
+		echo "  ok    maintenance consoles go on a free wall of the engine room, and only there"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  maintenance consoles are misplaced"
+		grep 'Service Panel' "$WORK/plan/example-parts.txt"
+	fi
+	# The hull's inside, seen through the windows (where the game shows the
+	# sky), is covered: few rays from the rooms still see out past the glass.
+	"$SHIPGEN" window-check "$WORK/plan/example.SoH" > "$WORK/plan/window-check.txt" 2>&1
+	if grep -q '^Window lining: [0-9]* faces$' "$WORK/plan/build.txt" &&
+			awk '/^Leaky windows/ { gsub(/[(]/, ""); split($0, f, " "); leaks = f[4] + 0; rays = f[6] + 0 } END { exit !(rays > 0 && leaks * 50 < rays) }' "$WORK/plan/window-check.txt"; then
+		pass=$((pass+1))
+		echo "  ok    the hull's inside behind the windows is lined (under 2 % of rays see out past the glass)"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  the hull's inside shows through round the windows"
+		grep -E '^Window lining' "$WORK/plan/build.txt"; sed -n 1,3p "$WORK/plan/window-check.txt"
+	fi
 	if grep -q '^Windows      : 29$' "$WORK/plan/build.txt"; then
 		pass=$((pass+1))
 		echo "  ok    the example plan has its 29 windows (8 at the sides of the bridge, 20 round the bow, 1 in the hall)"
@@ -871,6 +1017,35 @@ PY
 		echo "  FAIL  fighter mode"
 		grep -E 'Fighter|^Stations|^Berths|Error|Warning' "$WORK/plan/fighter.txt" "$WORK/plan/fighter-cockpit.txt"
 	fi
+	# Building mode: the example plan drawn as an office building. It is
+	# built as a building blueprint (structure 3, office), stands on the
+	# ground, gets a site and parking, and the engine takes it.
+	"$SHIPGEN" building-brief office_block "$WORK/plan/office-brief.json" > /dev/null 2>&1
+	python3 - "$WORK/plan/example.json" "$WORK/plan/office-brief.json" "$WORK/plan/building.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+b = json.load(open(sys.argv[2]))
+b['rooms'] = []
+p['mode'] = 'building'
+p['building'] = b
+p['name'] = 'Drawn Office'
+json.dump(p, open(sys.argv[3], 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/building.json" --out "$WORK/plan/building.SoH" > "$WORK/plan/building.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/building.SoH" > "$WORK/plan/building-parts.txt" 2>&1
+	"$SHIPGEN" inspect "$WORK/plan/building.SoH" > "$WORK/plan/building-inspect.txt" 2>&1
+	if grep -q 'Errors (0)' "$WORK/plan/building.txt" &&
+			grep -q ' Site ' "$WORK/plan/building-parts.txt" &&
+			grep -q 'Ground Vehicle Parking Spot' "$WORK/plan/building-parts.txt" &&
+			grep -qi 'building' "$WORK/plan/building-inspect.txt" &&
+			grep -q 'hull volume' "$WORK/plan/building.txt"; then
+		pass=$((pass+1))
+		echo "  ok    building mode: a drawn plan becomes a building blueprint with a site and parking"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  building mode"
+		grep -E 'Error|Warning|Note' "$WORK/plan/building.txt" | head -10
+	fi
 	# A canopy over the cockpit and on over the hull ahead of it: the hull
 	# over it is one window of the cockpit (this test hull has a few large
 	# faces, so it is cut along the outline), nothing reaches out of the
@@ -982,15 +1157,32 @@ d['ladders'] = []
 json.dump(d, open(sys.argv[2], 'w'))
 PY
 	if "$SHIPGEN" build-plan "$WORK/plan/zerog.json" --out "$WORK/plan/zerog.SoH" > "$WORK/plan/zerog.txt" 2>&1 &&
-			grep -q '^Zero-G joins : 1$' "$WORK/plan/zerog.txt" &&
+			grep -q '^Zero-G joins : 1 (1 without a ladder)$' "$WORK/plan/zerog.txt" &&
+			qgrep "Crew may not manage the zero-G shaft" "$WORK/plan/zerog.txt" &&
 			[ "$("$SHIPGEN" parts "$WORK/plan/zerog.SoH" 2>&1 | grep -c 'Room Void .*Drop Shaft.*zero-G')" = 3 ]; then
 		pass=$((pass+1))
-		echo "  ok    zero-G shafts on two decks are one zero-G space"
+		echo "  ok    zero-G shafts on two decks are one zero-G space, with a warning that crew may not climb it"
 		check "the zero-G shaft plan" "$WORK/plan/zerog.SoH"
 	else
 		fail=$((fail+1))
 		echo "  FAIL  zero-G shafts on two decks were not joined"
 		grep -E '^(Zero-G|Rooms)' "$WORK/plan/zerog.txt"
+	fi
+	# A ladder placed by hand in the shaft: the crew's way up instead of the
+	# invisible one, its void zero-G as well, and no warning.
+	sed 's/"ladders": \[\]/"ladders": [{"deck": 0, "x": 21, "y": 7}]/' "$WORK/plan/zerog.json" > "$WORK/plan/zerog-ladder.json"
+	"$SHIPGEN" build-plan "$WORK/plan/zerog-ladder.json" --out "$WORK/plan/zerog-ladder.SoH" > "$WORK/plan/zerog-ladder.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/zerog-ladder.SoH" > "$WORK/plan/zerog-ladder-parts.txt" 2>&1
+	if grep -q '^Zero-G joins : 1$' "$WORK/plan/zerog-ladder.txt" && ! grep -q 'Crew may not' "$WORK/plan/zerog-ladder.txt" &&
+			[ "$(grep -c 'Ladder Path' "$WORK/plan/zerog-ladder-parts.txt")" = 1 ] &&
+			qgrep 'Room Void  \[Ladder .*zero-G' "$WORK/plan/zerog-ladder-parts.txt"; then
+		pass=$((pass+1))
+		echo "  ok    a ladder placed in a zero-G shaft replaces the invisible one and has no gravity"
+		check "the zero-G shaft with a ladder" "$WORK/plan/zerog-ladder.SoH"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  a ladder placed in a zero-G shaft is wrong"
+		grep -E '^(Zero-G|Ladders)|Crew may' "$WORK/plan/zerog-ladder.txt"; grep 'Ladder' "$WORK/plan/zerog-ladder-parts.txt"
 	fi
 
 	# An L-shaped "Open to Deck Below" room over a room on the deck below: the
@@ -1899,6 +2091,28 @@ PY
 		echo "  FAIL  the bay door or the parking spot is wrong"
 		grep -E '^(Doors|Parking)|Errors|Warning' "$WORK/plan/bay.txt" | head -5
 	fi
+	# A generic vehicle spot (the game's Vehicle Spot, part type 93, which
+	# the engine here does not know): built as a ground spot and saved as
+	# type 93 with the vehicle's commodity; an unknown vehicle is left out
+	# with a warning.
+	sed -e 's|^    "parking": \[$|    "parking": [ {"deck": 0, "x": 4, "y": 8, "kind": "vehicle", "vehicle": "DirtBike", "across": true}|' \
+		"$WORK/plan/example.json" > "$WORK/plan/vehicle.json"
+	sed -e 's|^    "parking": \[$|    "parking": [ {"deck": 0, "x": 4, "y": 8, "kind": "vehicle", "vehicle": "Hovercar", "across": true}|' \
+		"$WORK/plan/example.json" > "$WORK/plan/vehicle-bad.json"
+	"$SHIPGEN" build-plan "$WORK/plan/vehicle.json" --out "$WORK/plan/vehicle.SoH" > "$WORK/plan/vehicle.txt" 2>&1
+	"$SHIPGEN" build-plan "$WORK/plan/vehicle-bad.json" --out "$WORK/plan/vehicle-bad.SoH" > "$WORK/plan/vehicle-bad.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/vehicle.SoH" > "$WORK/plan/vehicle-parts.txt" 2>&1
+	if grep -q '^Vehicle spots: 1' "$WORK/plan/vehicle.txt" && grep -q 'Errors (0)' "$WORK/plan/vehicle.txt" &&
+			grep -q 'has type 93' "$WORK/plan/vehicle-parts.txt" &&
+			! grep -q 'Ground Vehicle Parking Spot' "$WORK/plan/vehicle-parts.txt" &&
+			grep -q 'Hovercar.*left out' "$WORK/plan/vehicle-bad.txt" && grep -q '^Parking      : 0$' "$WORK/plan/vehicle-bad.txt"; then
+		pass=$((pass+1))
+		echo "  ok    a generic vehicle spot is saved as part type 93; an unknown vehicle is left out"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  generic vehicle spot"
+		grep -E '^(Parking|Vehicle)|Errors|Warning' "$WORK/plan/vehicle.txt" "$WORK/plan/vehicle-bad.txt" | head -5
+	fi
 	# A spacecraft landing spot: a 238 ft square that need not lie in a room;
 	# a second one overlapping it is dropped, and the build warns that it
 	# reaches past the small example's hull.
@@ -1992,6 +2206,58 @@ PYEOF
 			echo "  FAIL  the turbolift is wrong"
 			grep -E 'Lifts|Errors|Warning|lift' "$WORK/plan/lift.txt" "$WORK/plan/lift14.txt" | head -8
 			grep -E 'Turbo' "$WORK/plan/lift-parts.txt" | head -4; grep 'Crew routes' "$WORK/plan/lift-crew.txt"
+		fi
+		# A turbolift only works on one vertical axis: its stop on deck 2 moved
+		# one cell over is a warning that says so.
+		python3 - "$WORK/plan/lift.json" "$WORK/plan/lift-off.json" <<'PYEOF' 2>/dev/null
+import json, sys
+def dec(sv):
+    out = []
+    for tok in sv.split(','):
+        n, v = tok.split('*'); out += [int(v)] * int(n)
+    return out
+def enc(a):
+    out = []; i = 0
+    while i < len(a):
+        j = i
+        while j < len(a) and a[j] == a[i]: j += 1
+        out.append('%d*%d' % (j - i, a[i])); i = j
+    return ','.join(out)
+d = json.load(open(sys.argv[1])); W = d['width']; li = len(d['rooms']) - 1
+r = dec(d['layers'][1]['room']); r0 = dec(d['layers'][0]['room'])
+for cy in (10, 11):
+    for k in range(4):
+        r[(cy * W + 16) * 4 + k] = r0[(cy * W + 15) * 4 + k] if r0[(cy * W + 15) * 4 + k] != li else -1
+        r[(cy * W + 18) * 4 + k] = li
+d['layers'][1]['room'] = enc(r)
+json.dump(d, open(sys.argv[2], 'w'), indent=1)
+PYEOF
+		"$SHIPGEN" build-plan "$WORK/plan/lift-off.json" --out "$WORK/plan/lift-off.SoH" > "$WORK/plan/lift-off.txt" 2>&1
+		if qgrep "turbolift 'Lift 1' is drawn on other cells on deck 2 than on deck 1. A turbolift only works on one vertical axis" "$WORK/plan/lift-off.txt" &&
+				! qgrep "only works on one vertical axis" "$WORK/plan/lift.txt"; then
+			pass=$((pass+1))
+			echo "  ok    a turbolift's stops off one vertical axis are a warning"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  turbolift axis check"
+			grep -E 'lift|Lift' "$WORK/plan/lift-off.txt" | head -4
+		fi
+		# Back into a plan: the lift and the ladder come with it, and the ship
+		# builds again with every crew route open.
+		"$SHIPGEN" plan-from-blueprint "$WORK/plan/lift.SoH" "$WORK/plan/lift-back.json" > "$WORK/plan/lift-back.txt" 2>&1
+		"$SHIPGEN" build-plan "$WORK/plan/lift-back.json" --out "$WORK/plan/lift-back.SoH" > "$WORK/plan/lift-back-build.txt" 2>&1
+		"$SHIPGEN" crew-check "$WORK/plan/lift-back.SoH" > "$WORK/plan/lift-back-crew.txt" 2>&1
+		if qgrep -E '[0-9]+ doors, 1 ladders, 1 lifts' "$WORK/plan/lift-back.txt" &&
+				grep -q '^Lifts        : 1 (2 stops)$' "$WORK/plan/lift-back-build.txt" &&
+				grep -q 'Errors (0)' "$WORK/plan/lift-back-build.txt" &&
+				qgrep -E 'Crew routes +: ([0-9]+) of \1 ' "$WORK/plan/lift-back-crew.txt"; then
+			pass=$((pass+1))
+			echo "  ok    a blueprint with a turbolift and a ladder becomes a plan with both, and builds again"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  the turbolift or the ladder did not come back from the blueprint"
+			grep -E 'From the blueprint|Lifts|Errors' "$WORK/plan/lift-back.txt" "$WORK/plan/lift-back-build.txt" | head -4
+			grep 'Crew routes' "$WORK/plan/lift-back-crew.txt"
 		fi
 	else
 		echo "  skip  turbolifts (needs python3)"

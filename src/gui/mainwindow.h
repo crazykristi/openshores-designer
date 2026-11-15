@@ -59,6 +59,7 @@ public slots:
 
 	// Just the 3D view, which is drawn into its own buffer.
 	QImage	PreviewImage();
+	void	SetPreviewView(float yaw, float pitch, float zoom);
 
 	// Generates blueprints straight from a brief, without the wizard.
 	void	GenerateFromBriefFile(const QString& briefFile, const QString& hullFile, const QStringList& modelFiles);

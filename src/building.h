@@ -10,7 +10,9 @@
 #ifndef SHIPGEN_BUILDING_H
 #define SHIPGEN_BUILDING_H
 
+#include <QJsonObject>
 #include <QList>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 
@@ -77,6 +79,13 @@ struct BuildingBrief
 	int						groundParking = 0;	// Parking for ground vehicles.
 	int						spaceParking = 0;	// Landing pads for space vehicles.
 	int						spacecraftParking = 0;	// Berths for spacecraft (238 ft square each), beside the building.
+	int						rocketParking = 0;	// Space rocket parking spots (about 33 ft square), in front.
+	bool					buildZone = true;	// Platforms: a build zone over the deck, for buildings on top.
+	double					lightRange = 0;		// Feet a lamp's light reaches (0: 45 ft for a street light,
+												// the game's default otherwise). The default is 200 m.
+	bool					stackFields = false;	// Lay the fields on top of each other: the game adds up
+												// the area of every field site, so a stack of N one-field
+												// sites counts as N fields on the ground of one.
 };
 
 // The outcome of one candidate building.
@@ -114,15 +123,27 @@ struct BuildingTemplate
 	int						guardPosts = 0;
 	int						groundParking = 0;	// Parking for ground vehicles.
 	int						spaceParking = 0;	// Landing pads for space vehicles.
+	int						spacecraftParking = 0;
+	int						rocketParking = 0;
+	bool					stackFields = false;
 };
 
 QList<BuildingTemplate>		AllBuildingTemplates();
 const BuildingTemplate*	FindBuildingTemplate(const QString& key);
 void						ApplyBuildingTemplate(BuildingBrief& brief, const QString& templateKey);
 
+// What the game is known to want of a building of the brief's industry,
+// learnt from designs the game took or turned down: warnings for the brief
+// as it stands (an empty list when it looks right).
+QStringList BuildingRuleWarnings(const BuildingBrief& brief);
+
 // Building brief file I/O. The brief is a small JSON document.
 bool	LoadBuildingBrief(const QString& fileName, BuildingBrief& brief, QString& error);
 bool	SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QString& error);
+// The same as a JSON object, to keep inside another document (a designer
+// plan in building mode).
+QJsonObject	BuildingBriefToJson(const BuildingBrief& brief);
+void		BuildingBriefFromJson(const QJsonObject& o, BuildingBrief& brief);
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // A set of buildings.
@@ -168,7 +189,13 @@ bool	SaveBuildingSet(const QString& fileName, const BuildingSet& set, QString& e
 BuildingSetResult	GenerateBuildingSet(const BuildingSet& set, const QString& outDir);
 
 // Generate a building blueprint.
-BuildingResult	GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, const QString& strategy);
+// 'drawn': the rooms are already in the design (a building drawn in the
+// designer, with its hull, rooms and doors); the brief's rooms are not
+// laid out and no entrance is cut, and the stations and posts go into the
+// drawn rooms.
+struct PlacedRoom;
+BuildingResult	GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, const QString& strategy,
+		const QList<PlacedRoom>* drawn = 0, const QList<QRectF>* keepClear = 0);
 
 // Validate a building blueprint with the engine's own report.
 bool	ValidateBuilding(AuBdDesign& design, QStringList& errors, QStringList& warnings);

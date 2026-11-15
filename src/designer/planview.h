@@ -18,6 +18,7 @@
 #include <QPolygonF>
 #include <QVector>
 #include <QWidget>
+class QPainter;
 
 #include <QHash>
 #include "auscface.h"
@@ -43,7 +44,11 @@ public:
 	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, SpacecraftParkingMode, StairMode,
 			ContrailMode, WeaponMode, SkylightMode, MarkingMode,
 			// The Crew step: stations, berths, transporter pads and walk paths placed by hand.
-			StationMode, BerthMode, PadMode, PathMode };
+			StationMode, BerthMode, PadMode, PathMode,
+			// Building mode: more parking, ground areas and props.
+			RocketParkingMode, WaterParkingMode, AreaMode, PropMode,
+			// A generic vehicle spot for the vehicle SetParkingVehicle picked.
+			VehicleParkingMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
 
 	explicit PlanView(QWidget* parent = 0);
@@ -70,6 +75,11 @@ public:
 		update();
 	}
 	void	SetBerthKind(const QString& kind) { m_berthKind = kind; }
+	// Building mode: the kind of ground area (PlanArea::kind) and of prop
+	// (PlanProp::kind) the tools put in from now on.
+	void	SetAreaKind(const QString& kind) { m_areaKind = kind; update(); }
+	void	SetPropKind(const QString& kind) { m_propKind = kind; update(); }
+	void	SetParkingVehicle(const QString& key) { m_parkingVehicle = key; update(); }	// PlanVehicles' key.
 	void	SetMarking(int marking, double widthFeet) { m_marking = marking; m_markingFeet = widthFeet; }	// PlanEmitter::marking.
 
 	// The triangles a room fits in, from the last time the hull was shaped.
@@ -113,6 +123,20 @@ private:
 	void	NearestCorner(const QPointF& world, int& ix, int& iy) const;
 	// Where a contrail emitter is drawn: where it ends up on the hull.
 	QPointF	ContrailSpot(const PlanEmitter& e) const;
+
+	bool	IsParkingMode() const
+	{
+		return m_mode == GroundParkingMode || m_mode == SpaceParkingMode || m_mode == SpacecraftParkingMode
+				|| m_mode == RocketParkingMode || m_mode == WaterParkingMode || m_mode == VehicleParkingMode;
+	}
+	int		AreaAt(const QPointF& world) const;		// Index in areas on this deck, -1 if none.
+	int		PropAt(const QPointF& world) const;		// Index in props on this deck, -1 if none.
+	void	PaintGround(QPainter& p, double cellPixels);
+	QString		m_areaKind = "field";
+	QString		m_propKind = "tree";
+	QString		m_parkingVehicle = "SUV";
+	bool		m_areaDrag = false;
+	int			m_areaX0 = 0, m_areaY0 = 0, m_areaX1 = 0, m_areaY1 = 0;
 
 	TriPlan*	m_plan = 0;
 	int			m_deck = 0;

@@ -3,6 +3,8 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "mesh.h"
+#include "sohfile.h"
+#include "auscdesign.h"
 
 #include <QDataStream>
 #ifdef SHIPGEN_HAVE_ASSIMP
@@ -1026,6 +1028,31 @@ bool LoadMeshFile(const QString& fileName, AuScTriList& tris, QString& error)
 	{
 		if(!ReadObj(fileName, tris, error))
 			return false;
+	}
+	else if(suffix == "soh")
+	{
+		// A blueprint: the triangles of its hull meshes, in the game's feet.
+		AuDesign* design = LoadDesign(fileName);
+		if(!design)
+		{
+			error = QString("could not read the blueprint %1").arg(fileName);
+			return false;
+		}
+		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+		{
+			// The hull, the doors and windows that close the openings cut in
+			// it, and the room voids: blueprints are often not closed, and
+			// the rooms (closed boxes) keep their space inside even then.
+			if(!it.value() || !(it.value()->IsHullMesh() || it.value()->IsDoor()
+					|| it.value()->Type() == AuScPart::Part_Window || it.value()->Type() == AuScPart::Part_RoomVoid))
+				continue;
+			AuScFaceList faces;
+			it.value()->Faces(faces);
+			AuScTriList partTris;
+			faces.Triangles(partTris);
+			tris.append(partTris);
+		}
+		delete design;
 	}
 #ifdef SHIPGEN_HAVE_ASSIMP
 	else if(ModelSuffixes().contains(suffix))

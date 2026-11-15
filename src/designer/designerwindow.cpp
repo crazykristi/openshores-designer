@@ -4,6 +4,7 @@
 
 #include "mesh.h"
 #include "designerwindow.h"
+#include "texturepreview.h"
 #include "interior.h"
 #include "auscface.h"
 #include <QStandardItemModel>
@@ -16,6 +17,8 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileDialog>
@@ -30,6 +33,7 @@
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMutex>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -48,11 +52,14 @@
 #include <QThread>
 #include <QTreeWidget>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <atomic>
 
 #include "aufilever.h"
 #include "auscdesign.h"
+#include "building.h"
+#include "decal.h"
 #include "generate.h"
 #include "names.h"
 #include "planview.h"
@@ -63,8 +70,32 @@
 // The room types of a spacecraft, in three groups by what the game does with
 // them, each with a tip saying what (ShipRoomUse). The game only reads a room's
 // hold access (SetRoomUse); the name is a label (2026-11-07).
-static void FillShipRoomTypes(QComboBox* box)
+static void FillShipRoomTypes(QComboBox* box, bool building = false)
 {
+	if(building)
+	{
+		// A building's rooms: the names the game's own buildings use, and
+		// the types that get a shape (turbolifts, open rooms).
+		QStringList shapes;
+		for(const QString& type : SpacecraftRoomTypes())
+			if(IsOpenToDeckBelowType(type) || IsZeroGRoomType(type) || IsLiftRoomType(type))
+				shapes << type;
+		box->addItem("Building rooms");
+		if(QStandardItemModel* model = qobject_cast<QStandardItemModel*>(box->model()))
+			if(QStandardItem* item = model->item(box->count() - 1))
+				item->setFlags(item->flags() & ~(Qt::ItemIsSelectable | Qt::ItemIsEnabled));
+		for(const QString& type : BuildingRoomTypes())
+			if(!shapes.contains(type))
+				box->addItem("    " + type, type);
+		box->insertSeparator(box->count());
+		box->addItem("Gets a shape");
+		if(QStandardItemModel* model = qobject_cast<QStandardItemModel*>(box->model()))
+			if(QStandardItem* item = model->item(box->count() - 1))
+				item->setFlags(item->flags() & ~(Qt::ItemIsSelectable | Qt::ItemIsEnabled));
+		for(const QString& type : shapes)
+			box->addItem("    " + type, type);
+		return;
+	}
 	QStringList uses, stations, names;
 	for(const QString& type : SpacecraftRoomTypes())
 	{
@@ -185,6 +216,14 @@ bool* BuildItemSkip(TriPlan& plan, const QString& key, int index, int* deck, QSt
 			}
 		return 0;
 	}
+	if(key == "decals")
+	{
+		for(DecalOptions& d : plan.decals)
+			if(n++ == index)
+				return found(d.skip, 0, QString("%1, %2 ft, %3").arg(QFileInfo(d.image).fileName())
+						.arg(d.width, 0, 'f', 0).arg(DecalProjectionName(d.projection)));
+		return 0;
+	}
 	if(key == "windows")
 	{
 		for(PlanDoor& w : plan.windows)
@@ -278,6 +317,7 @@ QLabel* Help(const QString& text)
 DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 {
 	setWindowTitle("Shipgen designer " SHIPGEN_VERSION);
+	setAcceptDrops(true);
 
 	m_view = new PlanView;
 	m_preview = new DesignPreview;
@@ -381,7 +421,25 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	file->addAction("New plan from a 3D &model...", this, SLOT(OnNewFromModel()));
 	file->addAction("New &fighter (experimental)", this, SLOT(OnNewFighter()));
 	file->addAction("New fighter from a 3D model (experimental)...", this, SLOT(OnNewFighterFromModel()));
+	file->addAction("New &building...", this, SLOT(OnNewBuilding()));
+	file->addAction("New building from a 3D model...", this, [this]() {
+		QStringList labels, keys;
+		for(const BuildingTemplate& t : AllBuildingTemplates())
+		{
+			labels << t.label;
+			keys << t.key;
+		}
+		bool ok = false;
+		const QString picked = QInputDialog::getItem(this, "New building from a 3D model", "What kind of building? (It "
+				"can be changed later, on the first page.)", labels, qMax(0, keys.indexOf("office_block")), false, &ok);
+		if(!ok)
+			return;
+		m_importBuilding = keys.value(labels.indexOf(picked), "office_block");
+		NewFromModel(false);
+		m_importBuilding.clear();
+	});
 	file->addAction("&Open plan...", this, SLOT(OnOpen()), QKeySequence::Open);
+	file->addAction("Open &blueprint (.SoH)...", this, SLOT(OnOpenBlueprint()));
 	file->addAction("&Save plan", this, SLOT(OnSave()), QKeySequence::Save);
 	file->addAction("Save plan &as...", this, SLOT(OnSaveAs()), QKeySequence::SaveAs);
 	file->addSeparator();
@@ -422,6 +480,33 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 								   "blueprint."));
 	});
 	view->addAction("&Redraw the 3D view", this, SLOT(OnShape()), QKeySequence(Qt::Key_F5));
+	QAction* fly = view->addAction("&Fly through the 3D view");
+	fly->setCheckable(true);
+	fly->setShortcut(QKeySequence(Qt::Key_F6));
+	fly->setToolTip("Fly through the model in the 3D view: W A S D move, Q and E down and up, Shift faster, "
+					"drag to look round, the wheel sets the speed, Esc leaves.");
+	connect(fly, &QAction::toggled, m_preview, &DesignPreview::SetFreeFly);
+	connect(m_preview, &DesignPreview::FreeFlyChanged, fly, &QAction::setChecked);
+	view->addAction("The game's &texture pictures...", this, [this]() {
+		const QString now = GameTextureLibrary();
+		if(!now.isEmpty())
+		{
+			QMessageBox::information(this, "The game's textures", "The texture boxes show the game's textures, from " + now + ".");
+			return;
+		}
+		const QString file = QFileDialog::getOpenFileName(this, "The game's texture library (libAuTexture.so.7 or "
+				"AuTexture.dll, in the game's folder)", QDir::homePath(), "Libraries (*.so* *.dll);;All files (*)");
+		if(file.isEmpty())
+			return;
+		QString error;
+		if(!SetGameTextureLibrary(file, error))
+		{
+			QMessageBox::warning(this, "The game's textures", error);
+			return;
+		}
+		ApplyTextureIcons();
+		m_status->setText("The texture boxes now show the game's textures.");
+	});
 
 	m_shapeTimer = new QTimer(this);
 	m_shapeTimer->setSingleShot(true);
@@ -458,6 +543,60 @@ DesignerWindow::~DesignerWindow()
 	delete m_design;
 }
 
+// The deck buttons, on the Ship page and again on the Hull page, so that
+// decks can be added while drawing the hull.
+QGroupBox* DesignerWindow::MakeDeckBox()
+{
+	QGroupBox* decks = new QGroupBox("Decks");
+	QGridLayout* deckButtons = new QGridLayout(decks);
+	QPushButton* above = new QPushButton("Add above");
+	above->setToolTip("A new, empty deck on top of the ship.");
+	QPushButton* below = new QPushButton("Add below");
+	below->setToolTip("A new, empty deck under the ship. The decks above it move up one.");
+	QPushButton* remove = new QPushButton("Remove this deck");
+	remove->setToolTip("Takes away the deck shown, with its rooms, doors, ladders and stairs.");
+	QPushButton* turnDeck = new QPushButton("Turn this deck around");
+	turnDeck->setToolTip("Swaps fore and aft on the deck shown only (and port and starboard, as a real half "
+						 "turn does). Ladders and stairs to the decks next to it go when they no longer meet. "
+						 "A hull that is the 3D model itself does not change: untick that on the hull page to "
+						 "see it.");
+	QPushButton* mirrorDeck = new QPushButton("Mirror this deck");
+	mirrorDeck->setToolTip("Swaps port and starboard on the deck shown only.");
+	deckButtons->addWidget(above, 0, 0);
+	deckButtons->addWidget(below, 0, 1);
+	deckButtons->addWidget(remove, 0, 2);
+	QPushButton* deckCw = new QPushButton("Turn 90° ↻");
+	deckCw->setToolTip("Turns the deck shown a quarter turn clockwise (seen from above) about the grid's middle, "
+					   "with its rooms, doors, windows and paint. The grid is made bigger when the turned deck "
+					   "would not fit. Ladders and stairs to the decks next to it go when they no longer meet.");
+	QPushButton* deckCcw = new QPushButton("Turn 90° ↺");
+	deckCcw->setToolTip("Turns the deck shown a quarter turn anticlockwise (seen from above).");
+	deckButtons->addWidget(turnDeck, 1, 0, 1, 2);
+	deckButtons->addWidget(mirrorDeck, 1, 2);
+	deckButtons->addWidget(deckCw, 2, 0);
+	deckButtons->addWidget(deckCcw, 2, 1);
+	QPushButton* copyDeck = new QPushButton("Copy this deck...");
+	copyDeck->setToolTip("Puts copies of the deck shown straight on top of it, as many as you say; the decks "
+						 "above move up. The copies have its hull, paint, rooms (as new rooms with their own "
+						 "names; a turbolift stays one shaft and goes on up), doors, windows, parking, "
+						 "stations and the rest.");
+	QPushButton* copyFloor = new QPushButton("Copy the floor...");
+	copyFloor->setToolTip("Puts copies of the deck shown's hull outline and paint straight on top of it, as many "
+						  "as you say, with no rooms: the same shape, deck after deck, to draw rooms into.");
+	deckButtons->addWidget(copyDeck, 3, 0, 1, 2);
+	deckButtons->addWidget(copyFloor, 3, 2);
+	connect(copyDeck, &QPushButton::clicked, this, [this]() { OnCopyDeck(true); });
+	connect(copyFloor, &QPushButton::clicked, this, [this]() { OnCopyDeck(false); });
+	connect(deckCw, &QPushButton::clicked, this, [this]() { Rotate(true, true); });
+	connect(deckCcw, &QPushButton::clicked, this, [this]() { Rotate(false, true); });
+	connect(above, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckAbove);
+	connect(below, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckBelow);
+	connect(remove, &QPushButton::clicked, this, &DesignerWindow::OnRemoveDeck);
+	connect(turnDeck, &QPushButton::clicked, this, [this]() { Flip(true, true, false, true); });
+	connect(mirrorDeck, &QPushButton::clicked, this, [this]() { Flip(false, true, false, true); });
+	return decks;
+}
+
 QWidget* DesignerWindow::MakeShipPage()
 {
 	QWidget* page = new QWidget;
@@ -472,6 +611,15 @@ QWidget* DesignerWindow::MakeShipPage()
 								   "border-radius: 4px; padding: 6px; }");
 	m_fighterBanner->setVisible(false);
 	layout->addWidget(m_fighterBanner);
+	m_buildingBanner = new QLabel("<b>Building mode.</b> Deck 1 stands on the ground. Draw the outside, the rooms "
+			"(building room types) and the doors; a hull door on deck 1 opens at ground level. What the building is "
+			"for, its volumes and its parking are set in the Building box below; the build makes a building "
+			"blueprint with a site.");
+	m_buildingBanner->setWordWrap(true);
+	m_buildingBanner->setStyleSheet("QLabel { background: #e3f0ff; color: #1d3c66; border: 1px solid #8fb3e0; "
+									"border-radius: 4px; padding: 6px; }");
+	m_buildingBanner->setVisible(false);
+	layout->addWidget(m_buildingBanner);
 	layout->addWidget(Help("The size of the drawing grid and what the ship is for. A cell is a square of four "
 						   "triangles; a deck is one floor of the ship."));
 	QFormLayout* form = new QFormLayout;
@@ -512,6 +660,9 @@ QWidget* DesignerWindow::MakeShipPage()
 		m_ftl->addItem(choice.second, choice.first);
 	m_ftl->setToolTip("The FTL drive the engineer station runs. The game fits a maneuver drive by itself.");
 	form->addRow("FTL drive", m_ftl);
+	m_station = new QCheckBox("Space station");
+	m_station->setToolTip("A space station: the game builds it in space, and it gets no FTL drive (experimental).");
+	form->addRow(m_station);
 	m_noShields = new QCheckBox("No shields");
 	m_noWeapons = new QCheckBox("No weapon bay");
 	m_noTransporter = new QCheckBox("No transporter");
@@ -527,6 +678,8 @@ QWidget* DesignerWindow::MakeShipPage()
 							  "ship's'. It is harder to change in the game's designer.");
 	form->addRow("Fire control", m_fireControl);
 	connect(m_fireControl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
+	m_shipForm = form;
+	m_shipOnly = { m_fighter, m_template, m_ftl, m_station, m_noShields, m_noWeapons, m_noTransporter, m_fireControl };
 	m_cellFeet = new QDoubleSpinBox;
 	m_cellFeet->setRange(2, 20);
 	m_cellFeet->setSingleStep(0.5);
@@ -545,6 +698,7 @@ QWidget* DesignerWindow::MakeShipPage()
 	m_floorFeet->setToolTip("The structure between the rooms of one deck and the next.");
 	form->addRow("Floor thickness", m_floorFeet);
 	layout->addLayout(form);
+	layout->addWidget(MakeBuildingBox());
 
 	QGroupBox* grid = new QGroupBox("Grid");
 	QFormLayout* gridForm = new QFormLayout(grid);
@@ -563,42 +717,7 @@ QWidget* DesignerWindow::MakeShipPage()
 	connect(resizeButton, &QPushButton::clicked, this, &DesignerWindow::OnResize);
 	layout->addWidget(grid);
 
-	QGroupBox* decks = new QGroupBox("Decks");
-	QGridLayout* deckButtons = new QGridLayout(decks);
-	QPushButton* above = new QPushButton("Add above");
-	above->setToolTip("A new, empty deck on top of the ship.");
-	QPushButton* below = new QPushButton("Add below");
-	below->setToolTip("A new, empty deck under the ship. The decks above it move up one.");
-	QPushButton* remove = new QPushButton("Remove this deck");
-	remove->setToolTip("Takes away the deck shown, with its rooms, doors, ladders and stairs.");
-	QPushButton* turnDeck = new QPushButton("Turn this deck around");
-	turnDeck->setToolTip("Swaps fore and aft on the deck shown only (and port and starboard, as a real half "
-						 "turn does). Ladders and stairs to the decks next to it go when they no longer meet. "
-						 "A hull that is the 3D model itself does not change: untick that on the hull page to "
-						 "see it.");
-	QPushButton* mirrorDeck = new QPushButton("Mirror this deck");
-	mirrorDeck->setToolTip("Swaps port and starboard on the deck shown only.");
-	deckButtons->addWidget(above, 0, 0);
-	deckButtons->addWidget(below, 0, 1);
-	deckButtons->addWidget(remove, 0, 2);
-	QPushButton* deckCw = new QPushButton("Turn 90° ↻");
-	deckCw->setToolTip("Turns the deck shown a quarter turn clockwise (seen from above) about the grid's middle, "
-					   "with its rooms, doors, windows and paint. The grid is made bigger when the turned deck "
-					   "would not fit. Ladders and stairs to the decks next to it go when they no longer meet.");
-	QPushButton* deckCcw = new QPushButton("Turn 90° ↺");
-	deckCcw->setToolTip("Turns the deck shown a quarter turn anticlockwise (seen from above).");
-	deckButtons->addWidget(turnDeck, 1, 0, 1, 2);
-	deckButtons->addWidget(mirrorDeck, 1, 2);
-	deckButtons->addWidget(deckCw, 2, 0);
-	deckButtons->addWidget(deckCcw, 2, 1);
-	connect(deckCw, &QPushButton::clicked, this, [this]() { Rotate(true, true); });
-	connect(deckCcw, &QPushButton::clicked, this, [this]() { Rotate(false, true); });
-	connect(above, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckAbove);
-	connect(below, &QPushButton::clicked, this, &DesignerWindow::OnAddDeckBelow);
-	connect(remove, &QPushButton::clicked, this, &DesignerWindow::OnRemoveDeck);
-	connect(turnDeck, &QPushButton::clicked, this, [this]() { Flip(true, true, false, true); });
-	connect(mirrorDeck, &QPushButton::clicked, this, [this]() { Flip(false, true, false, true); });
-	layout->addWidget(decks);
+	layout->addWidget(MakeDeckBox());
 
 	// The whole design: for a model that came in the wrong way round.
 	QGroupBox* flips = new QGroupBox("Turn and flip the whole ship");
@@ -634,7 +753,7 @@ QWidget* DesignerWindow::MakeShipPage()
 	connect(m_name, &QLineEdit::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_template, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	connect(m_ftl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
-	for(QCheckBox* box : { m_noShields, m_noWeapons, m_noTransporter })
+	for(QCheckBox* box : { m_station, m_noShields, m_noWeapons, m_noTransporter })
 		connect(box, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	for(QDoubleSpinBox* box : { m_cellFeet, m_deckFeet, m_floorFeet })
 		connect(box, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
@@ -648,6 +767,7 @@ QWidget* DesignerWindow::MakeHullPage()
 	layout->addWidget(Help("Draw the outside of the ship, deck by deck. The drawn triangles are the inside of the "
 						   "hull; the skin goes round them, and the smoothing rounds its edges and the steps "
 						   "between decks. The 3D view follows as you draw. The deck below shows faintly."));
+	layout->addWidget(MakeDeckBox());
 	QFormLayout* form = new QFormLayout;
 	m_hullStyle = new QComboBox;
 	m_hullStyle->addItem("Smooth", "smooth");
@@ -785,9 +905,26 @@ QWidget* DesignerWindow::MakeRoomPage()
 		{ "Place empire flags and names", "Click a hull triangle: the owner's flag (or the empire's name) goes flat on "
 										  "the nearest point of the hull at mid-deck height, upright, facing out. The "
 										  "game paints the owner's own flag or name on it. Click again to take it away." },
+		{ "Place rocket pads (buildings)", "A 10 by 10 m space rocket spot, centred on the grid corner nearest the click: "
+										   "outside on the ground, on a roof, or on a room's floor. The aircraft "
+										   "factory wants one. Click it again to take it away." },
+		{ "Place water vehicle parking (buildings)", "A 24 by 12 m spot for a boat, centred on the grid corner nearest "
+													 "the click, outside or on a room's floor; R turns it." },
+		{ "Draw ground areas (buildings)", "Drag a rectangle on the grid: a field (the game counts one per 4,000 m², "
+										   "about 216 by 216 ft), a lawn, paving, cobbles, tarmac, or a build zone "
+										   "(platforms only, on top of the deck below). Click an area of the same "
+										   "kind, or right click any, to take it away." },
+		{ "Place vehicle spots", "A spot for one vehicle, picked below, as the game designer's generic Vehicle "
+								 "Spot: a vehicle from the road or air vehicle factory. The box is the vehicle's "
+								 "size. Centred on the grid corner nearest the click, on a room's floor (or, for a "
+								 "building, outside); R turns it. Click it again to take it away." },
+		{ "Place trees, lamps and posts (buildings)", "Click to put the thing picked below on the ground, a roof or a "
+													  "room's floor: a tree, a shrub, a street lamp, or a post for a "
+													  "citizen, a guard or livestock. Click one again to take it away." },
 	};
 	const QStringList toolKeys = { "rooms", "doors", "innerWindows", "balconies", "ladders", "windows", "groundParking",
-			"spaceParking", "stairs", "contrails", "weapons", "skylights", "spacecraftParking", "markings" };
+			"spaceParking", "stairs", "contrails", "weapons", "skylights", "spacecraftParking", "markings",
+			"rocketParking", "waterParking", "areas", "vehicleParking", "props" };
 	for(int i = 0; i < tools.size(); ++i)
 	{
 		m_roomTool->addItem(tools.at(i).first, toolKeys.at(i));
@@ -857,6 +994,62 @@ QWidget* DesignerWindow::MakeRoomPage()
 	}
 	m_markingRow->setVisible(false);
 	layout->addWidget(m_markingRow);
+	m_areaRow = new QWidget;
+	{
+		QFormLayout* f = new QFormLayout(m_areaRow);
+		f->setContentsMargins(0, 0, 0, 0);
+		QComboBox* box = new QComboBox;
+		for(const auto& c : QList<QPair<QString, QString> >{ { "field", "Field (cracked earth)" }, { "grass", "Lawn" },
+				{ "paving", "Paving (concrete)" }, { "cobbles", "Cobbles" }, { "tarmac", "Tarmac" },
+				{ "buildzone", "Build zone (platforms)" } })
+			box->addItem(c.second, c.first);
+		box->setToolTip("What the rectangles drawn from now on are.");
+		f->addRow("Area", box);
+		connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, box](int) {
+			m_view->SetAreaKind(box->currentData().toString());
+		});
+	}
+	m_areaRow->setVisible(false);
+	layout->addWidget(m_areaRow);
+	m_propRow = new QWidget;
+	{
+		QFormLayout* f = new QFormLayout(m_propRow);
+		f->setContentsMargins(0, 0, 0, 0);
+		QComboBox* box = new QComboBox;
+		for(const auto& c : QList<QPair<QString, QString> >{ { "tree", "Tree" }, { "shrub", "Shrub" },
+				{ "lamp", "Street lamp" }, { "citizen", "Citizen post" }, { "guard", "Guard post" },
+				{ "livestock", "Livestock post" } })
+			box->addItem(c.second, c.first);
+		box->setToolTip("What a click puts in from now on. Posts placed here take the place of the Building box's counts.");
+		f->addRow("Thing", box);
+		connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, box](int) {
+			m_view->SetPropKind(box->currentData().toString());
+		});
+	}
+	m_propRow->setVisible(false);
+	layout->addWidget(m_propRow);
+	m_vehicleRow = new QWidget;
+	{
+		QFormLayout* f = new QFormLayout(m_vehicleRow);
+		f->setContentsMargins(0, 0, 0, 0);
+		QComboBox* box = new QComboBox;
+		static const QHash<QString, QString> kinds = { { "ground", "road" }, { "space", "air" }, { "water", "water" },
+				{ "rocket", "rocket" } };
+		for(const PlanVehicle& v : PlanVehicles())
+		{
+			box->addItem(QString("%1 (%2, %3 x %4 ft%5)").arg(v.name).arg(kinds.value(v.kind)).arg(v.length, 0, 'f', 0)
+					.arg(v.width, 0, 'f', 0).arg(v.measured ? "" : ", size of the typed spot"), QString(v.key));
+		}
+		box->setCurrentIndex(box->findData(QString("SUV")));
+		box->setToolTip("The vehicle the spots placed from now on are for. The sizes are the game's own models with "
+						"a foot to spare; where the model is not known, the typed spot's size.");
+		f->addRow("Vehicle", box);
+		connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, box](int) {
+			m_view->SetParkingVehicle(box->currentData().toString());
+		});
+	}
+	m_vehicleRow->setVisible(false);
+	layout->addWidget(m_vehicleRow);
 	m_wallWindowRow = new QWidget;
 	{
 		QFormLayout* winForm = new QFormLayout(m_wallWindowRow);
@@ -864,7 +1057,10 @@ QWidget* DesignerWindow::MakeRoomPage()
 		m_wallWindowStyle = new QComboBox;
 		m_wallWindowStyle->addItem("As the ship (Hull page)", "");
 		m_wallWindowStyle->addItem("Window frame", "frame");
-		m_wallWindowStyle->addItem("Follow the hull", "hull");
+		m_wallWindowStyle->addItem("Follow the hull (Hull page's glass)", "hull");
+		m_wallWindowStyle->addItem("Follow the hull: flat pane, upright", "pane");
+		m_wallWindowStyle->addItem("Follow the hull: flat pane on its slope", "slope");
+		m_wallWindowStyle->addItem("Follow the hull: its own faces", "faces");
 		m_wallWindowStyle->setToolTip("For windows placed from now on. A window frame is cut through the hull as a box, "
 									  "with a frame round it; following the hull, the hull's own triangles inside the "
 									  "window's outline become the glass, so it keeps the hull's shape and edges, with no "
@@ -921,12 +1117,15 @@ QWidget* DesignerWindow::MakeRoomPage()
 	m_roomType->setToolTip("What the room picked in the list is for. In the game only a few types do something "
 						   "(hover over a type to see what); the stations of the ship go into rooms of the right type.");
 	form->addRow("Type", m_roomType);
-	auto textureBox = [](const QString& tip, const QString& none = "Same as the ship") {
+	auto textureBox = [this](const QString& tip, const QString& none = "Same as the ship") {
 		QComboBox* box = new QComboBox;
+		box->setIconSize(QSize(32, 32));
 		box->addItem(none, -1);
 		for(const QPair<int, QString>& texture : InteriorTextures())
-			box->addItem(texture.second, texture.first);
-		box->setToolTip(tip);
+			box->addItem(GameTextureIcon(texture.first), texture.second, texture.first);
+		box->setToolTip(tip + " The pictures are the game's own textures, when the designer finds the game "
+				"(View, The game's texture pictures).");
+		m_textureBoxes << box;
 		return box;
 	};
 	const QString textureTip = "A texture from the game's library for this room. A ship's palette holds 15 textures "
@@ -1030,6 +1229,25 @@ QWidget* DesignerWindow::MakeRoomPage()
 			"Where too few whole triangles fit, the window is cut as usual.");
 	windowForm->addRow(m_hullWindows);
 	connect(m_hullWindows, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
+	m_hullWindowGlass = new QComboBox;
+	m_hullWindowGlass->addItem("Flat pane, upright (hull pressed flat round it)", "pane");
+	m_hullWindowGlass->addItem("Flat pane on the hull's slope", "slope");
+	m_hullWindowGlass->addItem("The hull's own faces as they are", "faces");
+	m_hullWindowGlass->setToolTip("How a window that follows the hull gets its glass.\n"
+			"Flat pane, upright: the hull in front of the window is pressed flat onto one upright plane, set in to the "
+			"nearest point of the hull, and the glass is one clean pane; the hull round it bends in to meet it. Full "
+			"view out, nothing of the hull in the middle of the window.\n"
+			"Flat pane on the hull's slope: the same, on a plane that leans with the hull there (at most 50 degrees).\n"
+			"The hull's own faces: the faces inside the outline become the glass as they are. Keeps the hull's shape "
+			"exactly, but a model's thinned hull has big odd faces, which can stand in the view.");
+	windowForm->addRow("Hull window glass", m_hullWindowGlass);
+	connect(m_hullWindowGlass, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
+	m_windowLining = new QCheckBox("Line the hull seen from inside through windows");
+	m_windowLining->setToolTip("The game does not draw the hull from inside, so the sky shows through it where it is "
+			"seen through a window. On, each such face gets an inward copy (a mesh part, Window Lining). Off saves "
+			"those faces.");
+	windowForm->addRow(m_windowLining);
+	connect(m_windowLining, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	m_hullDoorExit = new QComboBox;
 	m_hullDoorExit->addItem("A ramp or a ladder down", "auto");
 	m_hullDoorExit->addItem("A ladder down", "ladder");
@@ -1124,6 +1342,15 @@ QWidget* DesignerWindow::MakeCrewPage()
 			m_stationModule->addItem(choice.second, choice.first);
 		m_stationModule->setToolTip("Fire control only: the weapon bay this station runs.");
 		form->addRow("Weapon bay", m_stationModule);
+		m_stationDrive = new QComboBox;
+		m_stationDrive->addItem("The ship's (Ship page)", 0);
+		for(const auto& choice : FtlDriveChoices())
+			if(FtlDriveModule(choice.first) != CID_Invalid)
+				m_stationDrive->addItem(choice.second, int(FtlDriveModule(choice.first)));
+		m_stationDrive->setToolTip("Engineer only: the FTL drive this station runs. The ship's is the Ship page's "
+								   "FTL drive. A drive picked here is fitted even when the Ship page says none, as "
+								   "long as the hull is big enough for one.");
+		form->addRow("FTL drive", m_stationDrive);
 	}
 	layout->addWidget(m_stationRow);
 	m_berthRow = new QWidget;
@@ -1175,7 +1402,7 @@ QWidget* DesignerWindow::MakeCrewPage()
 	layout->addStretch(1);
 
 	connect(m_crewTool, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { ApplyDrawMode(); });
-	for(QComboBox* box : { m_stationType, m_stationSeat, m_stationModule, m_berthKind })
+	for(QComboBox* box : { m_stationType, m_stationSeat, m_stationModule, m_stationDrive, m_berthKind })
 		connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { ApplyCrewChoice(); });
 	ApplyCrewChoice();
 	return page;
@@ -1183,9 +1410,11 @@ QWidget* DesignerWindow::MakeCrewPage()
 
 void DesignerWindow::ApplyCrewChoice()
 {
-	m_stationModule->setEnabled(m_stationType->currentData().toString() == "firecontrol");
-	m_view->SetStationChoice(m_stationType->currentData().toString(), m_stationSeat->currentData().toString(),
-			m_stationModule->currentData().toInt());
+	const QString type = m_stationType->currentData().toString();
+	m_stationModule->setEnabled(type == "firecontrol");
+	m_stationDrive->setEnabled(type == "engineer");
+	m_view->SetStationChoice(type, m_stationSeat->currentData().toString(),
+			type == "engineer" ? m_stationDrive->currentData().toInt() : m_stationModule->currentData().toInt());
 	m_view->SetBerthKind(m_berthKind->currentData().toString());
 }
 
@@ -1498,6 +1727,7 @@ QWidget* DesignerWindow::MakeBuildPage()
 	layout->addLayout(deskRow);
 	connect(m_deskPosture, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	connect(m_deskHeight, &QDoubleSpinBox::editingFinished, this, &DesignerWindow::OnSettingsChanged);
+	layout->addWidget(MakeDecalBox());
 	QHBoxLayout* buttons = new QHBoxLayout;
 	QPushButton* build = new QPushButton("Build the blueprint");
 	build->setToolTip("Makes the blueprint and asks the game's own engine whether it would take it. The report "
@@ -1517,6 +1747,408 @@ QWidget* DesignerWindow::MakeBuildPage()
 	connect(build, &QPushButton::clicked, this, &DesignerWindow::OnBuild);
 	connect(save, &QPushButton::clicked, this, &DesignerWindow::OnExport);
 	return page;
+}
+
+// The directions a decal can be projected from, as in DecalFromDirection.
+static const struct { const char* label; double x, y, z; } kDecalSides[] = {
+	{ "Starboard (+x)", 1, 0, 0 }, { "Port (-x)", -1, 0, 0 }, { "Top", 0, 0, 1 }, { "Bottom", 0, 0, -1 },
+	{ "Bow (+y)", 0, 1, 0 }, { "Stern (-y)", 0, -1, 0 } };
+static const int kDecalSideCount = 6;	// The last entry of the combo box is "Square to the surface".
+
+QWidget* DesignerWindow::MakeDecalBox()
+{
+	QGroupBox* box = new QGroupBox("Decals: images on the hull");
+	m_decalBox = box;
+	box->setAcceptDrops(true);
+	box->installEventFilter(this);
+	box->setToolTip("Drop an image file here to add it as a decal.");
+	QVBoxLayout* layout = new QVBoxLayout(box);
+	QLabel* help = new QLabel("An image laid over the hull, at most 256 pixels (bigger ones are made smaller). "
+			"A transparent background leaves only the picture. Add one, then click the 3D view of the built "
+			"blueprint where it should go.");
+	help->setWordWrap(true);
+	layout->addWidget(help);
+	QHBoxLayout* row = new QHBoxLayout;
+	m_decalList = new QListWidget;
+	m_decalList->setMaximumHeight(80);
+	m_decalList->setToolTip("The decals of this plan. Pick one to change it. The Build list above can leave one out.");
+	row->addWidget(m_decalList, 1);
+	QVBoxLayout* listButtons = new QVBoxLayout;
+	QPushButton* add = new QPushButton("Add image...");
+	add->setToolTip("Pick an image file (PNG keeps a transparent background) for a new decal.");
+	QPushButton* remove = new QPushButton("Remove");
+	remove->setToolTip("Takes the decal picked in the list away.");
+	listButtons->addWidget(add);
+	listButtons->addWidget(remove);
+	listButtons->addStretch();
+	row->addLayout(listButtons);
+	layout->addLayout(row);
+
+	m_decalForm = new QWidget;
+	QFormLayout* form = new QFormLayout(m_decalForm);
+	form->setContentsMargins(0, 0, 0, 0);
+	m_decalPlace = new QPushButton("Place: click the 3D view");
+	m_decalPlace->setCheckable(true);
+	m_decalPlace->setToolTip("While this is down, a click on the hull in the 3D view puts the decal's centre "
+			"there. Dragging still turns the view.");
+	form->addRow(m_decalPlace);
+	m_decalProjection = new QComboBox;
+	m_decalProjection->addItem("Wrap round the hull", "wrap");
+	m_decalProjection->addItem("Flat, like a projector", "flat");
+	m_decalProjection->setToolTip("Wrap: round the hull's long axis, so the image keeps its width round a curved "
+			"hull (good for ships). Flat: straight along one direction (good for flat sides and buildings); it "
+			"stretches on steep slopes.");
+	form->addRow("Projection", m_decalProjection);
+	m_decalFrom = new QComboBox;
+	for(int i = 0; i < kDecalSideCount; ++i)
+		m_decalFrom->addItem(kDecalSides[i].label);
+	m_decalFrom->addItem("Square to the surface");
+	m_decalFrom->setToolTip("Which way the image is projected onto the hull. A click on the 3D view picks the "
+			"side nearest to the way the hull faces there; pick Square to the surface to follow it exactly.");
+	form->addRow("From", m_decalFrom);
+	m_decalWidth = new QDoubleSpinBox;
+	m_decalWidth->setRange(0.5, 2000);
+	m_decalWidth->setDecimals(1);
+	m_decalWidth->setSuffix(" ft");
+	m_decalWidth->setToolTip("How wide the image is; its height follows from its shape.");
+	form->addRow("Width", m_decalWidth);
+	m_decalRotate = new QDoubleSpinBox;
+	m_decalRotate->setRange(-360, 360);
+	m_decalRotate->setDecimals(0);
+	m_decalRotate->setSuffix(" deg");
+	m_decalRotate->setToolTip("Turns the image anticlockwise, as seen looking at it.");
+	form->addRow("Rotate", m_decalRotate);
+	m_decalMirror = new QCheckBox("Mirror the image");
+	form->addRow(m_decalMirror);
+	m_decalSides = new QComboBox;
+	m_decalSides->addItem("One side", "one");
+	m_decalSides->addItem("Both sides, reading the right way", "both");
+	m_decalSides->addItem("Both sides, mirror image", "both-mirrored");
+	m_decalSides->setToolTip("A copy on the other side (port and starboard). Reading the right way suits text and "
+			"logos; a mirror image suits arrows and stripes that should point the same way on both sides.");
+	form->addRow("Sides", m_decalSides);
+	m_decalSelfLit = new QDoubleSpinBox;
+	m_decalSelfLit->setRange(0, 1);
+	m_decalSelfLit->setSingleStep(.05);
+	m_decalSelfLit->setToolTip("How much the decal lights itself, from 0 (only lit by the sun) to 1.");
+	form->addRow("Self-lit", m_decalSelfLit);
+	m_decalOpacity = new QDoubleSpinBox;
+	m_decalOpacity->setRange(.05, 1);
+	m_decalOpacity->setSingleStep(.05);
+	m_decalOpacity->setToolTip("Below 1 the hull shows through the decal. An image with soft edges is blended "
+			"either way.");
+	form->addRow("Opacity", m_decalOpacity);
+	layout->addWidget(m_decalForm);
+	m_decalStatus = new QLabel;
+	m_decalStatus->setWordWrap(true);
+	layout->addWidget(m_decalStatus);
+
+	connect(m_decalList, &QListWidget::currentRowChanged, this, [this](int) {
+		if(!m_updating)
+			RefreshDecals();
+	});
+	connect(add, &QPushButton::clicked, this, [this]() {
+		const QString file = QFileDialog::getOpenFileName(this, "A decal image", QString(),
+				"Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)");
+		if(!file.isEmpty())
+			AddDecalImage(file);
+	});
+	connect(remove, &QPushButton::clicked, this, [this]() {
+		const int i = m_decalList->currentRow();
+		if(i < 0 || i >= m_plan.decals.size())
+			return;
+		OnAboutToChange();
+		m_plan.decals.removeAt(i);
+		m_dirty = true;
+		RefreshTitle();
+		RefreshDecals();
+		RefreshBuildList();
+		ReapplyDecals(false);
+	});
+	connect(m_decalPlace, &QPushButton::toggled, this, [this](bool on) {
+		if(on && !m_designIsBlueprint)
+		{
+			m_decalPlace->setChecked(false);
+			m_decalStatus->setText("Build the blueprint first: the decal is placed on the built hull.");
+			return;
+		}
+		m_preview->SetPicking(on);
+	});
+	connect(m_preview, &DesignPreview::HullPicked, this, &DesignerWindow::OnDecalPicked);
+	auto changed = [this]() {
+		if(m_updating)
+			return;
+		DecalFormToPlan();
+	};
+	connect(m_decalProjection, QOverload<int>::of(&QComboBox::currentIndexChanged), this, changed);
+	connect(m_decalFrom, QOverload<int>::of(&QComboBox::currentIndexChanged), this, changed);
+	connect(m_decalSides, QOverload<int>::of(&QComboBox::currentIndexChanged), this, changed);
+	connect(m_decalMirror, &QCheckBox::toggled, this, changed);
+	for(QDoubleSpinBox* spin : { m_decalWidth, m_decalRotate, m_decalSelfLit, m_decalOpacity })
+		connect(spin, &QDoubleSpinBox::editingFinished, this, changed);
+	RefreshDecals();
+	return box;
+}
+
+void DesignerWindow::AddDecalImage(const QString& file)
+{
+	OnAboutToChange();
+	DecalOptions d;
+	d.image = QFileInfo(file).absoluteFilePath();
+	d.projection = m_plan.IsBuilding() ? DecalProjection::Flat : DecalProjection::Wrap;
+	m_plan.decals << d;
+	m_dirty = true;
+	RefreshTitle();
+	RefreshDecals();
+	m_decalList->setCurrentRow(m_plan.decals.size() - 1);
+	if(!ReapplyDecals(true))
+		return;
+	RefreshBuildList();
+	if(m_designIsBlueprint)
+		m_decalPlace->setChecked(true);
+}
+
+static const QStringList kDecalImageSuffixes = { "png", "jpg", "jpeg", "bmp", "gif", "webp" };
+static const QStringList kPlanSuffixes = { "json", "soh" };
+
+QString DesignerWindow::DroppedFile(const QMimeData* data, const QStringList& suffixes)
+{
+	if(!data || !data->hasUrls())
+		return QString();
+	for(const QUrl& url : data->urls())
+	{
+		if(!url.isLocalFile())
+			continue;
+		const QString file = url.toLocalFile();
+		if(suffixes.contains(QFileInfo(file).suffix().toLower()) && QFileInfo(file).isFile())
+			return file;
+	}
+	return QString();
+}
+
+void DesignerWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+	if(!DroppedFile(event->mimeData(), kPlanSuffixes).isEmpty())
+		event->acceptProposedAction();
+}
+
+void DesignerWindow::dragMoveEvent(QDragMoveEvent* event)
+{
+	if(!DroppedFile(event->mimeData(), kPlanSuffixes).isEmpty())
+		event->acceptProposedAction();
+}
+
+void DesignerWindow::dropEvent(QDropEvent* event)
+{
+	const QString file = DroppedFile(event->mimeData(), kPlanSuffixes);
+	if(file.isEmpty())
+		return;
+	event->acceptProposedAction();
+	// Out of the drop first: the file manager waits until the drop returns.
+	QTimer::singleShot(0, this, [this, file]() { OpenDropped(file); });
+}
+
+bool DesignerWindow::eventFilter(QObject* watched, QEvent* event)
+{
+	if(watched == m_decalBox && m_decalBox)
+	{
+		if(event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
+		{
+			QDragMoveEvent* drag = static_cast<QDragMoveEvent*>(event);
+			if(!DroppedFile(drag->mimeData(), kDecalImageSuffixes).isEmpty())
+			{
+				drag->acceptProposedAction();
+				return true;
+			}
+			// Not an image: let the window take it (a plan dropped on the box).
+			return false;
+		}
+		if(event->type() == QEvent::Drop)
+		{
+			QDropEvent* drop = static_cast<QDropEvent*>(event);
+			const QString file = DroppedFile(drop->mimeData(), kDecalImageSuffixes);
+			if(!file.isEmpty())
+			{
+				drop->acceptProposedAction();
+				QTimer::singleShot(0, this, [this, file]() { AddDecalImage(file); });
+				return true;
+			}
+			return false;
+		}
+	}
+	return QMainWindow::eventFilter(watched, event);
+}
+
+void DesignerWindow::OpenDropped(const QString& fileName)
+{
+	const bool blueprint = fileName.endsWith(".soh", Qt::CaseInsensitive);
+	QString text = blueprint
+			? QString("Open the blueprint %1 as a new plan?").arg(QFileInfo(fileName).fileName())
+			: QString("Open the plan %1?").arg(QFileInfo(fileName).fileName());
+	if(m_dirty)
+		text += "\n\nThe changes to the plan open now are not saved and will be lost.";
+	if(QMessageBox::question(this, "Shipgen designer", text, QMessageBox::Open | QMessageBox::Cancel,
+			QMessageBox::Open) != QMessageBox::Open)
+		return;
+	if(blueprint)
+		OpenBlueprint(fileName);
+	else
+		OpenPlan(fileName);
+}
+
+void DesignerWindow::RefreshDecals()
+{
+	if(!m_decalList)
+		return;
+	const bool was = m_updating;
+	m_updating = true;
+	int row = m_decalList->currentRow();
+	m_decalList->clear();
+	for(const DecalOptions& d : m_plan.decals)
+		m_decalList->addItem(QString("%1  (%2 ft, %3%4)").arg(QFileInfo(d.image).fileName()).arg(d.width, 0, 'f', 0)
+				.arg(DecalProjectionName(d.projection)).arg(d.haveAim ? QString() : QString(", not placed yet")));
+	if(row >= m_plan.decals.size())
+		row = m_plan.decals.size() - 1;
+	if(row < 0 && !m_plan.decals.isEmpty())
+		row = 0;
+	m_decalList->setCurrentRow(row);
+	m_decalForm->setEnabled(row >= 0);
+	if(row >= 0)
+	{
+		const DecalOptions& d = m_plan.decals.at(row);
+		m_decalProjection->setCurrentIndex(d.projection == DecalProjection::Wrap ? 0 : 1);
+		int from = kDecalSideCount;
+		for(int i = 0; i < kDecalSideCount; ++i)
+			if(qAbs(d.fromX - kDecalSides[i].x) < 1e-6 && qAbs(d.fromY - kDecalSides[i].y) < 1e-6
+					&& qAbs(d.fromZ - kDecalSides[i].z) < 1e-6)
+				from = i;
+		m_decalFrom->setCurrentIndex(from);
+		m_decalSides->setCurrentIndex(m_decalSides->findData(DecalSidesName(d.sides)));
+		m_decalWidth->setValue(d.width);
+		m_decalRotate->setValue(d.rotate);
+		m_decalMirror->setChecked(d.mirror);
+		m_decalSelfLit->setValue(d.selfLit);
+		m_decalOpacity->setValue(d.opacity);
+	}
+	else
+		m_decalPlace->setChecked(false);
+	m_updating = was;
+}
+
+void DesignerWindow::DecalFormToPlan()
+{
+	const int row = m_decalList->currentRow();
+	if(row < 0 || row >= m_plan.decals.size())
+		return;
+	OnAboutToChange();
+	DecalOptions& d = m_plan.decals[row];
+	DecalProjectionFromName(m_decalProjection->currentData().toString(), d.projection);
+	const int from = m_decalFrom->currentIndex();
+	if(from >= 0 && from < kDecalSideCount)
+	{
+		d.fromX = kDecalSides[from].x;
+		d.fromY = kDecalSides[from].y;
+		d.fromZ = kDecalSides[from].z;
+	}
+	DecalSidesFromName(m_decalSides->currentData().toString(), d.sides);
+	d.width = m_decalWidth->value();
+	d.rotate = m_decalRotate->value();
+	d.mirror = m_decalMirror->isChecked();
+	d.selfLit = m_decalSelfLit->value();
+	d.opacity = m_decalOpacity->value();
+	m_dirty = true;
+	RefreshTitle();
+	RefreshDecals();
+	RefreshBuildList();
+	ReapplyDecals(true);
+}
+
+void DesignerWindow::OnDecalPicked(const QVector3D& point, const QVector3D& normal, const QVector3D& toward)
+{
+	Q_UNUSED(toward);
+	const int row = m_decalList ? m_decalList->currentRow() : -1;
+	if(!m_decalPlace || !m_decalPlace->isChecked() || row < 0 || row >= m_plan.decals.size())
+		return;
+	OnAboutToChange();
+	DecalOptions& d = m_plan.decals[row];
+	d.haveAim = true;
+	d.aimX = point.x();
+	d.aimY = point.y();
+	d.aimZ = point.z();
+	if(m_decalFrom->currentIndex() == kDecalSideCount)
+	{
+		// Square to the surface.
+		d.fromX = normal.x();
+		d.fromY = normal.y();
+		d.fromZ = normal.z();
+	}
+	else
+	{
+		// The side nearest to the way the hull faces there.
+		int best = 0;
+		double bestDot = -2;
+		for(int i = 0; i < kDecalSideCount; ++i)
+		{
+			const double dot = normal.x() * kDecalSides[i].x + normal.y() * kDecalSides[i].y + normal.z() * kDecalSides[i].z;
+			if(dot > bestDot)
+			{
+				bestDot = dot;
+				best = i;
+			}
+		}
+		d.fromX = kDecalSides[best].x;
+		d.fromY = kDecalSides[best].y;
+		d.fromZ = kDecalSides[best].z;
+	}
+	m_dirty = true;
+	RefreshTitle();
+	RefreshDecals();
+	ReapplyDecals(true);
+}
+
+bool DesignerWindow::ReapplyDecals(bool ask)
+{
+	if(!m_design || !m_designIsBlueprint)
+	{
+		if(m_decalStatus)
+			m_decalStatus->setText(m_plan.decals.isEmpty() ? QString()
+					: QString("Build the blueprint to see the decals and place them."));
+		return true;
+	}
+	const int facesBefore = DesignFaceCount(*m_design);
+	RemoveDecals(*m_design);
+	DecalsApplied applied;
+	if(!m_plan.buildLeaveOut.contains("decals"))
+		applied = ApplyDecals(*m_design, m_plan.decals);
+	const int faces = DesignFaceCount(*m_design);
+	const double size = DesignSizePercent(*m_design);
+	const bool overFaces = applied.faces > 0 && m_plan.maxFaces > 0 && m_report.hullFaces + applied.faces > m_plan.maxFaces;
+	if(ask && faces > facesBefore && (overFaces || size > 100))
+	{
+		const QString why = size > 100
+				? QString("The blueprint would be at %1 % of the game's size limit.").arg(size, 0, 'f', 0)
+				: QString("The decals add %1 faces; with the hull's %2 that is over the face budget of %3.")
+						.arg(applied.faces).arg(m_report.hullFaces).arg(m_plan.maxFaces);
+		if(QMessageBox::question(this, "Shipgen designer", why + "\n\nKeep the change anyway?",
+				QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+		{
+			// Back to the plan before the change, keeping the built blueprint.
+			if(!m_undo.isEmpty())
+				m_plan = m_undo.takeLast();
+			RefreshDecals();
+			RefreshBuildList();
+			ReapplyDecals(false);
+			return false;
+		}
+	}
+	QStringList lines;
+	if(applied.parts)
+		lines << QString("Decals: %1 faces. The blueprint has %2 faces and is at %3 % of the game's size limit.")
+				.arg(applied.faces).arg(faces).arg(size, 0, 'f', 1);
+	lines << applied.warnings;
+	m_decalStatus->setText(lines.join("\n"));
+	m_preview->SetDesign(m_design, false);
+	return true;
 }
 
 void DesignerWindow::SetPlan(const TriPlan& plan)
@@ -1551,7 +2183,7 @@ void DesignerWindow::RefreshTitle()
 {
 	const QString file = m_planFile.isEmpty() ? QString("unsaved") : QFileInfo(m_planFile).fileName();
 	setWindowTitle(QString("Shipgen designer %1 - %2 (%3)%4%5").arg(SHIPGEN_VERSION, m_plan.name, file, m_dirty ? " *" : "",
-			m_plan.IsFighter() ? "  [fighter mode - experimental]" : ""));
+			m_plan.IsFighter() ? "  [fighter mode - experimental]" : m_plan.IsBuilding() ? "  [building]" : ""));
 }
 
 void DesignerWindow::RefreshAll()
@@ -1560,6 +2192,7 @@ void DesignerWindow::RefreshAll()
 	m_name->setText(m_plan.name);
 	m_template->setCurrentIndex(qMax(0, m_template->findData(m_plan.templateKey)));
 	m_ftl->setCurrentIndex(qMax(0, m_ftl->findData(m_plan.ftlDrive)));
+	m_station->setChecked(m_plan.station);
 	m_noShields->setChecked(m_plan.leaveOut.contains("shield"));
 	m_noWeapons->setChecked(m_plan.leaveOut.contains("firecontrol"));
 	m_fireControl->setCurrentIndex(qMax(0, m_fireControl->findData(m_plan.fireControlModule)));
@@ -1595,6 +2228,8 @@ void DesignerWindow::RefreshAll()
 	m_shipDoorTex->setCurrentIndex(qMax(0, m_shipDoorTex->findData(m_plan.doorTex)));
 	m_flatWindows->setChecked(m_plan.flatWindows);
 	m_hullWindows->setChecked(m_plan.windowStyle == "hull");
+	m_hullWindowGlass->setCurrentIndex(qMax(0, m_hullWindowGlass->findData(m_plan.hullWindowGlass)));
+	m_windowLining->setChecked(m_plan.windowLining);
 	m_bridgeStyle->setCurrentIndex(qMax(0, m_bridgeStyle->findData(m_plan.bridgeStyle)));
 	m_deskPosture->setCurrentIndex(m_plan.deskStanding ? 1 : 0);
 	m_deskHeight->setValue(Shown(m_plan.DeskTopFeet()));
@@ -1603,11 +2238,14 @@ void DesignerWindow::RefreshAll()
 	m_fighter->setChecked(m_plan.IsFighter());
 	m_fighterBanner->setVisible(m_plan.IsFighter());
 	m_updating = false;
+	RefreshBuilding();
+	RefillRoomTypes();
 	RefreshDecks();
 	RefreshRooms();
 	RefreshPalette();
 	RefreshCrew();
 	RefreshBuildList();
+	RefreshDecals();
 	ApplyDrawMode();
 	RefreshTitle();
 }
@@ -1678,7 +2316,9 @@ void DesignerWindow::ApplyDrawMode()
 			{ "groundParking", PlanView::GroundParkingMode }, { "spaceParking", PlanView::SpaceParkingMode },
 			{ "stairs", PlanView::StairMode }, { "contrails", PlanView::ContrailMode }, { "weapons", PlanView::WeaponMode },
 			{ "skylights", PlanView::SkylightMode }, { "spacecraftParking", PlanView::SpacecraftParkingMode },
-			{ "markings", PlanView::MarkingMode } };
+			{ "markings", PlanView::MarkingMode }, { "rocketParking", PlanView::RocketParkingMode },
+			{ "waterParking", PlanView::WaterParkingMode }, { "areas", PlanView::AreaMode }, { "props", PlanView::PropMode },
+			{ "vehicleParking", PlanView::VehicleParkingMode } };
 		// The door tool puts in doors, windows between rooms or balconies.
 		m_view->SetDoorKind(tool == "innerWindows" ? "window" : tool == "balconies" ? "balcony" : "");
 		m_view->SetMode(modes.value(tool, PlanView::RoomMode));
@@ -1687,6 +2327,9 @@ void DesignerWindow::ApplyDrawMode()
 		m_markingRow->setVisible(tool == "markings");
 		m_skylightRow->setVisible(tool == "skylights");
 		m_wallWindowRow->setVisible(tool == "windows");
+		m_areaRow->setVisible(tool == "areas");
+		m_propRow->setVisible(tool == "props");
+		m_vehicleRow->setVisible(tool == "vehicleParking");
 	}
 		break;
 	case StepCrew:
@@ -1769,6 +2412,12 @@ void DesignerWindow::OnPlanChanged(bool hullChanged)
 	RefreshTitle();
 	if(m_steps->currentIndex() == StepCrew)
 		RefreshCrew();
+	if(m_steps->currentIndex() == StepRooms)
+	{
+		const QStringList lifts = m_plan.LiftProblems();
+		if(!lifts.isEmpty())
+			m_status->setText(lifts.first() + (lifts.size() > 1 ? QString(" (and %1 more)").arg(lifts.size() - 1) : QString()));
+	}
 	if(hullChanged || m_steps->currentIndex() == StepRooms)		// The smoothing gives way to rooms.
 		PlanEdited();
 }
@@ -1845,6 +2494,266 @@ void DesignerWindow::OnNewFighter()
 	ShowStep(StepHull);
 	RefreshTitle();
 	m_status->setText("A new fighter (experimental): draw the hull, then the cockpit (Rooms), its door and canopy.");
+}
+
+void DesignerWindow::OnNewBuilding()
+{
+	QStringList labels;
+	QStringList keys;
+	for(const BuildingTemplate& t : AllBuildingTemplates())
+	{
+		labels << QString("%1 - %2").arg(t.label, t.description);
+		keys << t.key;
+	}
+	bool ok = false;
+	const QString picked = QInputDialog::getItem(this, "New building", "What kind of building? (It can be changed "
+			"later, on the first page.)", labels, qMax(0, keys.indexOf("office_block")), false, &ok);
+	if(!ok)
+		return;
+	const BuildingTemplate* t = FindBuildingTemplate(keys.value(labels.indexOf(picked)));
+	TriPlan plan;
+	plan.MakeBuilding(t ? t->key : QString("office_block"), true);
+	plan.name = t ? t->label : QString("New building");
+	// The template's footprint and floors, and a cell of room round it.
+	const double fx = t ? t->footprintX : 140, fy = t ? t->footprintY : 100;
+	plan.Resize(qBound(8, int(ceil(fx / plan.cellFeet)) + 2, 400), qBound(8, int(ceil(fy / plan.cellFeet)) + 2, 400));
+	while(plan.Decks() < qBound(1, t ? t->floors : 1, 20))
+		plan.AddDeck();
+	SetPlan(plan);
+	m_planFile.clear();
+	m_dirty = false;
+	ShowStep(StepHull);
+	RefreshTitle();
+	m_status->setText("A new building: draw its outside on deck 1 and up, then the rooms and a hull door on deck 1.");
+}
+
+// The structures a building can be.
+static const QList<QPair<QString, QString> >& StructureChoices()
+{
+	static const QList<QPair<QString, QString> > list = {
+		{ "building", "Building" }, { "biodome", "Biodome" }, { "groundplatform", "Ground platform" },
+		{ "seaplatform", "Sea platform" }, { "aerialplatform", "Aerial platform" }, { "statue", "Statue" },
+		{ "streetlight", "Street light" } };
+	return list;
+}
+
+// The counts of the building box: key, label, tip, maximum.
+struct BuildingCount { const char* key; const char* label; const char* tip; int max; };
+static const BuildingCount kBuildingCounts[] = {
+	{ "offices", "Offices", "Cubic meters of office.", 100000 },
+	{ "shops", "Workshop", "Cubic meters of workshop (factories, mines, churches).", 100000 },
+	{ "store", "Store", "Cubic meters of retail store (a shop that sells). For storage use Hold.", 100000 },
+	{ "lounge", "Lounge", "Cubic meters of lounge.", 100000 },
+	{ "homesLarge", "Large homes", "Cubic meters of large homes.", 100000 },
+	{ "homesMedium", "Medium homes", "Cubic meters of medium homes (a house has 4, about 480).", 100000 },
+	{ "homesSmall", "Small homes", "Cubic meters of small homes.", 100000 },
+	{ "powerPlant", "Power plant", "Cubic meters of generator.", 100000 },
+	{ "lifeSupport", "Life support", "Cubic meters of life support (harsh and airless worlds).", 100000 },
+	{ "capacitor", "Battery", "Cubic meters of battery (power plants want one).", 100000 },
+	{ "sensors", "Sensors", "Cubic meters of sensors (a sensor console is put in).", 100000 },
+	{ "shields", "Shields", "Cubic meters of shields.", 100000 },
+	{ "hold", "Hold", "Cubic meters of hold: storage for commodities.", 100000 },
+	{ "auditorium", "Auditorium", "Cubic meters of auditorium.", 100000 },
+	{ "arena", "Arena", "Cubic meters of arena.", 100000 },
+	{ "field", "Fields", "Fields of cracked earth, 4,000 square meters each.", 50 },
+	{ "groundParking", "Ground parking", "Parking spots for ground vehicles, in front of the building.", 50 },
+	{ "spaceParking", "Space pads", "Landing pads for space vehicles, in front of the building.", 50 },
+	{ "spacecraftParking", "Spacecraft berths", "Landing berths for whole spacecraft (238 ft square), beside it.", 10 },
+	{ "rocketParking", "Rocket pads", "Space rocket parking spots (the aircraft factory wants one).", 10 },
+	{ "citizenPosts", "Citizen posts", "Posts for citizens who keep a store or a workshop.", 50 },
+	{ "guardPosts", "Guard posts", "Posts for guards.", 50 },
+};
+
+static int* BuildingCountField(BuildingBrief& b, const QString& key)
+{
+	BuildingVolumes& v = b.volumes;
+	static int scratch;
+	if(key == "groundParking") return &b.groundParking;
+	if(key == "spaceParking") return &b.spaceParking;
+	if(key == "spacecraftParking") return &b.spacecraftParking;
+	if(key == "rocketParking") return &b.rocketParking;
+	if(key == "citizenPosts") return &b.citizenPosts;
+	if(key == "guardPosts") return &b.guardPosts;
+	if(key == "field") return &v.field;
+	quint32* u = key == "offices" ? &v.offices : key == "shops" ? &v.shops : key == "store" ? &v.store
+			: key == "lounge" ? &v.lounge : key == "homesLarge" ? &v.homesLarge : key == "homesMedium" ? &v.homesMedium
+			: key == "homesSmall" ? &v.homesSmall : key == "powerPlant" ? &v.powerPlant : key == "lifeSupport" ? &v.lifeSupport
+			: key == "capacitor" ? &v.capacitor : key == "sensors" ? &v.sensors : key == "shields" ? &v.shields
+			: key == "hold" ? &v.hold : key == "auditorium" ? &v.auditorium : key == "arena" ? &v.arena : 0;
+	if(u)
+		return reinterpret_cast<int*>(u);		// Both 32 bits; the boxes keep them in range.
+	return &scratch;
+}
+
+QGroupBox* DesignerWindow::MakeBuildingBox()
+{
+	m_buildingBox = new QGroupBox("Building");
+	QVBoxLayout* outer = new QVBoxLayout(m_buildingBox);
+	QFormLayout* form = new QFormLayout;
+	outer->addLayout(form);
+	m_bTemplate = new QComboBox;
+	m_bTemplate->addItem("(keep as it is)", QString());
+	for(const BuildingTemplate& t : AllBuildingTemplates())
+		m_bTemplate->addItem(t.label, t.key);
+	m_bTemplate->setToolTip("Fill in the industry, volumes and parking of a kind of building. The drawing stays.");
+	form->addRow("Start from", m_bTemplate);
+	connect(m_bTemplate, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+		const QString key = m_bTemplate->currentData().toString();
+		if(m_updating || key.isEmpty())
+			return;
+		OnAboutToChange();
+		const QString description = m_plan.building.description;
+		m_plan.building = BuildingBrief();
+		ApplyBuildingTemplate(m_plan.building, key);
+		m_plan.building.rooms.clear();
+		if(m_plan.building.description.isEmpty())
+			m_plan.building.description = description;
+		RefreshBuilding();
+		PlanEdited();
+		m_status->setText(QString("The building now has what a %1 has.").arg(m_bTemplate->currentText()));
+	});
+	m_bIndustry = new QComboBox;
+	m_bIndustry->addItem("(the first that can use it)", QString("auto"));
+	QStringList industries = KnownIndustryNames();
+	industries.sort(Qt::CaseInsensitive);
+	for(const QString& n : industries)
+		m_bIndustry->addItem(n, n.toLower());
+	m_bIndustry->setToolTip("What the building is for. The game checks that it has what this industry needs.");
+	form->addRow("Industry", m_bIndustry);
+	m_bStructure = new QComboBox;
+	for(const auto& c : StructureChoices())
+		m_bStructure->addItem(c.second, c.first);
+	m_bStructure->setToolTip("The kind of structure. Platforms and biodomes follow from their industry too; sea "
+							 "and aerial platforms have no site.");
+	form->addRow("Structure", m_bStructure);
+	m_bDescription = new QLineEdit;
+	m_bDescription->setToolTip("The description the game shows for the blueprint.");
+	form->addRow("Description", m_bDescription);
+	QGridLayout* grid = new QGridLayout;
+	int i = 0;
+	for(const BuildingCount& c : kBuildingCounts)
+	{
+		QSpinBox* box = new QSpinBox;
+		box->setRange(0, c.max);
+		box->setToolTip(c.tip);
+		if(c.max >= 1000)
+		{
+			box->setSuffix(" m³");
+			box->setSingleStep(50);
+		}
+		m_bCounts.insert(c.key, box);
+		grid->addWidget(new QLabel(c.label), i / 2, (i % 2) * 2);
+		grid->addWidget(box, i / 2, (i % 2) * 2 + 1);
+		connect(box, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) { OnBuildingChanged(); });
+		++i;
+	}
+	outer->addLayout(grid);
+	QFormLayout* more = new QFormLayout;
+	m_bStackFields = new QCheckBox("Stack the fields");
+	m_bStackFields->setToolTip("Lay the fields on top of each other: the game adds up the area of every field, so "
+							   "four fields take the ground of one.");
+	more->addRow(m_bStackFields);
+	m_bBuildZone = new QCheckBox("Build zone over the deck (platforms)");
+	m_bBuildZone->setToolTip("Platforms: the top of the deck is a build zone, for other buildings on it.");
+	more->addRow(m_bBuildZone);
+	m_bLightRange = new QDoubleSpinBox;
+	m_bLightRange->setRange(0, 2000);
+	m_bLightRange->setSuffix(" ft");
+	m_bLightRange->setSpecialValueText("the game's own (45 ft for a street light)");
+	m_bLightRange->setToolTip("How far the building's lamps light: a street lamp, not a whole block.");
+	more->addRow("Lamps reach", m_bLightRange);
+	outer->addLayout(more);
+	m_bWarnings = new QLabel;
+	m_bWarnings->setWordWrap(true);
+	m_bWarnings->setStyleSheet("QLabel { color: #8a4b00; }");
+	outer->addWidget(m_bWarnings);
+	connect(m_bIndustry, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { OnBuildingChanged(); });
+	connect(m_bStructure, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { OnBuildingChanged(); });
+	connect(m_bDescription, &QLineEdit::editingFinished, this, [this]() { OnBuildingChanged(); });
+	connect(m_bStackFields, &QCheckBox::toggled, this, [this](bool) { OnBuildingChanged(); });
+	connect(m_bBuildZone, &QCheckBox::toggled, this, [this](bool) { OnBuildingChanged(); });
+	connect(m_bLightRange, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { OnBuildingChanged(); });
+	m_buildingBox->setVisible(false);
+	return m_buildingBox;
+}
+
+void DesignerWindow::RefreshBuilding()
+{
+	const bool building = m_plan.IsBuilding();
+	m_buildingBox->setVisible(building);
+	m_buildingBanner->setVisible(building);
+	for(QWidget* w : m_shipOnly)
+	{
+		w->setVisible(!building);
+		if(QWidget* label = m_shipForm->labelForField(w))
+			label->setVisible(!building);
+	}
+	if(QStandardItemModel* model = qobject_cast<QStandardItemModel*>(m_roomTool->model()))
+		for(int i = 0; i < m_roomTool->count(); ++i)
+		{
+			const QString key = m_roomTool->itemData(i).toString();
+			const bool buildingOnly = key == "rocketParking" || key == "waterParking" || key == "areas" || key == "props";
+			const bool shipOnly = key == "contrails" || key == "weapons" || key == "markings";
+			if(QStandardItem* item = model->item(i))
+			{
+				const bool on = building ? !shipOnly : !buildingOnly;
+				item->setFlags(on ? item->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable
+						: item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+			}
+		}
+	if(!building)
+		return;
+	const bool was = m_updating;
+	m_updating = true;
+	BuildingBrief& b = m_plan.building;
+	m_bTemplate->setCurrentIndex(0);
+	int ind = m_bIndustry->findData(b.industry.toLower());
+	m_bIndustry->setCurrentIndex(qMax(0, ind));
+	m_bStructure->setCurrentIndex(qMax(0, m_bStructure->findData(b.structure.toLower())));
+	m_bDescription->setText(b.description);
+	for(auto it = m_bCounts.begin(); it != m_bCounts.end(); ++it)
+		it.value()->setValue(*BuildingCountField(b, it.key()));
+	m_bStackFields->setChecked(b.stackFields);
+	m_bBuildZone->setChecked(b.buildZone);
+	m_bLightRange->setValue(b.lightRange);
+	const QStringList warnings = BuildingRuleWarnings(b);
+	m_bWarnings->setText(warnings.isEmpty() ? QString() : "⚠ " + warnings.join("\n⚠ "));
+	m_bWarnings->setVisible(!warnings.isEmpty());
+	m_updating = was;
+}
+
+void DesignerWindow::OnBuildingChanged()
+{
+	if(m_updating || !m_plan.IsBuilding())
+		return;
+	OnAboutToChange();
+	BuildingBrief& b = m_plan.building;
+	b.industry = m_bIndustry->currentData().toString();
+	b.structure = m_bStructure->currentData().toString();
+	b.description = m_bDescription->text().trimmed();
+	for(auto it = m_bCounts.constBegin(); it != m_bCounts.constEnd(); ++it)
+		*BuildingCountField(b, it.key()) = it.value()->value();
+	b.stackFields = m_bStackFields->isChecked();
+	b.buildZone = m_bBuildZone->isChecked();
+	b.lightRange = m_bLightRange->value();
+	const QStringList warnings = BuildingRuleWarnings(b);
+	m_bWarnings->setText(warnings.isEmpty() ? QString() : "⚠ " + warnings.join("\n⚠ "));
+	m_bWarnings->setVisible(!warnings.isEmpty());
+	PlanEdited();
+}
+
+// The room type box follows the mode: a building's rooms or a ship's.
+void DesignerWindow::RefillRoomTypes()
+{
+	if(!m_roomType || m_roomTypesForBuilding == m_plan.IsBuilding())
+		return;
+	m_roomTypesForBuilding = m_plan.IsBuilding();
+	const bool was = m_updating;
+	m_updating = true;
+	m_roomType->clear();
+	FillShipRoomTypes(m_roomType, m_roomTypesForBuilding);
+	m_updating = was;
+	RefreshRooms();
 }
 
 void DesignerWindow::OnNewFighterFromModel()
@@ -1995,7 +2904,12 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 		SetTask(what, done, total);
 		return !m_taskStopAsked.load();
 	};
-	QThread* worker = QThread::create([&]() { made = PlanFromModel(modelFile, options, plan, notes, error, &report); });
+	// A blueprint (.SoH): its hull as it is, with its rooms and doors.
+	const bool blueprint = modelFile.endsWith(".soh", Qt::CaseInsensitive);
+	QThread* worker = QThread::create([&]() {
+		made = blueprint ? PlanFromBlueprint(modelFile, options, plan, notes, error)
+				: PlanFromModel(modelFile, options, plan, notes, error, &report);
+	});
 	// The progress shows in the task bar at the bottom of the window, which
 	// cannot be used meanwhile.
 	BeginTask(QString("Reading %1").arg(QFileInfo(modelFile).fileName()), true);
@@ -2028,6 +2942,12 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 			QMessageBox::warning(this, "New plan from a 3D model", why);
 		return false;
 	}
+	if(blueprint)
+	{
+		// Its size is the blueprint's: no longer ship is offered.
+		notes = notes.filter(QRegularExpression("^(?!Recommended|Only a little)"));
+		report.suggestedLength = 0;
+	}
 	if(fighter)
 	{
 		plan.MakeFighter(true);
@@ -2038,6 +2958,14 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 				 "its side, and a canopy of windows or ceiling windows that follow the hull; place the seat in the "
 				 "Crew step.";
 	}
+	if(m_importBuilding.isEmpty() ? false : true)
+	{
+		plan.MakeBuilding(m_importBuilding, false);
+		plan.hullStyle = "smooth";
+		notes << "Building mode: deck 1 stands on the ground. Draw the rooms where the model is thick enough, a hull "
+				 "door on deck 1, and set what the building is for in the Building box (first page).";
+	}
+	m_importBuilding.clear();
 	m_undo << m_plan;
 	SetPlan(plan);
 	m_planFile.clear();
@@ -2075,9 +3003,29 @@ bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions 
 
 void DesignerWindow::OnOpen()
 {
-	const QString fileName = QFileDialog::getOpenFileName(this, "Open a plan", QString(), "Triangle plans (*.json)");
-	if(!fileName.isEmpty())
+	const QString fileName = QFileDialog::getOpenFileName(this, "Open a plan", QString(),
+			"Triangle plans and blueprints (*.json *.SoH *.soh);;Triangle plans (*.json);;Blueprints (*.SoH *.soh)");
+	if(fileName.isEmpty())
+		return;
+	if(fileName.endsWith(".soh", Qt::CaseInsensitive))
+		OpenBlueprint(fileName);
+	else
 		OpenPlan(fileName);
+}
+
+void DesignerWindow::OnOpenBlueprint()
+{
+	const QString fileName = QFileDialog::getOpenFileName(this, "Open a blueprint", QString(), "Blueprints (*.SoH *.soh)");
+	if(!fileName.isEmpty())
+		OpenBlueprint(fileName);
+}
+
+// A blueprint becomes a new plan: its hull as it is, its rooms and doors;
+// the template furnishes it again when it is built.
+void DesignerWindow::OpenBlueprint(const QString& fileName)
+{
+	m_importBuilding.clear();
+	ImportModel(fileName, PlanFromModelOptions(), true, false);
 }
 
 void DesignerWindow::OnSave()
@@ -2130,7 +3078,8 @@ bool DesignerWindow::SaveBlueprint(const QString& fileName, bool ask)
 				!= QMessageBox::Yes)
 			return false;
 	}
-	if(!m_design->SaveToFile(fileName, SOH_FILE_TYPE))
+	if(!SaveDesign(*m_design, fileName, QList<OpaquePart>(),
+			m_designIsBlueprint ? m_report.vehicleSpots : QList<VehicleSpotSave>()))
 	{
 		QMessageBox::warning(this, "Shipgen designer", "Could not write " + fileName);
 		return false;
@@ -2155,6 +3104,36 @@ void DesignerWindow::OnAddDeckBelow()
 	m_view->SetDeck(0);
 	RefreshDecks();
 	OnPlanChanged(true);
+}
+
+// Puts the game's texture pictures in the texture boxes (after the game's
+// texture library has been picked).
+void DesignerWindow::ApplyTextureIcons()
+{
+	for(QComboBox* box : m_textureBoxes)
+		for(int i = 0; i < box->count(); ++i)
+			box->setItemIcon(i, GameTextureIcon(box->itemData(i).toInt()));
+}
+
+void DesignerWindow::OnCopyDeck(bool withRooms)
+{
+	const int deck = m_view->Deck();
+	bool ok = false;
+	const int times = QInputDialog::getInt(this, withRooms ? "Copy this deck" : "Copy the floor",
+			QString(withRooms ? "How many copies of deck %1 go on top of it (with its rooms and all on it)?"
+					: "How many copies of deck %1's hull and paint go on top of it (no rooms)?").arg(deck + 1),
+			1, 1, 50, 1, &ok);
+	if(!ok)
+		return;
+	OnAboutToChange();
+	const int rooms = m_plan.CopyDeck(deck, times, withRooms);
+	m_view->SetDeck(deck + times);
+	RefreshDecks();
+	RefreshRooms();
+	OnPlanChanged(true);
+	m_status->setText(withRooms ? QString("Deck %1 copied %2 time(s) on top of it, with %3 new room(s).")
+			.arg(deck + 1).arg(times).arg(rooms)
+			: QString("Deck %1's floor copied %2 time(s) on top of it.").arg(deck + 1).arg(times));
 }
 
 void DesignerWindow::OnRemoveDeck()
@@ -2229,6 +3208,7 @@ void DesignerWindow::OnSettingsChanged()
 	m_plan.name = m_name->text().trimmed().isEmpty() ? m_plan.name : m_name->text().trimmed();
 	m_plan.templateKey = m_template->currentData().toString();
 	m_plan.ftlDrive = m_ftl->currentData().toString();
+	m_plan.station = m_station->isChecked();
 	m_plan.leaveOut.clear();
 	if(m_noShields->isChecked())
 		m_plan.leaveOut << "shield";
@@ -2266,6 +3246,8 @@ void DesignerWindow::OnSettingsChanged()
 	m_plan.doorTex = m_shipDoorTex->currentData().toInt();
 	m_plan.flatWindows = m_flatWindows->isChecked();
 	m_plan.windowStyle = m_hullWindows->isChecked() ? QString("hull") : QString();
+	m_plan.hullWindowGlass = m_hullWindowGlass->currentData().toString();
+	m_plan.windowLining = m_windowLining->isChecked();
 	m_plan.bridgeStyle = m_bridgeStyle->currentData().toString();
 	// A height is the plan's own only once it is changed: until then it follows
 	// the usual height for sitting or standing.
@@ -2299,7 +3281,7 @@ void DesignerWindow::OnAddRoom()
 	dialog.setWindowTitle("Add a room");
 	QFormLayout* form = new QFormLayout(&dialog);
 	QComboBox* typeBox = new QComboBox;
-	FillShipRoomTypes(typeBox);
+	FillShipRoomTypes(typeBox, m_plan.IsBuilding());
 	typeBox->setToolTip("The engine's own room types. The stations of the ship go into rooms of the right type: "
 						"the helm on the bridge, the engineer in engineering, and so on.");
 	static QString lastType;
@@ -2787,11 +3769,14 @@ bool DesignerWindow::BuildNow()
 	const QStringList& out = m_plan.buildLeaveOut;
 	options.furnish = !(out.contains("stations") && out.contains("berths") && out.contains("pads") && out.contains("systems"));
 	options.walkPaths = true;
-	AuScDesign* design = BuildPlanDesign(m_plan, options, m_report);
+	AuDesign* design = BuildPlanDesign(m_plan, options, m_report);
 	m_preview->SetDesign(0);
 	delete m_design;
 	m_design = design;
 	m_designIsBlueprint = true;
+	if(m_decalStatus)
+		m_decalStatus->setText(m_report.decals ? QString("Decals: %1 faces. The blueprint is at %2 % of the game's size limit.")
+				.arg(m_report.decalFaces).arg(DesignSizePercent(*m_design), 0, 'f', 1) : QString());
 	if(m_steps->currentIndex() == StepBuild)
 	{
 		m_preview->SetHullOpacity(0.25f);
@@ -2807,6 +3792,8 @@ bool DesignerWindow::BuildNow()
 	lines << QString("Zero-G joins: %1   Open to the deck below: %2").arg(m_report.zeroGJoins).arg(m_report.openJoins);
 	lines << QString("Stations: %1   Berths: %2   Contrail emitters: %3   Weapon emitters: %4   Flags and names: %5").arg(m_report.stations)
 			.arg(m_report.berths).arg(m_report.contrails).arg(m_report.weaponEmitters).arg(m_report.markings);
+	if(m_report.decals)
+		lines << QString("Decals: %1 (%2 faces)").arg(m_report.decals).arg(m_report.decalFaces);
 	lines << "";
 	for(const QString& w : m_report.warnings)
 		lines << "Warning: " + w;

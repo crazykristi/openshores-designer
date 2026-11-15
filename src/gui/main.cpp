@@ -56,6 +56,7 @@ int main(int argc, char* argv[])
 	QString openFile;
 	QString screenShot;
 	QString previewShot;
+	QStringList viewAngle;	// yaw,pitch[,zoom] for the 3D view
 	bool showWizard = false;
 	int		wizardPage = 0;
 	int		wizardKind = 0;
@@ -74,6 +75,8 @@ int main(int argc, char* argv[])
 			screenShot = args.at(++i);
 		else if(args.at(i) == "--screenshot-preview" && i + 1 < args.size())
 			previewShot = args.at(++i);
+		else if(args.at(i) == "--view-angle" && i + 1 < args.size())
+			viewAngle = args.at(++i).split(',');
 		else if(args.at(i) == "--wizard")
 			showWizard = true;
 		else if(args.at(i) == "--wizard-template" && i + 1 < args.size())
@@ -124,6 +127,11 @@ int main(int argc, char* argv[])
 	if(!screenShot.isEmpty() || !previewShot.isEmpty())
 	{
 		// Let the window settle, then save the pictures.
+		if(viewAngle.size() >= 2)
+			QTimer::singleShot(1000, [&]() {
+				window.SetPreviewView(viewAngle.at(0).toFloat(), viewAngle.at(1).toFloat(),
+						viewAngle.size() > 2 ? viewAngle.at(2).toFloat() : 1.f);
+			});
 		QTimer::singleShot(1500, [&]() {
 			if(!previewShot.isEmpty())
 			{

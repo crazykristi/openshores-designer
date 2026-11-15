@@ -5,10 +5,14 @@
 #include "triplan.h"
 #include "names.h"
 
+#include <QDir>
 #include <QFile>
+#include <QHash>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStringList>
 #include <cmath>
 
@@ -147,6 +151,18 @@ void TriPlan::Resize(int width, int depth)
 		st.x += ox;
 		st.y += oy;
 	}
+	for(PlanArea& a : areas)
+	{
+		a.cx0 += ox;
+		a.cx1 += ox;
+		a.cy0 += oy;
+		a.cy1 += oy;
+	}
+	for(PlanProp& pr : props)
+	{
+		pr.x += ox;
+		pr.y += oy;
+	}
 	for(PlanBerth& b : berths)
 	{
 		b.x += ox;
@@ -193,6 +209,10 @@ void TriPlan::AddDeck(bool below)
 			++e.deck;
 		for(PlanStation& st : stations)
 			++st.deck;
+		for(PlanArea& a : areas)
+			++a.deck;
+		for(PlanProp& pr : props)
+			++pr.deck;
 		for(PlanBerth& b : berths)
 			++b.deck;
 		for(PlanPad& pad : pads)
@@ -207,6 +227,138 @@ void TriPlan::AddDeck(bool below)
 		m_room.append(room);
 	}
 	++m_decks;
+}
+
+// Makes room for a deck inserted at `at` (the items there and above move up
+// one) and copies the items of deck `from` onto it.
+template<typename T> static void InsertDeckCopy(QList<T>& list, int from, int at, bool copy)
+{
+	QList<T> copies;
+	for(T& item : list)
+	{
+		if(copy && item.deck == from)
+		{
+			T c = item;
+			c.deck = at;
+			copies << c;
+		}
+		if(item.deck >= at)
+			++item.deck;
+	}
+	list << copies;
+}
+
+int TriPlan::CopyDeck(int deck, int times, bool withRooms)
+{
+	if(deck < 0 || deck >= m_decks || times < 1)
+		return 0;
+	int roomsAdded = 0;
+	QStringList labels;
+	for(const PlanRoom& r : rooms)
+		labels << r.label;
+	for(int c = 1; c <= times; ++c)
+	{
+		const int at = deck + c;
+		const int from = at - 1;	// Copy the copy before, which is the same deck.
+		QVector<qint16> roomGrid(m_width * m_depth * 4, -1);
+		if(withRooms)
+		{
+			// Each room on the deck becomes a new room, but a turbolift
+			// stays one shaft.
+			QHash<int, int> map;
+			const QVector<qint16>& src = m_room.at(from);
+			for(int i = 0; i < src.size(); ++i)
+			{
+				const int r = src.at(i);
+				if(r < 0 || r >= rooms.size())
+					continue;
+				if(!map.contains(r))
+				{
+					if(IsLiftRoomType(rooms.at(r).type))
+						map.insert(r, r);
+					else
+					{
+						PlanRoom copy = rooms.at(r);
+						QString base = copy.label;
+						base.remove(QRegularExpression("\\s+\\d+$"));
+						if(base.isEmpty())
+							base = copy.type;
+						int n = 2;
+						while(labels.contains(QString("%1 %2").arg(base).arg(n)))
+							++n;
+						copy.label = QString("%1 %2").arg(base).arg(n);
+						labels << copy.label;
+						rooms << copy;
+						map.insert(r, rooms.size() - 1);
+						++roomsAdded;
+					}
+				}
+				roomGrid[i] = (qint16)map.value(r);
+			}
+		}
+		m_hull.insert(at, m_hull.at(from));
+		m_paint.insert(at, m_paint.at(from));
+		m_room.insert(at, roomGrid);
+		++m_decks;
+		InsertDeckCopy(doors, from, at, withRooms);
+		InsertDeckCopy(windows, from, at, withRooms);
+		InsertDeckCopy(ladders, from, at, withRooms);
+		InsertDeckCopy(skylights, from, at, withRooms);
+		InsertDeckCopy(parking, from, at, withRooms);
+		InsertDeckCopy(stairs, from, at, withRooms);
+		InsertDeckCopy(emitters, from, at, withRooms);
+		InsertDeckCopy(stations, from, at, withRooms);
+		InsertDeckCopy(areas, from, at, withRooms);
+		InsertDeckCopy(props, from, at, withRooms);
+		InsertDeckCopy(berths, from, at, withRooms);
+		InsertDeckCopy(pads, from, at, withRooms);
+		InsertDeckCopy(paths, from, at, withRooms);
+	}
+	Tidy();
+	return roomsAdded;
+}
+
+int TriPlan::RoomLowestDeck(int room) const
+{
+	for(int d = 0; d < m_decks; ++d)
+		if(m_room.at(d).contains((qint16)room))
+			return d;
+	return -1;
+}
+
+QStringList TriPlan::LiftProblems() const
+{
+	QStringList problems;
+	for(int r = 0; r < rooms.size(); ++r)
+	{
+		if(!IsLiftRoomType(rooms.at(r).type))
+			continue;
+		const int base = RoomLowestDeck(r);
+		if(base < 0)
+			continue;
+		int top = base;
+		for(int d = base + 1; d < m_decks; ++d)
+			if(m_room.at(d).contains((qint16)r))
+				top = d;
+		for(int d = base + 1; d <= top; ++d)
+		{
+			if(!m_room.at(d).contains((qint16)r))
+			{
+				problems << QString("The turbolift '%1' is not drawn on deck %2, between its stops on decks %3 and %4: "
+						"the car runs straight up and down through every deck between, so draw it there too.")
+						.arg(rooms.at(r).label).arg(d + 1).arg(base + 1).arg(top + 1);
+				continue;
+			}
+			bool same = true;
+			for(int i = 0; i < m_room.at(d).size() && same; ++i)
+				same = (m_room.at(d).at(i) == r) == (m_room.at(base).at(i) == r);
+			if(!same)
+				problems << QString("The turbolift '%1' is drawn on other cells on deck %2 than on deck %3. A turbolift "
+						"only works on one vertical axis: draw every stop on the same cells (on the Rooms page, "
+						"the hatched cells show where).").arg(rooms.at(r).label).arg(d + 1).arg(base + 1);
+		}
+	}
+	return problems;
 }
 
 // Takes the items on a deck that goes away out of a list, and moves those
@@ -307,6 +459,8 @@ void TriPlan::RemoveDeck(int deck)
 	emitters = keptEmitters;
 	// The rest placed by hand, in one go.
 	DropDeck(stations, deck);
+	DropDeck(areas, deck);
+	DropDeck(props, deck);
 	DropDeck(berths, deck);
 	DropDeck(pads, deck);
 	DropDeck(paths, deck);
@@ -574,13 +728,47 @@ int TriPlan::EmitterAt(const TriRef& t, bool weapon, int marking) const
 	return -1;
 }
 
+const QList<PlanVehicle>& PlanVehicles()
+{
+	const double m = 3.2808399;
+	static const QList<PlanVehicle> list = {
+		{ "DirtBike", "Dirt bike", "ground", 11, 5, true },					// mMotorBike 8.6 x 3.0
+		{ "SUV", "SUV", "ground", 20.5, 18.5, true },						// mSUV 18.3 x 16.4
+		{ "FarmMachinery", "Farm machinery", "ground", 18, 11, true },		// mFarmEquipment 15.7 x 8.8
+		{ "MineMachinery", "Mine machinery", "ground", 12 * m, 6 * m, false },
+		{ "APC", "APC", "ground", 12 * m, 6 * m, false },
+		{ "Tank", "Tank", "ground", 12 * m, 6 * m, false },
+		{ "Helicopter", "Helicopter", "space", 26, 19, true },				// mHelicopter 23.6 x 16.6
+		{ "SpaceFighter", "Space fighter", "space", 32, 30.5, true },		// mSpacefighter 29.6 x 28.1
+		{ "AdvSpaceFighter", "Advanced space fighter", "space", 34.5, 28, true },	// mSpaceFighter2 32.4 x 25.5
+		{ "SpaceTransport", "Space transport", "space", 17 * m, 12 * m, false },
+		{ "CommercialShip", "Commercial ship", "water", 53, 20, true },		// mCommercialShip 50.5 x 17.8
+		{ "NavalShip", "Naval ship", "water", 24 * m, 12 * m, false },
+		{ "SailBoat", "Sail boat", "water", 24 * m, 12 * m, false },
+		{ "Submarine", "Submarine", "water", 24 * m, 12 * m, false },
+		{ "SpaceRocket", "Space rocket", "rocket", 10 * m, 10 * m, false },
+	};
+	return list;
+}
+
+const PlanVehicle* FindPlanVehicle(const QString& key)
+{
+	for(const PlanVehicle& v : PlanVehicles())
+		if(key.compare(v.key, Qt::CaseInsensitive) == 0)
+			return &v;
+	return 0;
+}
+
 QPointF TriPlan::ParkingSize(const PlanParking& p) const
 {
 	// AuScGroundVehicleParkingSpot / AuScSpaceVehicleParkingSpot::Icon*.
 	const double feet = 3.2808399;
+	if(const PlanVehicle* v = p.vehicle.isEmpty() ? 0 : FindPlanVehicle(p.vehicle))
+		return p.across ? QPointF(v->width, v->length) : QPointF(v->length, v->width);
 	if(p.spacecraft)
 		return QPointF(238., 238.);	// AuScSpacecraftParkingSpot: GroundSpawnSizeLimit each way.
-	const QPointF size = p.space ? QPointF(17 * feet, 12 * feet) : QPointF(12 * feet, 6 * feet);
+	const QPointF size = p.rocket ? QPointF(10 * feet, 10 * feet) : p.water ? QPointF(24 * feet, 12 * feet)
+			: p.space ? QPointF(17 * feet, 12 * feet) : QPointF(12 * feet, 6 * feet);
 	return p.across ? QPointF(size.y(), size.x()) : size;
 }
 
@@ -602,6 +790,32 @@ bool TriPlan::ParkingFits(const PlanParking& p) const
 				return false;
 		}
 		return true;
+	}
+	// A building's spot may also lie outside, all of it: on the ground on
+	// deck 1, or on a roof (over the hull of the deck below) higher up.
+	if(IsBuilding() && p.deck >= 0 && p.deck < Decks())
+	{
+		bool outside = true, under = true, any = false;
+		for(int cy = 0; cy < m_depth; ++cy)
+			for(int cx = 0; cx < m_width; ++cx)
+			{
+				const QPointF lo = Corner(cx, cy), hi = Corner(cx + 1, cy + 1);
+				const double slack = cellFeet * .25;
+				if(hi.x() <= centre.x() - half.x() + slack || lo.x() >= centre.x() + half.x() - slack ||
+						hi.y() <= centre.y() - half.y() + slack || lo.y() >= centre.y() + half.y() - slack)
+					continue;
+				any = true;
+				for(int k = 0; k < 4; ++k)
+				{
+					outside = outside && !Hull(TriRef(p.deck, cx, cy, k));
+					under = under && (p.deck == 0 || Hull(TriRef(p.deck - 1, cx, cy, k)));
+				}
+			}
+		const QPointF lo = Corner(0, 0), hi = Corner(m_width, m_depth);
+		const bool onGrid = centre.x() - half.x() >= lo.x() - .01 && centre.y() - half.y() >= lo.y() - .01 &&
+				centre.x() + half.x() <= hi.x() + .01 && centre.y() + half.y() <= hi.y() + .01;
+		if(any && onGrid && outside && under)
+			return true;
 	}
 	int room = -2;
 	// Every cell the spot covers (less a little slack at its edges) has to be
@@ -746,6 +960,30 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 			yaw = -yaw;
 		return fmod(yaw + 720, 360);
 	};
+	for(PlanArea& a : areas)
+		if(flipped(a.deck))
+		{
+			a.deck = newDeck(a.deck);
+			if(foreAft)
+			{
+				const int x0 = m_width - a.cx1, x1 = m_width - a.cx0;
+				a.cx0 = x0;
+				a.cx1 = x1;
+			}
+			if(my)
+			{
+				const int y0 = m_depth - a.cy1, y1 = m_depth - a.cy0;
+				a.cy0 = y0;
+				a.cy1 = y1;
+			}
+		}
+	for(PlanProp& pr : props)
+		if(flipped(pr.deck))
+		{
+			pr.deck = newDeck(pr.deck);
+			pr.x = foreAft ? m_width - pr.x : pr.x;
+			pr.y = my ? m_depth - pr.y : pr.y;
+		}
 	for(PlanStation& st : stations)
 		if(flipped(st.deck))
 		{
@@ -957,6 +1195,22 @@ int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
 	// Placed by hand: points in cells; clockwise seen from above takes a
 	// heading 90 degrees round from port towards fore.
 	const double turnYaw = clockwise ? -90 : 90;
+	for(PlanArea& a : areas)
+		if(turned(a.deck))
+		{
+			const QPointF p0 = point(a.cx0, a.cy0), p1 = point(a.cx1, a.cy1);
+			a.cx0 = qRound(qMin(p0.x(), p1.x()));
+			a.cx1 = qRound(qMax(p0.x(), p1.x()));
+			a.cy0 = qRound(qMin(p0.y(), p1.y()));
+			a.cy1 = qRound(qMax(p0.y(), p1.y()));
+		}
+	for(PlanProp& pr : props)
+		if(turned(pr.deck))
+		{
+			const QPointF q = point(pr.x, pr.y);
+			pr.x = q.x();
+			pr.y = q.y();
+		}
 	for(PlanStation& st : stations)
 		if(turned(st.deck))
 		{
@@ -1052,7 +1306,7 @@ QList<QPair<QString, QString> > TriPlan::BuildKinds()
 		{ "ramps", "Ramps and ladders down from hull doors" }, { "parking", "Vehicle parking and landing spots" },
 		{ "contrails", "Contrail emitters" }, { "weapons", "Weapon emitters" }, { "markings", "Empire flags and names" },
 		{ "stations", "Stations" }, { "berths", "Berths" }, { "pads", "Transporter pads" },
-		{ "systems", "System volumes and service panels" }, { "paths", "Walk paths" } };
+		{ "systems", "System volumes and service panels" }, { "paths", "Walk paths" }, { "decals", "Decals" } };
 }
 
 template<typename T> static void DropSkipped(QList<T>& list)
@@ -1095,6 +1349,28 @@ void TriPlan::MakeFighter(bool sizes)
 	}
 }
 
+void TriPlan::MakeBuilding(const QString& buildingTemplate, bool sizes)
+{
+	mode = "building";
+	building = BuildingBrief();
+	ApplyBuildingTemplate(building, buildingTemplate.isEmpty() ? QString("office_block") : buildingTemplate);
+	building.rooms.clear();				// The rooms are drawn.
+	ftlDrive = "none";
+	leaveOut.clear();
+	autoBerths = false;
+	autoStations = false;
+	hullDoorExit = "auto";
+	if(sizes)
+	{
+		cellFeet = 5.0;
+		deckFeet = 12.0;
+		floorFeet = 1.0;
+		skinFeet = 1.0;
+		smoothing = 0;
+		hullStyle = "classic";
+	}
+}
+
 TriPlan TriPlan::ForBuild() const
 {
 	TriPlan plan = *this;
@@ -1107,11 +1383,16 @@ TriPlan TriPlan::ForBuild() const
 	DropSkipped(plan.skylights);
 	DropSkipped(plan.stairs);
 	DropSkipped(plan.parking);
+	DropSkipped(plan.areas);
+	DropSkipped(plan.props);
 	DropSkipped(plan.emitters);
 	DropSkipped(plan.stations);
 	DropSkipped(plan.berths);
 	DropSkipped(plan.pads);
 	DropSkipped(plan.paths);
+	DropSkipped(plan.decals);
+	if(out.contains("decals"))
+		plan.decals.clear();
 	for(int k = plan.doors.size() - 1; k >= 0; --k)
 	{
 		const QString& kind = plan.doors.at(k).kind;
@@ -1356,8 +1637,12 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["name"] = name;
 	root["template"] = templateKey;
 	root["ftl"] = ftlDrive;
+	if(station)
+		root["station"] = true;
 	if(!mode.isEmpty())
 		root["mode"] = mode;
+	if(IsBuilding())
+		root["building"] = BuildingBriefToJson(building);
 	root["leaveOut"] = QJsonArray::fromStringList(leaveOut);
 	if(fireControlModule != 252)
 		root["fireControlModule"] = fireControlModule;
@@ -1405,6 +1690,10 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		root["flatWindows"] = false;
 	if(!windowStyle.isEmpty())
 		root["windowStyle"] = windowStyle;
+	if(hullWindowGlass != "pane")
+		root["hullWindowGlass"] = hullWindowGlass;
+	if(!windowLining)
+		root["windowLining"] = false;
 	if(bridgeStyle != "hazeron")
 		root["bridgeStyle"] = bridgeStyle;
 	if(deskStanding)
@@ -1540,13 +1829,46 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["deck"] = p.deck;
 		o["x"] = p.cx;
 		o["y"] = p.cy;
-		o["kind"] = p.spacecraft ? "spacecraft" : p.space ? "space" : "ground";
+		o["kind"] = !p.vehicle.isEmpty() ? "vehicle" : p.spacecraft ? "spacecraft" : p.rocket ? "rocket" : p.water ? "water"
+				: p.space ? "space" : "ground";
+		if(!p.vehicle.isEmpty())
+			o["vehicle"] = p.vehicle;
 		o["across"] = p.across;
 		if(p.skip)
 			o["skip"] = true;
 		parkingArray.append(o);
 	}
 	root["parking"] = parkingArray;
+	QJsonArray areaArray;
+	for(const PlanArea& a : areas)
+	{
+		QJsonObject o;
+		o["deck"] = a.deck;
+		o["x0"] = a.cx0;
+		o["y0"] = a.cy0;
+		o["x1"] = a.cx1;
+		o["y1"] = a.cy1;
+		o["kind"] = a.kind;
+		if(a.skip)
+			o["skip"] = true;
+		areaArray.append(o);
+	}
+	if(!areaArray.isEmpty())
+		root["areas"] = areaArray;
+	QJsonArray propArray;
+	for(const PlanProp& pr : props)
+	{
+		QJsonObject o;
+		o["deck"] = pr.deck;
+		o["x"] = qRound(pr.x * 1000) / 1000.0;
+		o["y"] = qRound(pr.y * 1000) / 1000.0;
+		o["kind"] = pr.kind;
+		if(pr.skip)
+			o["skip"] = true;
+		propArray.append(o);
+	}
+	if(!propArray.isEmpty())
+		root["props"] = propArray;
 
 	QJsonArray stairArray;
 	for(const PlanStair& st : stairs)
@@ -1682,6 +2004,13 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		paintArray.append(o);
 	}
 	root["palette"] = paintArray;
+	if(!decals.isEmpty())
+	{
+		QJsonArray decalArray;
+		for(const DecalOptions& d : decals)
+			decalArray.append(d.ToJson());
+		root["decals"] = decalArray;
+	}
 
 	QJsonArray layers;
 	for(int d = 0; d < m_decks; ++d)
@@ -1730,7 +2059,12 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.name = root["name"].toString(plan.name);
 	plan.templateKey = root["template"].toString(plan.templateKey);
 	plan.ftlDrive = root["ftl"].toString(plan.ftlDrive);
-	plan.mode = root["mode"].toString() == "fighter" ? QString("fighter") : QString();
+	plan.station = root["station"].toBool(false);
+	plan.mode = root["mode"].toString();
+	if(plan.mode != "fighter" && plan.mode != "building")
+		plan.mode.clear();
+	if(plan.IsBuilding())
+		BuildingBriefFromJson(root["building"].toObject(), plan.building);
 	plan.fireControlModule = root["fireControlModule"].toInt(252);
 	plan.leaveOut.clear();
 	for(const QJsonValue& v : root["leaveOut"].toArray())
@@ -1772,6 +2106,10 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.doorTex = root["doorTexture"].toInt(-1);
 	plan.flatWindows = root["flatWindows"].toBool(true);
 	plan.windowStyle = root["windowStyle"].toString() == "hull" ? QString("hull") : QString();
+	plan.hullWindowGlass = root["hullWindowGlass"].toString("pane");
+	if(plan.hullWindowGlass != "faces" && plan.hullWindowGlass != "slope")
+		plan.hullWindowGlass = "pane";
+	plan.windowLining = root["windowLining"].toBool(true);
 	plan.bridgeStyle = root["bridgeStyle"].toString("hazeron");
 	plan.deskStanding = root["deskStanding"].toBool(false);
 	plan.deskHeightFeet = root["deskHeight"].toDouble(0);
@@ -1850,7 +2188,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		w.edge = qBound(0, o["edge"].toInt(), 2);
 		w.row = qMax(0, o["row"].toInt());
 		w.style = o["style"].toString();
-		if(w.style != "hull" && w.style != "frame")
+		if(w.style != "hull" && w.style != "frame" && w.style != "faces" && w.style != "pane" && w.style != "slope")
 			w.style.clear();
 		w.skip = o["skip"].toBool();
 		plan.windows << w;
@@ -1894,9 +2232,43 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		p.cy = o["y"].toInt();
 		p.space = o["kind"].toString() == "space";
 		p.spacecraft = o["kind"].toString() == "spacecraft";
+		p.rocket = o["kind"].toString() == "rocket";
+		p.water = o["kind"].toString() == "water";
+		if(o["kind"].toString() == "vehicle")
+		{
+			const PlanVehicle* v = FindPlanVehicle(o["vehicle"].toString());
+			const QString key = o["vehicle"].toString();
+			p.vehicle = v ? QString(v->key) : key.isEmpty() ? QString("SUV") : key;	// Unknown: kept, warned at build.
+		}
 		p.across = o["across"].toBool();
 		p.skip = o["skip"].toBool();
 		plan.parking << p;
+	}
+	plan.areas.clear();
+	for(const QJsonValue& v : root["areas"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanArea a;
+		a.deck = o["deck"].toInt();
+		a.cx0 = o["x0"].toInt();
+		a.cy0 = o["y0"].toInt();
+		a.cx1 = o["x1"].toInt();
+		a.cy1 = o["y1"].toInt();
+		a.kind = o["kind"].toString();
+		a.skip = o["skip"].toBool();
+		plan.areas << a;
+	}
+	plan.props.clear();
+	for(const QJsonValue& v : root["props"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanProp pr;
+		pr.deck = o["deck"].toInt();
+		pr.x = o["x"].toDouble();
+		pr.y = o["y"].toDouble();
+		pr.kind = o["kind"].toString();
+		pr.skip = o["skip"].toBool();
+		plan.props << pr;
 	}
 	plan.stairs.clear();
 	for(const QJsonValue& v : root["stairs"].toArray())
@@ -1985,6 +2357,16 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.autoPaths = root["autoPaths"].toBool(true);
 	for(const QJsonValue& v : root["buildLeaveOut"].toArray())
 		plan.buildLeaveOut << v.toString();
+
+	plan.decals.clear();
+	for(const QJsonValue& v : root["decals"].toArray())
+	{
+		DecalOptions d = DecalOptions::FromJson(v.toObject());
+		if(!d.image.isEmpty() && QFileInfo(d.image).isRelative())
+			d.image = QFileInfo(fileName).dir().absoluteFilePath(d.image);
+		if(d.IsSet())
+			plan.decals << d;
+	}
 
 	const QJsonArray paints = root["palette"].toArray();
 	if(!paints.isEmpty())

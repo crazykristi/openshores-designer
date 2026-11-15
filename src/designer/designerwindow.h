@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 #include <QList>
 #include <QMainWindow>
+#include <QMap>
 #include <QMutex>
 #include <atomic>
 #include <functional>
@@ -26,6 +27,12 @@ class DesignPreview;
 class PlanView;
 class QCheckBox;
 class QComboBox;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QMimeData;
+class QFormLayout;
+class QGroupBox;
 class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
@@ -40,6 +47,7 @@ class QSlider;
 class QSpinBox;
 class QTabWidget;
 class QTimer;
+class QVector3D;
 
 class DesignerWindow : public QMainWindow
 {
@@ -68,15 +76,18 @@ public:
 	// box (off for scripts). Returns whether a plan was made.
 	// 'fighter': a plan in fighter mode (experimental, TriPlan::MakeFighter),
 	// at the model's real length with small cells and low decks.
+	void	OpenBlueprint(const QString& fileName);
 	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true, bool fighter = false);
 
 private slots:
 	void	OnNew();
 	void	OnNewFromModel();
 	void	OnNewFighter();
+	void	OnNewBuilding();
 	void	OnNewFighterFromModel();
 	void	OnMetric(bool metric);
 	void	OnOpen();
+	void	OnOpenBlueprint();
 	void	OnSave();
 	void	OnSaveAs();
 	void	OnExport();
@@ -89,6 +100,8 @@ private slots:
 	void	OnAddDeckAbove();
 	void	OnAddDeckBelow();
 	void	OnRemoveDeck();
+	void	OnCopyDeck(bool withRooms);		// The whole deck, or only its hull and paint.
+	void	ApplyTextureIcons();
 	void	OnResize();
 	void	OnSettingsChanged();
 	void	OnAddRoom();
@@ -102,9 +115,22 @@ private slots:
 	void	OnShape();
 	void	OnBuild();
 
+protected:
+	// A .SoH or .json plan dropped on the window is opened (after asking);
+	// an image dropped on the Decals box becomes a new decal (eventFilter).
+	void	dragEnterEvent(QDragEnterEvent* event) override;
+	void	dragMoveEvent(QDragMoveEvent* event) override;
+	void	dropEvent(QDropEvent* event) override;
+	bool	eventFilter(QObject* watched, QEvent* event) override;
+
 private:
+	// The first local file in a drag whose suffix is one of 'suffixes' (lower case), or empty.
+	static QString	DroppedFile(const QMimeData* data, const QStringList& suffixes);
+	// Asks, then opens a dropped plan or blueprint.
+	void	OpenDropped(const QString& fileName);
 	QWidget*	MakeShipPage();
 	QWidget*	MakeHullPage();
+	QGroupBox*	MakeDeckBox();
 	QWidget*	MakeRoomPage();
 	QWidget*	MakeCrewPage();
 	void		ApplyCrewChoice();
@@ -157,7 +183,7 @@ private:
 
 	PlanHull		m_hull;
 	bool			m_hullShaped = false;
-	AuScDesign*		m_design = 0;
+	AuDesign*		m_design = 0;
 	PlanBuildReport	m_report;
 
 	PlanView*		m_view = 0;
@@ -227,6 +253,8 @@ private:
 	QComboBox*		m_shipDoorTex = 0;
 	QCheckBox*		m_flatWindows = 0;
 	QCheckBox*		m_hullWindows = 0;		// PlanTri::windowStyle "hull".
+	QComboBox*		m_hullWindowGlass = 0;	// TriPlan::hullWindowGlass.
+	QCheckBox*		m_windowLining = 0;		// TriPlan::windowLining.
 	QComboBox*		m_roomWallTex = 0;
 	QComboBox*		m_roomFloorTex = 0;
 	QComboBox*		m_roomCeilingTex = 0;
@@ -240,6 +268,7 @@ private:
 	QComboBox*		m_hullStyle = 0;
 	QComboBox*		m_hullDoorExit = 0;
 	QCheckBox*		m_noShields = 0;
+	QCheckBox*		m_station = 0;
 	QCheckBox*		m_noWeapons = 0;
 	QComboBox*		m_fireControl = 0;
 	QCheckBox*		m_noTransporter = 0;
@@ -281,12 +310,38 @@ private:
 	void			NewFromModel(bool fighter);
 	QCheckBox*		m_fighter = 0;			// TriPlan::mode "fighter".
 	QLabel*			m_fighterBanner = 0;	// Says fighter mode is experimental.
+	// Building mode (TriPlan::mode "building"): the building box on the
+	// first page, and the ship-only rows it hides.
+	QLabel*			m_buildingBanner = 0;
+	QWidget*		m_areaRow = 0;
+	QString			m_importBuilding;		// A building template while a model is imported as a building.
+	QWidget*		m_propRow = 0;
+	QWidget*		m_vehicleRow = 0;	// The vehicle a generic vehicle spot is for.
+	QList<QComboBox*>	m_textureBoxes;	// Every box that picks a library texture.
+	QGroupBox*		m_buildingBox = 0;
+	QComboBox*		m_bTemplate = 0;
+	QComboBox*		m_bIndustry = 0;
+	QComboBox*		m_bStructure = 0;
+	QLineEdit*		m_bDescription = 0;
+	QMap<QString, QSpinBox*>	m_bCounts;		// Volumes, parking and posts by key.
+	QCheckBox*		m_bStackFields = 0;
+	QCheckBox*		m_bBuildZone = 0;
+	QDoubleSpinBox*	m_bLightRange = 0;
+	QLabel*			m_bWarnings = 0;
+	QFormLayout*	m_shipForm = 0;
+	QList<QWidget*>	m_shipOnly;
+	bool			m_roomTypesForBuilding = false;
+	QGroupBox*		MakeBuildingBox();
+	void			RefreshBuilding();
+	void			OnBuildingChanged();
+	void			RefillRoomTypes();
 	// The Crew step.
 	QComboBox*		m_crewTool = 0;
 	QWidget*		m_stationRow = 0;
 	QComboBox*		m_stationType = 0;
 	QComboBox*		m_stationSeat = 0;
 	QComboBox*		m_stationModule = 0;
+	QComboBox*		m_stationDrive = 0;		// Engineer: the FTL drive it runs (PlanStation::module).
 	QWidget*		m_berthRow = 0;
 	QComboBox*		m_berthKind = 0;
 	QCheckBox*		m_autoStations = 0;
@@ -301,6 +356,30 @@ private:
 	QComboBox*		m_bridgeStyle = 0;
 	QComboBox*		m_deskPosture = 0;
 	QDoubleSpinBox*	m_deskHeight = 0;
+	// Decals: images laid over the built hull (decal.h, TriPlan::decals).
+	QWidget*		MakeDecalBox();
+	QWidget*		m_decalBox = 0;
+	// A new decal from an image file (the Add button, or an image dropped on the box).
+	void			AddDecalImage(const QString& file);
+	QListWidget*	m_decalList = 0;
+	QWidget*		m_decalForm = 0;
+	QComboBox*		m_decalProjection = 0;
+	QComboBox*		m_decalFrom = 0;
+	QComboBox*		m_decalSides = 0;
+	QDoubleSpinBox*	m_decalWidth = 0;
+	QDoubleSpinBox*	m_decalRotate = 0;
+	QDoubleSpinBox*	m_decalSelfLit = 0;
+	QDoubleSpinBox*	m_decalOpacity = 0;
+	QCheckBox*		m_decalMirror = 0;
+	QPushButton*	m_decalPlace = 0;
+	QLabel*			m_decalStatus = 0;
+	void			RefreshDecals();
+	void			DecalFormToPlan();
+	void			OnDecalPicked(const QVector3D& point, const QVector3D& normal, const QVector3D& toward);
+	// Puts the plan's decals on the built blueprint again. With 'ask', a
+	// result over the face budget or the size limit asks whether to keep it.
+	// Returns false when the user chose to undo.
+	bool			ReapplyDecals(bool ask);
 };
 
 #endif

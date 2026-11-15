@@ -63,6 +63,8 @@ struct IndustryEntry
 	qint8		vehicleLauncher;
 };
 
+// Bank (no store), retail store (store, not workshop) and mass media (no
+// sensor) follow buildings the game took (9 November 2026).
 const IndustryEntry kIndustries[] = {
 	{ IID_DesignStudio, "Design Studio", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Warehouse, "Warehouse", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -82,10 +84,10 @@ const IndustryEntry kIndustries[] = {
 	{ IID_HydrogenPowerPlant, "Hydrogen Power Plant", 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_SolarPowerPlant, "Solar Power Plant", 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_NuclearPowerPlant, "Nuclear Power Plant", 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_Bank, "Bank", 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_Bank, "Bank", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Broker, "Broker", 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Grocery, "Grocery", 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_RetailStore, "Retail Store", 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_RetailStore, "Retail Store", 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Cantina, "Cantina", 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_PoliceDepartment, "Police Department", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_PoliceAcademy, "Police Academy", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -93,13 +95,22 @@ const IndustryEntry kIndustries[] = {
 	{ IID_Capitol, "Capitol", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_School, "School", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Observatory, "Observatory", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_Park, "Park", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0 },
+	// A park needs one field: 4,000 m2 of field paving (the game's own Nofun Park).
+	{ IID_Park, "Park", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 },
 	{ IID_Arena, "Arena", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0 },
 	{ IID_Farm, "Farm", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 },
 	{ IID_Mine, "Mine", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_MachineShop, "Machine Shop", 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Smelter, "Smelter", 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_ShipYard, "Ship Yard", 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+	// Platforms: the game's own platforms have no rooms at all (the sample
+	// sea, ground and aerial platforms in the user's design folder).
+	{ IID_SeaPlatform, "Sea Platform",                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_GroundPlatform, "Ground Platform",            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_AerialPlatform, "Aerial Platform",            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	// The casino's needs are a guess (a lounge, like the cantina); not yet
+	// checked in game.
+	{ IID_Casino, "Casino",                             0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Biodome, "Biodome", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_SpacecraftFactory, "Spacecraft Factory", 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseAirTerminal, "Base Air Terminal", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
@@ -115,7 +126,7 @@ const IndustryEntry kIndustries[] = {
 	{ IID_Well, "Well",                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Refinery, "Refinery",                         0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_FireDepartment, "Fire Department",            0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_MassMedia, "Mass Media",                      0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+	{ IID_MassMedia, "Mass Media",                      0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_Church, "Church",                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 },
 	{ IID_TextileMill, "Textile Mill",                  0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_ClothingFactory, "Clothing Factory",          0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -159,7 +170,17 @@ void InstallIndustryTable(DgData* data)
 		out << (quint8)0;						// population
 		out << (qint8)0;						// employees
 		out << (quint8)0;						// storage
-		out << (quint8)(e.id == IID_StreetLight ? BD_StreetLight : BD_Building);	// structure
+		BUILDING_STRUCTURE structure = BD_Building;
+		switch(e.id)
+		{
+		default:					break;
+		case IID_StreetLight:		structure = BD_StreetLight; break;
+		case IID_Biodome:			structure = BD_Biodome; break;
+		case IID_SeaPlatform:		structure = BD_SeaPlatform; break;
+		case IID_GroundPlatform:	structure = BD_GroundPlatform; break;
+		case IID_AerialPlatform:	structure = BD_AerialPlatform; break;
+		}
+		out << (quint8)structure;				// structure
 		out << (qint8)e.field;
 		out << (qint8)e.arena;
 		out << (qint8)e.auditorium;
@@ -369,6 +390,81 @@ QList<BuildingTemplate> AllBuildingTemplates()
 		list << t;
 	}
 
+	// The kinds below follow designs the game took (November 2026).
+	{
+		BuildingTemplate t;
+		t.key = "power_plant";
+		t.label = "Power plant";
+		t.description = "A generator hall and a control office, with battery for the output and a little commodity storage (hold).";
+		t.footprintX = 120;
+		t.footprintY = 80;
+		t.floors = 2;
+		t.rooms.clear();
+		t.volumes.powerPlant = 2400;
+		t.volumes.capacitor = 4000;
+		t.volumes.offices = 50;
+		t.volumes.hold = 50;
+		t.industry = "coal power plant";
+		t.groundParking = 1;
+		list << t;
+	}
+	{
+		BuildingTemplate t;
+		t.key = "farm";
+		t.label = "Farm (stacked fields)";
+		t.description = "A barn and office before its fields, laid on top of each other so four fields take the ground of one.";
+		t.footprintX = 80;
+		t.footprintY = 60;
+		t.rooms.clear();
+		t.volumes.offices = 40;
+		t.volumes.store = 600;
+		t.volumes.hold = 200;
+		t.volumes.field = 4;
+		t.stackFields = true;
+		t.industry = "farm";
+		t.groundParking = 1;
+		list << t;
+	}
+	{
+		BuildingTemplate t;
+		t.key = "park";
+		t.label = "Park";
+		t.description = "Only ground: one field of grassed earth (4,000 square meters), no hull, rooms or parking, like the game's own park.";
+		t.footprintX = 220;
+		t.footprintY = 220;
+		t.volumes.field = 1;
+		t.industry = "park";
+		list << t;
+	}
+	{
+		BuildingTemplate t;
+		t.key = "street_light";
+		t.label = "Street light";
+		t.description = "A lamp post whose light reaches about 45 ft, not the whole block.";
+		t.footprintX = 6;
+		t.footprintY = 6;
+		t.floorHeight = 3;
+		t.industry = "street light";
+		list << t;
+	}
+	const char* platforms[][3] = {
+		{ "sea_platform", "Sea platform", "sea platform" },
+		{ "ground_platform", "Ground platform", "ground platform" },
+		{ "aerial_platform", "Aerial platform", "aerial platform" } };
+	for(const auto& pl : platforms)
+	{
+		BuildingTemplate t;
+		t.key = pl[0];
+		t.label = pl[1];
+		t.description = "A deck for a town: no rooms, a little life support, and a build zone over the top for the buildings on it.";
+		t.footprintX = 1600;
+		t.footprintY = 1600;
+		t.floorHeight = 36;
+		t.volumes.lifeSupport = 4;
+		t.industry = pl[2];
+		list << t;
+	}
+
 	return list;
 }
 
@@ -398,6 +494,9 @@ void ApplyBuildingTemplate(BuildingBrief& brief, const QString& templateKey)
 	brief.guardPosts = t->guardPosts;
 	brief.groundParking = t->groundParking;
 	brief.spaceParking = t->spaceParking;
+	brief.spacecraftParking = t->spacecraftParking;
+	brief.rocketParking = t->rocketParking;
+	brief.stackFields = t->stackFields;
 	if(brief.industry.isEmpty() || brief.industry == "auto")
 		brief.industry = t->industry;
 }
@@ -425,6 +524,10 @@ static void briefFromJson(const QJsonObject& o, BuildingBrief& brief)
 	if(b.contains("groundParking"))	brief.groundParking = b.value("groundParking").toInt();
 	if(b.contains("spaceParking"))	brief.spaceParking = b.value("spaceParking").toInt();
 	if(b.contains("spacecraftParking"))	brief.spacecraftParking = b.value("spacecraftParking").toInt();
+	if(b.contains("rocketParking"))	brief.rocketParking = b.value("rocketParking").toInt();
+	if(b.contains("buildZone"))		brief.buildZone = b.value("buildZone").toBool();
+	if(b.contains("lightRange"))	brief.lightRange = b.value("lightRange").toDouble();
+	if(b.contains("stackFields"))	brief.stackFields = b.value("stackFields").toBool();
 
 	if(b.contains("footprint"))
 	{
@@ -524,6 +627,11 @@ bool LoadBuildingBrief(const QString& fileName, BuildingBrief& brief, QString& e
 	return true;
 }
 
+void BuildingBriefFromJson(const QJsonObject& o, BuildingBrief& brief)
+{
+	briefFromJson(o, brief);
+}
+
 bool SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QString& error)
 {
 	QFile file(fileName);
@@ -532,7 +640,12 @@ bool SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QStr
 		error = QString("cannot write %1: %2").arg(fileName).arg(file.errorString());
 		return false;
 	}
+	file.write(QString::fromUtf8(QJsonDocument(BuildingBriefToJson(brief)).toJson(QJsonDocument::Indented)).toUtf8());
+	return true;
+}
 
+QJsonObject BuildingBriefToJson(const BuildingBrief& brief)
+{
 	QJsonObject o;
 	o["name"] = brief.name;
 	o["description"] = brief.description;
@@ -549,6 +662,14 @@ bool SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QStr
 	o["spaceParking"] = brief.spaceParking;
 	if(brief.spacecraftParking)
 		o["spacecraftParking"] = brief.spacecraftParking;
+	if(brief.rocketParking)
+		o["rocketParking"] = brief.rocketParking;
+	if(brief.stackFields)
+		o["stackFields"] = true;
+	if(!brief.buildZone)
+		o["buildZone"] = false;
+	if(brief.lightRange > 0)
+		o["lightRange"] = brief.lightRange;
 	QJsonArray fp;
 	fp.append(brief.footprintX);
 	fp.append(brief.footprintY);
@@ -602,9 +723,7 @@ bool SaveBuildingBrief(const QString& fileName, const BuildingBrief& brief, QStr
 	vo["auditorium"] = int(v.auditorium);
 	vo["field"] = v.field;
 	o["volumes"] = vo;
-
-	file.write(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Indented)).toUtf8());
-	return true;
+	return o;
 }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -809,14 +928,204 @@ static QList<BuildingRoom> PackFloor(const QList<RoomSpec>& rooms, const AuPoint
 // Half the size of a spacecraft berth (GroundSpawnSizeLimit in the engine).
 const double kSpacecraftBerth = 119.;
 
-BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, const QString& strategy)
+// The structure a building of this industry has to be: platforms,
+// biodomes and street lights are structures of their own. The brief's
+// "structure" says it when the industry does not.
+static BUILDING_STRUCTURE StructureFor(int iid, const QString& structure)
+{
+	switch(iid)
+	{
+	case IID_StreetLight:		return BD_StreetLight;
+	case IID_Biodome:			return BD_Biodome;
+	case IID_SeaPlatform:		return BD_SeaPlatform;
+	case IID_GroundPlatform:	return BD_GroundPlatform;
+	case IID_AerialPlatform:	return BD_AerialPlatform;
+	default:					break;
+	}
+	const QString s = structure.toLower().remove(' ').remove('_');
+	if(s == "biodome")			return BD_Biodome;
+	if(s == "seaplatform")		return BD_SeaPlatform;
+	if(s == "groundplatform")	return BD_GroundPlatform;
+	if(s == "aerialplatform")	return BD_AerialPlatform;
+	if(s == "streetlight")		return BD_StreetLight;
+	return BD_Building;
+}
+
+static bool IsPowerPlant(int iid)
+{
+	switch(iid)
+	{
+	case IID_CoalPowerPlant: case IID_GasolinePowerPlant: case IID_HydroelectricPowerPlant:
+	case IID_HydrogenPowerPlant: case IID_NaturalGasPowerPlant: case IID_NuclearPowerPlant:
+	case IID_SolarPowerPlant: case IID_WindPowerPlant:
+		return true;
+	default:
+		return false;
+	}
+}
+
+QStringList BuildingRuleWarnings(const BuildingBrief& brief)
+{
+	QStringList w;
+	const int iid = IndustryIdFor(brief.industry);
+	if(brief.name.size() > 30)
+		w << QString("the name has %1 characters; the game takes 30 at most.").arg(brief.name.size());
+	if(IsPowerPlant(iid))
+	{
+		if(brief.volumes.capacitor == 0)
+			w << "a power plant without battery: the game warns that it cannot store its output (about 2,000 to 6,000 battery is usual).";
+		if(brief.volumes.store > 0)
+			w << "'store' is a retail store; a power plant's commodity storage is 'hold'.";
+	}
+	if((iid == IID_Bank || iid == IID_MassMedia || iid == IID_FireDepartment) && brief.volumes.store > 0)
+		w << "'store' is a retail store; for storage use 'hold' (the game took this building without a store).";
+	if(iid == IID_RetailStore && brief.volumes.store == 0)
+		w << "a retail store needs store volume (not workshop).";
+	if(iid == IID_Park && (brief.volumes.offices || brief.volumes.store || brief.volumes.shops || !brief.rooms.isEmpty()))
+		w << "a park is only ground: one field (4,000 m2 of field paving), no hull, rooms or parking; the rest is left out.";
+	if((iid == IID_SeaPlatform || iid == IID_AerialPlatform) && brief.groundParking > 0)
+		w << "a sea or aerial platform has no site, so it has no ground parking.";
+	if(brief.volumes.field > 1 && !brief.stackFields)
+		w << "several fields side by side take a lot of ground; 'stackFields' lays them on top of each other (the game adds up their area).";
+	return w;
+}
+
+// A park is only ground, like the game's own park (Nofun Park): one field
+// of cracked earth with grass over it per 4,000 m2, and no hull, rooms or
+// parking.
+static void ParkGround(AuBdDesign& design, const BuildingBrief& brief)
+{
+	const int fields = qMax(1, brief.volumes.field);
+	const double fieldFeet = sqrt(4000. * 1.08 / 0.09290304);	// About 216 ft square.
+	const int sheets = brief.stackFields ? fields : 1;
+	const double side = brief.stackFields ? fieldFeet : fieldFeet * sqrt(double(fields));
+	const double w = qMax(side, qMin(brief.footprintX, side * 2));
+	const double dpt = side * side / w;
+	for(int k = 0; k < sheets; ++k)
+	{
+		AuPointArray f;
+		f.append(AuPoint(-w/2, -dpt/2 + .1 * k, 0));
+		f.append(AuPoint(w/2, -dpt/2 + .1 * k, 0));
+		f.append(AuPoint(w/2, dpt/2 + .1 * k, 0));
+		f.append(AuPoint(-w/2, dpt/2 + .1 * k, 0));
+		AuScSite lawn;
+		lawn.MakeSite(f, AuMatrix4x4::IdentityMatrix());
+		lawn.SetGrade(AuScSite::Level);
+		lawn.SetPavement(WORLDTEX_DirtCrackedSmooth);
+		lawn.SetGrass(3);
+		if(lawn.IsValid())
+			design.Parts().AddPart(lawn);
+	}
+}
+
+// A build zone over the top of the hull, where other buildings can stand
+// (a platform's deck).
+static void BuildZoneOverHull(AuBdDesign& design, const AuPoint& mn, const AuPoint& mx)
+{
+	const double z = mx.z, m = 10.;
+	const AuPoint n(0, 0, 1);
+	AuScFaceList faces;
+	faces.AddFace(AuScFaceTri(AuScPoint(mn.x + m, mn.y + m, z, 0.f, 0.f, n), AuScPoint(mx.x - m, mn.y + m, z, 0.f, 0.f, n), AuScPoint(mx.x - m, mx.y - m, z, 0.f, 0.f, n)));
+	faces.AddFace(AuScFaceTri(AuScPoint(mn.x + m, mn.y + m, z, 0.f, 0.f, n), AuScPoint(mx.x - m, mx.y - m, z, 0.f, 0.f, n), AuScPoint(mn.x + m, mx.y - m, z, 0.f, 0.f, n)));
+	AuScBuildZone zone;
+	zone.AddFaces(faces);
+	if(zone.IsValid())
+		design.Parts().AddPart(zone);
+}
+
+// Every lamp's light made to fade out over about 'range' feet: a third as
+// bright there, a tenth at twice that. The game's default fades over 200 m,
+// so one street light lights a whole block. The icon's size follows the
+// light's reach when it is made, so each lamp is made again.
+static void DimLights(AuBdDesign& design, double range)
+{
+	QList<quint16> lamps;
+	for(auto it = design.Parts().cbegin(); it != design.Parts().cend(); ++it)
+		if((*it)->Type() == AuScPart::Part_LightBulb)
+			lamps << it.key();
+	for(quint16 id : lamps)
+	{
+		AuScPart* old = design.Parts().value(id);
+		const AuPoint at = old->LightLoc();
+		const QColor color = old->LightColor();
+		AuScLightBulb bulb;
+		bulb.SetLight(color, float(1. / range), float(1. / (range * range)), -1.f, -1.f);
+		bulb.MakeIcon(at, 0.f, AuMatrix4x4::IdentityMatrix());
+		AuScParts deleted;
+		design.Parts().DeletePart(id, deleted);
+		if(bulb.IsValid())
+			design.Parts().AddPart(bulb);
+	}
+}
+
+// A spot for a station or a post in drawn rooms: the rooms in turn, a few
+// feet apart along each room's middle, 'up' feet above its floor.
+static AuPoint DrawnSpot(const QList<BuildingRoom>& rooms, int i, double up)
+{
+	const BuildingRoom& r = rooms.at(i % rooms.size());
+	const int along = i / rooms.size();
+	const double w = r.mx.x - r.mn.x;
+	const double x = r.mn.x + qMin(w - 1.5, 2.5 + along * 4.0);
+	return AuPoint(qMax(r.mn.x + 1.0, x), (r.mn.y + r.mx.y) / 2, r.mn.z + up);
+}
+
+static void CountFaces(const AuBdDesign& design, BuildingResult& result)
+{
+	quint32 faces = 0, triangles = 0, hullFaces = 0;
+	const AuScParts& parts = design.Parts();
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		AuScFaceList f;
+		it.value()->Faces(f);
+		faces += f.size();
+		if(it.value()->IsHullMesh())
+			hullFaces += f.size();
+		AuScTriList t;
+		f.Triangles(t);
+		triangles += t.size();
+	}
+	result.faces = faces;
+	result.hullFaces = hullFaces;
+	result.triangles = triangles;
+}
+
+BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn, const QString& strategy,
+		const QList<PlacedRoom>* drawn, const QList<QRectF>* keepClear)
 {
 	BuildingResult result;
 	result.strategy = strategy;
+	result.warnings << BuildingRuleWarnings(briefIn);
 
-	design.SetStructure(BD_Building);
+	// What the game wants of the kind of building, as far as it is known.
+	const int iid = IndustryIdFor(briefIn.industry);
+	const BUILDING_STRUCTURE structure = StructureFor(iid, briefIn.structure);
+	const bool platform = structure == BD_SeaPlatform || structure == BD_GroundPlatform || structure == BD_AerialPlatform;
+	BuildingBrief brief = briefIn;
+	if(platform)
+	{
+		// The game's own platforms have no rooms, doors or posts, and a
+		// little life support.
+		brief.rooms.clear();
+		brief.citizenPosts = brief.guardPosts = 0;
+		if(brief.volumes.lifeSupport == 0)
+			brief.volumes.lifeSupport = 4;
+		if(structure != BD_GroundPlatform)
+			brief.groundParking = brief.spaceParking = brief.spacecraftParking = brief.rocketParking = 0;
+	}
+
+	design.SetStructure(structure);
 	if(!brief.description.isEmpty())
 		design.SetDescription(brief.description);
+
+	if(iid == IID_Park)
+	{
+		ParkGround(design, brief);
+		design.SetIndustryId(INDUSTRYID(iid));
+		result.industryName = QString::number(iid);
+		design.RefreshObstructionsCache();
+		CountFaces(design, result);
+		return result;
+	}
 
 	const double wall = brief.wallThickness;
 	const double height = brief.floors * brief.floorHeight;
@@ -840,47 +1149,95 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 	}
 	const double buildingHeight = qMax(1.0, hullMax.z - hullMin.z);
 
-	// The parking. It goes in a row in front of the building, on the ground.
-	// The ground vehicles park along the front and the space vehicles land
-	// just behind them.
-	const double parkingY = hullMin.y - 30.;
-	const double groundSpacing = 33.;
-	const double spaceSpacing = 55.;
+	// The parking, on the ground in front of the building (-Y): ground
+	// vehicles in the row nearest the hull, space vehicles behind them and
+	// rocket pads furthest out, each row wrapping at about the building's
+	// width. No spot may overlap the hull, another spot, a spacecraft berth
+	// or anything in keepClear (drawn spots). Sizes are the game's own
+	// (AuScIcon::IconLeft/Right/Back/Fore, unrotated: X is the width).
+	const double feet = 3.2808399;
+	QList<QRectF> taken;
+	if(keepClear)
+		taken = *keepClear;
+	taken << QRectF(QPointF(hullMin.x, hullMin.y), QPointF(hullMax.x, hullMax.y));
+	QRectF parkedArea;
 	{
 		AuMatrix4x4 plane = AuMatrix4x4::IdentityMatrix();
-		for(int i = 0; i < brief.groundParking; ++i)
-		{
-			const double x = (i - (brief.groundParking - 1) / 2.) * groundSpacing;
-			AuScGroundVehicleParkingSpot spot;
-			spot.MakeIcon(AuPoint(x, parkingY, 0), 0.f, plane);
-			if(spot.IsValid())
-				design.Parts().AddPart(spot);
-		}
-		for(int i = 0; i < brief.spaceParking; ++i)
-		{
-			const double x = (i - (brief.spaceParking - 1) / 2.) * spaceSpacing;
-			AuScSpaceVehicleParkingSpot spot;
-			spot.MakeIcon(AuPoint(x, parkingY + 10., 0), 0.f, plane);
-			if(spot.IsValid())
-				design.Parts().AddPart(spot);
-		}
 		// Spacecraft berths beside the building, on the +X side: each takes
 		// GroundSpawnSizeLimit (119 ft) each way from its centre.
 		for(int i = 0; i < brief.spacecraftParking; ++i)
 		{
+			const AuPoint c(hullMax.x + 20. + kSpacecraftBerth * (2 * i + 1), 0, 0);
 			AuScSpacecraftParkingSpot spot;
-			spot.MakeIcon(AuPoint(hullMax.x + 20. + kSpacecraftBerth * (2 * i + 1), 0, 0), 0.f, plane);
+			spot.MakeIcon(c, 0.f, plane);
 			if(spot.IsValid())
 				design.Parts().AddPart(spot);
+			taken << QRectF(c.x - kSpacecraftBerth, c.y - kSpacecraftBerth, 2 * kSpacecraftBerth, 2 * kSpacecraftBerth);
 		}
+		const double gap = 8.;
+		const double rowWidth = qMax(120., hullMax.x - hullMin.x + 40.);
+		double front = hullMin.y - 10.;	// Rows grow outward from here.
+		auto overlaps = [&](const QRectF& r) {
+			const QRectF k = r.adjusted(-gap / 2, -gap / 2, gap / 2, gap / 2);
+			for(const QRectF& t : taken)
+				if(k.intersects(t))
+					return true;
+			return false;
+		};
+		auto placeRows = [&](int count, double w, double d, AuScPart::PART_TYPE type) {
+			const double pitch = w + gap;
+			const int perRow = qMax(1, int((rowWidth + gap) / pitch));
+			double rowFar = front;
+			for(int row = 0, placed = 0; placed < count && row < 200; ++row)
+			{
+				const double cy = front - d / 2 - row * (d + gap);
+				const int inRow = qMin(perRow, count - placed);
+				// Slots centred on the building, then further out to the
+				// sides when something drawn is in the way.
+				for(int k = 0, done = 0; done < inRow && k < inRow + 200; ++k)
+				{
+					const double cx = k < inRow ? (k - (inRow - 1) / 2.) * pitch
+							: ((k - inRow) % 2 ? -1 : 1) * ((inRow - 1) / 2. + 1 + (k - inRow) / 2) * pitch;
+					const QRectF r(cx - w / 2, cy - d / 2, w, d);
+					if(overlaps(r))
+						continue;
+					AuScPart* part = AuScPart::Create(type);
+					if(AuScIcon* icon = dynamic_cast<AuScIcon*>(part))
+					{
+						icon->MakeIcon(AuPoint(cx, cy, 0), 0.f, plane);
+						if(icon->IsValid())
+							design.Parts().AddPart(*icon);
+					}
+					delete part;
+					taken << r;
+					parkedArea = parkedArea.isNull() ? r : parkedArea.united(r);
+					rowFar = qMin(rowFar, r.top());
+					++done;
+					++placed;
+				}
+			}
+			if(count > 0)
+				front = rowFar - gap;
+		};
+		placeRows(brief.groundParking, 6 * feet, 12 * feet, AuScPart::Part_GroundVehicleParkingSpot);
+		placeRows(brief.spaceParking, 12 * feet, 17 * feet, AuScPart::Part_SpaceVehicleParkingSpot);
+		placeRows(brief.rocketParking, 10 * feet, 10 * feet, AuScPart::Part_RocketParkingSpot);
 	}
 
 	// The site. It is a flat polygon on the ground that has to cover the
-	// whole building and the parking.
+	// whole building and the parking. Sea and aerial platforms must not
+	// have one (the game says so).
+	if(structure != BD_SeaPlatform && structure != BD_AerialPlatform)
 	{
 		const double margin = 20.;
-		AuPoint siteMin(hullMin.x - margin, hullMin.y - margin - 40.);
+		AuPoint siteMin(hullMin.x - margin, hullMin.y - margin);
 		AuPoint siteMax(hullMax.x + margin, hullMax.y + margin);
+		if(!parkedArea.isNull())
+		{
+			siteMin.x = qMin(siteMin.x, parkedArea.left() - margin);
+			siteMin.y = qMin(siteMin.y, parkedArea.top() - margin);
+			siteMax.x = qMax(siteMax.x, parkedArea.right() + margin);
+		}
 		if(brief.spacecraftParking > 0)
 		{
 			siteMax.x = hullMax.x + 20. + kSpacecraftBerth * 2 * brief.spacecraftParking + 10.;
@@ -905,166 +1262,194 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		if(brief.volumes.field > 0)
 		{
 			const double fieldFeet = sqrt(4000. * 1.08 / 0.09290304);	// About 216 ft square.
+			const int sheets = brief.stackFields ? int(brief.volumes.field) : 1;
 			const double width = qMax(fieldFeet, siteMax.x - siteMin.x);
-			const double depth = fieldFeet * fieldFeet * brief.volumes.field / width;
+			const double depth = fieldFeet * fieldFeet * (brief.stackFields ? 1 : brief.volumes.field) / width;
 			AuPointArray f;
 			f.append(AuPoint(-width/2, siteMax.y, 0));
 			f.append(AuPoint(width/2, siteMax.y, 0));
 			f.append(AuPoint(width/2, siteMax.y + depth, 0));
 			f.append(AuPoint(-width/2, siteMax.y + depth, 0));
-			AuScSite field;
-			field.MakeSite(f, AuMatrix4x4::IdentityMatrix());
-			field.SetGrade(AuScSite::Level);
-			field.SetPavement(WORLDTEX_DirtCrackedSmooth);
-			if(field.IsValid())
-				design.Parts().AddPart(field);
+			for(int k = 0; k < sheets; ++k)
+			{
+				// The engine refuses exact duplicates, so each sheet is set a
+				// tenth of a foot further back than the one before.
+				AuPointArray fk;
+				for(const AuPoint& q : f)
+					fk.append(AuPoint(q.x, q.y + 0.1 * k, q.z));
+				AuScSite field;
+				field.MakeSite(fk, AuMatrix4x4::IdentityMatrix());
+				field.SetGrade(AuScSite::Level);
+				field.SetPavement(WORLDTEX_DirtCrackedSmooth);
+				if(field.IsValid())
+					design.Parts().AddPart(field);
+			}
 		}
 	}
 
-	// The interior rooms, floor by floor. The rooms of the brief are the
-	// total for the whole building, so they are spread over the floors.
+	// The rooms: drawn in the designer, or laid out here.
 	QList<BuildingRoom> allRooms;
+	if(drawn)
 	{
-		QList<QList<RoomSpec> > perFloor;
-		for(int f = 0; f < brief.floors; ++f)
-			perFloor << QList<RoomSpec>();
-		for(const RoomSpec& r : brief.rooms)
+		for(const PlacedRoom& pr : *drawn)
 		{
-			int left = r.count;
-			int f = 0;
-			while(left > 0)
-			{
-				RoomSpec one(r);
-				one.count = 1;
-				perFloor[f % brief.floors] << one;
-				--left;
-				++f;
-			}
+			BuildingRoom br;
+			br.type = pr.type;
+			br.label = pr.label;
+			br.mn = pr.min;
+			br.mx = pr.max;
+			br.voidId = pr.voidId;
+			allRooms << br;
+			++result.roomsPlaced;
 		}
-		// The floors are stacked inside the hull. Each floor is laid out in
-		// the largest rectangle that fits inside the shape of the building.
-		const double storey = buildingHeight / qMax(1, brief.floors);
-		AuScSilhouette3d silhouette;
-		HullSilhouette(design.Parts(), silhouette);
-		for(int floor = 0; floor < brief.floors; ++floor)
+	}
+	else
+	{
+		// The interior rooms, floor by floor. The rooms of the brief are the
+		// total for the whole building, so they are spread over the floors.
 		{
-			const double floorBase = hullMin.z + floor * storey + wall;
-			AuPoint plateMin, plateMax;
-			bool havePlate = false;
-			if(silhouette.IsValid())
+			QList<QList<RoomSpec> > perFloor;
+			for(int f = 0; f < brief.floors; ++f)
+				perFloor << QList<RoomSpec>();
+			for(const RoomSpec& r : brief.rooms)
 			{
-				havePlate = LargestFreeRect(silhouette, hullMin, hullMax, floorBase + 1, 4.0, plateMin, plateMax);
-				if(havePlate)
+				int left = r.count;
+				int f = 0;
+				while(left > 0)
 				{
-					// Keep a little space to the walls of the shape.
-					plateMin = AuPoint(plateMin.x + wall, plateMin.y + wall, plateMin.z);
-					plateMax = AuPoint(plateMax.x - wall, plateMax.y - wall, plateMax.z);
-					if(plateMax.x <= plateMin.x || plateMax.y <= plateMin.y)
-						havePlate = false;
+					RoomSpec one(r);
+					one.count = 1;
+					perFloor[f % brief.floors] << one;
+					--left;
+					++f;
 				}
 			}
-			if(!havePlate)
+			// The floors are stacked inside the hull. Each floor is laid out in
+			// the largest rectangle that fits inside the shape of the building.
+			const double storey = buildingHeight / qMax(1, brief.floors);
+			AuScSilhouette3d silhouette;
+			HullSilhouette(design.Parts(), silhouette);
+			for(int floor = 0; floor < brief.floors; ++floor)
 			{
-				plateMin = AuPoint(hullMin.x + wall, hullMin.y + wall, floorBase);
-				plateMax = AuPoint(hullMax.x - wall, hullMax.y - wall, floorBase);
-			}
-			const double maxHeight = qMax(6.0, storey - wall * 2);
-			allRooms += PackFloor(perFloor[floor], plateMin, plateMax, floorBase, maxHeight, floor, strategy);
-		}
-	}
-
-	// The rooms have to fit inside the shape of the building. A building
-	// made from a model is not a box, so the rooms are shrunk and moved until
-	// the silhouette of the hull takes them.
-	{
-		AuScSilhouette3d silhouette;
-		HullSilhouette(design.Parts(), silhouette);
-		if(silhouette.IsValid())
-		{
-			QList<BuildingRoom> fitted;
-			for(const BuildingRoom& br : allRooms)
-			{
-				BuildingRoom best = br;
-				bool ok = false;
-				const double depthScales[] = { 1.0, .9, .8, .7, .6, .5, .4 };
-				const double lengthScales[] = { 1.0, .95, .9, .85, .8 };
-				for(int di = 0; di < 7 && !ok; ++di)
+				const double floorBase = hullMin.z + floor * storey + wall;
+				AuPoint plateMin, plateMax;
+				bool havePlate = false;
+				if(silhouette.IsValid())
 				{
-					for(int li = 0; li < 5 && !ok; ++li)
+					havePlate = LargestFreeRect(silhouette, hullMin, hullMax, floorBase + 1, 4.0, plateMin, plateMax);
+					if(havePlate)
 					{
-						BuildingRoom t = br;
-						const double cx = (t.mn.x + t.mx.x) / 2;
-						const double cy = (t.mn.y + t.mx.y) / 2;
-						const double hx = (t.mx.x - t.mn.x) / 2 * lengthScales[li];
-						const double hy = (t.mx.y - t.mn.y) / 2 * depthScales[di];
-						t.mn = AuPoint(cx - hx, cy - hy, t.mn.z);
-						t.mx = AuPoint(cx + hx, cy + hy, t.mx.z);
-						// Then try it at a few heights and places.
-						for(int zi = 0; zi < 4 && !ok; ++zi)
+						// Keep a little space to the walls of the shape.
+						plateMin = AuPoint(plateMin.x + wall, plateMin.y + wall, plateMin.z);
+						plateMax = AuPoint(plateMax.x - wall, plateMax.y - wall, plateMax.z);
+						if(plateMax.x <= plateMin.x || plateMax.y <= plateMin.y)
+							havePlate = false;
+					}
+				}
+				if(!havePlate)
+				{
+					plateMin = AuPoint(hullMin.x + wall, hullMin.y + wall, floorBase);
+					plateMax = AuPoint(hullMax.x - wall, hullMax.y - wall, floorBase);
+				}
+				const double maxHeight = qMax(6.0, storey - wall * 2);
+				allRooms += PackFloor(perFloor[floor], plateMin, plateMax, floorBase, maxHeight, floor, strategy);
+			}
+		}
+
+		// The rooms have to fit inside the shape of the building. A building
+		// made from a model is not a box, so the rooms are shrunk and moved until
+		// the silhouette of the hull takes them.
+		{
+			AuScSilhouette3d silhouette;
+			HullSilhouette(design.Parts(), silhouette);
+			if(silhouette.IsValid())
+			{
+				QList<BuildingRoom> fitted;
+				for(const BuildingRoom& br : allRooms)
+				{
+					BuildingRoom best = br;
+					bool ok = false;
+					const double depthScales[] = { 1.0, .9, .8, .7, .6, .5, .4 };
+					const double lengthScales[] = { 1.0, .95, .9, .85, .8 };
+					for(int di = 0; di < 7 && !ok; ++di)
+					{
+						for(int li = 0; li < 5 && !ok; ++li)
 						{
-							for(int yi = 0; yi < 3 && !ok; ++yi)
+							BuildingRoom t = br;
+							const double cx = (t.mn.x + t.mx.x) / 2;
+							const double cy = (t.mn.y + t.mx.y) / 2;
+							const double hx = (t.mx.x - t.mn.x) / 2 * lengthScales[li];
+							const double hy = (t.mx.y - t.mn.y) / 2 * depthScales[di];
+							t.mn = AuPoint(cx - hx, cy - hy, t.mn.z);
+							t.mx = AuPoint(cx + hx, cy + hy, t.mx.z);
+							// Then try it at a few heights and places.
+							for(int zi = 0; zi < 4 && !ok; ++zi)
 							{
-								BuildingRoom u = t;
-								u.mn.z += (t.mx.z - t.mn.z) * zi * .2;
-								u.mx.z += (t.mx.z - t.mn.z) * zi * .2;
-								u.mn.y += (t.mx.y - t.mn.y) * yi * .25;
-								u.mx.y += (t.mx.y - t.mn.y) * yi * .25;
-								// All four corners have to be inside the shape.
-								const AuPoint corners[8] = {
-									AuPoint(u.mn.x, u.mn.y, u.mn.z), AuPoint(u.mx.x, u.mn.y, u.mn.z),
-									AuPoint(u.mx.x, u.mx.y, u.mn.z), AuPoint(u.mn.x, u.mx.y, u.mn.z),
-									AuPoint(u.mn.x, u.mn.y, u.mx.z), AuPoint(u.mx.x, u.mn.y, u.mx.z),
-									AuPoint(u.mx.x, u.mx.y, u.mx.z), AuPoint(u.mn.x, u.mx.y, u.mx.z) };
-								bool allInside = true;
-								for(int c = 0; c < 8; ++c)
+								for(int yi = 0; yi < 3 && !ok; ++yi)
 								{
-									if(!silhouette.IsInside(corners[c]))
+									BuildingRoom u = t;
+									u.mn.z += (t.mx.z - t.mn.z) * zi * .2;
+									u.mx.z += (t.mx.z - t.mn.z) * zi * .2;
+									u.mn.y += (t.mx.y - t.mn.y) * yi * .25;
+									u.mx.y += (t.mx.y - t.mn.y) * yi * .25;
+									// All four corners have to be inside the shape.
+									const AuPoint corners[8] = {
+										AuPoint(u.mn.x, u.mn.y, u.mn.z), AuPoint(u.mx.x, u.mn.y, u.mn.z),
+										AuPoint(u.mx.x, u.mx.y, u.mn.z), AuPoint(u.mn.x, u.mx.y, u.mn.z),
+										AuPoint(u.mn.x, u.mn.y, u.mx.z), AuPoint(u.mx.x, u.mn.y, u.mx.z),
+										AuPoint(u.mx.x, u.mx.y, u.mx.z), AuPoint(u.mn.x, u.mx.y, u.mx.z) };
+									bool allInside = true;
+									for(int c = 0; c < 8; ++c)
 									{
-										allInside = false;
-										break;
+										if(!silhouette.IsInside(corners[c]))
+										{
+											allInside = false;
+											break;
+										}
 									}
-								}
-								if(allInside)
-								{
-									best = u;
-									ok = true;
+									if(allInside)
+									{
+										best = u;
+										ok = true;
+									}
 								}
 							}
 						}
 					}
+					if(ok)
+						fitted << best;
+					else
+						result.warnings << QString("room '%1' does not fit inside the building and was left out.").arg(br.label);
 				}
-				if(ok)
-					fitted << best;
-				else
-					result.warnings << QString("room '%1' does not fit inside the building and was left out.").arg(br.label);
+				allRooms = fitted;
 			}
-			allRooms = fitted;
 		}
-	}
 
-	for(BuildingRoom& br : allRooms)
-	{
-		// The room's constant void and its mesh.
-		quint16 meshId = 0;
-		if(!AddBoxRoom(design, br.label, br.mn, br.mx, br.voidId, meshId, true))
-			continue;
-		++result.roomsPlaced;
-	}
+		for(BuildingRoom& br : allRooms)
+		{
+			// The room's constant void and its mesh.
+			quint16 meshId = 0;
+			if(!AddBoxRoom(design, br.label, br.mn, br.mx, br.voidId, meshId, true))
+				continue;
+			++result.roomsPlaced;
+		}
 
-	// An entrance door in the front wall of the ground floor, with a doorway
-	// from the first room out through the wall.
-	if(!allRooms.isEmpty() && allRooms.first().voidId)
-	{
-		const BuildingRoom& first = allRooms.first();
-		const double doorWidth = 10;
-		const double doorHeight = 8;
-		const double y = -brief.footprintY/2;
-		const double cx = (first.mn.x + first.mx.x) / 2;
+		// An entrance door in the front wall of the ground floor, with a doorway
+		// from the first room out through the wall.
+		if(!allRooms.isEmpty() && allRooms.first().voidId)
+		{
+			const BuildingRoom& first = allRooms.first();
+			const double doorWidth = 10;
+			const double doorHeight = 8;
+			const double y = -brief.footprintY/2;
+			const double cx = (first.mn.x + first.mx.x) / 2;
 
-		quint16 doorId = 0;
-		if(AddHullDoor(design, AuPoint(cx - doorWidth/2, y - 1, first.mn.z), AuPoint(cx + doorWidth/2, y + 1, first.mn.z + doorHeight),
-				AuPoint(0, -1, 0), first.mn.y, y, first.label, doorId))
-			++result.doorsPlaced;
+			quint16 doorId = 0;
+			if(AddHullDoor(design, AuPoint(cx - doorWidth/2, y - 1, first.mn.z), AuPoint(cx + doorWidth/2, y + 1, first.mn.z + doorHeight),
+					AuPoint(0, -1, 0), first.mn.y, y, first.label, doorId))
+				++result.doorsPlaced;
+		}
+
 	}
 
 	// Control stations for the sensors and the shields. The engine insists
@@ -1075,7 +1460,8 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		StationEntry entries[] = {
 			{ brief.volumes.sensors > 0, AuScPart::Part_ConsoleSensor, CID_SensorModule },
 			{ brief.volumes.shields > 0, AuScPart::Part_ConsoleShield, CID_EnergyShieldModule },
-			{ brief.volumes.capacitor > 0, AuScPart::Part_ConsoleEngineer, CID_GravityDriveModule },
+			// No engineer's station for a battery: the game takes a building
+			// with battery and no station (seen in game, 9 November 2026).
 			{ brief.volumes.surgery > 0, AuScPart::Part_ConsoleMedic, CID_SurgeryMedicalModule },
 			{ brief.volumes.transporters > 0, AuScPart::Part_ConsoleTransporter, CID_PersonnelTransporterModule },
 		};
@@ -1104,7 +1490,9 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 				continue;
 			}
 			const double px = -brief.footprintX/4 + slot * 8;
-			if(e.type == AuScPart::Part_ConsoleTransporter && padRoom)
+			if(drawn && !allRooms.isEmpty() && !(e.type == AuScPart::Part_ConsoleTransporter && padRoom))
+				console->MakeIcon(DrawnSpot(allRooms, slot, 4), 0.f, plane);
+			else if(e.type == AuScPart::Part_ConsoleTransporter && padRoom)
 				console->MakeIcon(AuPoint((padRoom->mn.x + padRoom->mx.x) / 2, padRoom->mx.y - 4, padRoom->mn.z + 4), 0.f, plane);
 			else
 				console->MakeIcon(AuPoint(px, brief.footprintY/4, wall + 4), 0.f, plane);
@@ -1144,7 +1532,7 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			AuScCitizenPost post;
 			const double px = -brief.footprintX/4 + (i % 4) * 8;
 			const double py = -brief.footprintY/4 + (i / 4) * 8;
-			post.MakeIcon(AuPoint(px, py, wall + 2), 0.f, plane);
+			post.MakeIcon(drawn && !allRooms.isEmpty() ? DrawnSpot(allRooms, 8 + i, 2) : AuPoint(px, py, wall + 2), 0.f, plane);
 			if(post.IsValid())
 			{
 				design.Parts().AddPart(post);
@@ -1156,7 +1544,7 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			AuScTroopPost post;
 			const double px = brief.footprintX/4 + (i % 4) * 8;
 			const double py = -brief.footprintY/4 + (i / 4) * 8;
-			post.MakeIcon(AuPoint(px, py, wall + 2), 0.f, plane);
+			post.MakeIcon(drawn && !allRooms.isEmpty() ? DrawnSpot(allRooms, 16 + i, 2) : AuPoint(px, py, wall + 2), 0.f, plane);
 			if(post.IsValid())
 			{
 				design.Parts().AddPart(post);
@@ -1214,6 +1602,10 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		design.SetHomeSmallVolume(v.homesSmall);
 		design.SetPowerPlantVolume(v.powerPlant);
 		design.SetLifeSupportVolume(v.lifeSupport);
+		// Without a module the engine warns "Space allocated to life support
+		// but no life support module selected".
+		if(v.lifeSupport > 0)
+			design.SetLifeSupportModule(CID_LifeSupportModule);
 		design.SetCapacitorVolume(v.capacitor);
 		// Battery space only stores power with the battery module fitted.
 		design.SetCapacitorModule(v.capacitor > 0 ? CID_CapacitorModule : CID_Invalid);
@@ -1258,6 +1650,15 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 		if(chosen != IID_None)
 		{
 			design.SetIndustryId(chosen);
+			// Biodomes and platforms are structures of their own.
+			switch(chosen)
+			{
+			default:					break;
+			case IID_Biodome:			design.SetStructure(BD_Biodome); break;
+			case IID_SeaPlatform:		design.SetStructure(BD_SeaPlatform); break;
+			case IID_GroundPlatform:	design.SetStructure(BD_GroundPlatform); break;
+			case IID_AerialPlatform:	design.SetStructure(BD_AerialPlatform); break;
+			}
 
 			// A power plant needs the generator module for its fuel
 			// (AuBdReport::IndustryCanUse, codes 62 and 63).
@@ -1306,28 +1707,35 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& brief, 
 			result.warnings << "no industry could use this building as it stands.";
 	}
 
+	// A platform's deck is a build zone for the buildings on it.
+	if(platform && brief.buildZone)
+		BuildZoneOverHull(design, hullMin, hullMax);
+
+	// A street light needs a lamp: one over the post when the design has none.
+	if(structure == BD_StreetLight)
+	{
+		bool lit = false;
+		for(auto it = design.Parts().cbegin(); it != design.Parts().cend(); ++it)
+			lit = lit || (*it)->Type() == AuScPart::Part_LightBulb;
+		if(!lit)
+		{
+			AuScLightBulb bulb;
+			bulb.SetLightColor(QColor(255, 214, 160));
+			bulb.MakeIcon(AuPoint(0, 0, hullMax.z + 10), 0.f, AuMatrix4x4::IdentityMatrix());
+			if(bulb.IsValid())
+				design.Parts().AddPart(bulb);
+		}
+	}
+
+	// Lamps that light a street, not a whole block.
+	if(brief.lightRange > 0 || structure == BD_StreetLight)
+		DimLights(design, brief.lightRange > 0 ? brief.lightRange : 45.);
+
 	// The engine needs the obstruction cache to work out the hull volume.
 	design.RefreshObstructionsCache();
 
 	// How big is the blueprint now?
-	{
-		quint32 faces = 0, triangles = 0, hullFaces = 0;
-		const AuScParts& parts = design.Parts();
-		for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
-		{
-			AuScFaceList f;
-			it.value()->Faces(f);
-			faces += f.size();
-			if(it.value()->IsHullMesh())
-				hullFaces += f.size();
-			AuScTriList t;
-			f.Triangles(t);
-			triangles += t.size();
-		}
-		result.faces = faces;
-		result.hullFaces = hullFaces;
-		result.triangles = triangles;
-	}
+	CountFaces(design, result);
 
 	// The rooms that could not be placed.
 	{

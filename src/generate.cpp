@@ -1854,6 +1854,243 @@ void AddTransporterPads(AuDesign& design, const QList<PlacedRoom>& rooms, const 
 	}
 }
 
+// Service panels (the maintenance consoles of the systems) go only into an
+// Engine Room, the user's choice (2026-11-12): a ship without one gets none.
+// Each goes on a real wall of the room: a stretch of the room's own wall
+// faces with no door or window cut into it, clear of doors, ladders and
+// stairs (the keep-out boxes), clear of desks, berths and other furniture,
+// and inside the hull. The bounding box of a plan's room is not its walls, so
+// panels placed on it stood in doorways and out of the hull.
+static bool IsEngineRoomType(const QString& type)
+{
+	return type.compare(QStringLiteral("Engine Room"), Qt::CaseInsensitive) == 0;
+}
+
+static void PlaceServicePanels(AuScDesign& design, const HullAnalysis& hull, const LayoutOptions& opts,
+		LayoutResult& result, const QList<AuScPart::PART_TYPE>& panelTypes)
+{
+	const double gap = .1, inset = .05, maxW = 8.0, minW = 2.5, maxH = 6.0, minH = 2.5, step = .25;
+	struct WallTri { AuPoint v[3]; };
+	struct Wall
+	{
+		AuPoint		n;					// Into the room.
+		AuPoint		t;					// Along the wall, n x up.
+		AuPoint		at;					// A point on it.
+		double		u0 = 1e30, u1 = -1e30;
+		QList<WallTri>	tris;
+		QList<QPair<double, double> > used;
+	};
+	struct Spot { const PlacedRoom* room; double floor, top; QList<Wall> walls; };
+
+	// The hull with its windows, as the audit tests rooms against it (the
+	// closed solids of the analysis leave out a hull with doors cut into it).
+	Q_UNUSED(hull);
+	const SolidMesh hullSolid = HullSolidOf(design.Parts());
+	auto insideHull = [&](const AuPoint& p) { return hullSolid.Contains(p); };
+	// Furniture: everything small that stands in a room.
+	QList<QPair<AuPoint, AuPoint> > furniture;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* p = it.value();
+		if(!p || p->IsRoomVoid() || p->IsRoomMesh() || p->IsHullMesh() || p->IsHullVoid() || p->IsPath() ||
+				p->IsDecal() || p->IsEnvironmentVoid() || p->IsDoor() || p->IsWindow())
+			continue;
+		AuPoint mn, mx;
+		p->ModelExtents(mn, mx);
+		const AuPoint size = mx - mn;
+		if(size.x < 12 && size.y < 12 && size.z < 12)
+			furniture << qMakePair(mn, mx);
+	}
+	auto boxesMeet = [](const AuPoint& a0, const AuPoint& a1, const AuPoint& b0, const AuPoint& b1) {
+		return a0.x < b1.x && b0.x < a1.x && a0.y < b1.y && b0.y < a1.y && a0.z < b1.z && b0.z < a1.z;
+	};
+
+	QList<Spot> spots;
+	for(const PlacedRoom& r : result.rooms)
+	{
+		if(!IsEngineRoomType(r.type) || !r.meshId || !r.voidId)
+			continue;
+		const AuScPart* mesh = design.Parts().value(r.meshId);
+		const AuScPart* room = design.Parts().value(r.voidId);
+		if(!mesh || !room)
+			continue;
+		Spot spot;
+		spot.room = &r;
+		AuPoint vmn, vmx;
+		room->ModelExtents(vmn, vmx);
+		spot.floor = vmn.z;
+		spot.top = vmx.z;
+		QMap<QString, int> byPlane;
+		AuScFaceList faces;
+		mesh->Faces(faces);
+		for(const AuScFace* face : faces)
+		{
+			AuScTriList tris;
+			face->Triangles(tris);
+			for(const AuScTri& tri : tris)
+			{
+				WallTri w;
+				w.v[0] = tri.V0();
+				w.v[1] = tri.V1();
+				w.v[2] = tri.V2();
+				AuPoint n = (w.v[1] - w.v[0]).Cross(w.v[2] - w.v[0]);
+				if(n.Length() < 1e-6)
+					continue;
+				n.Unit();
+				if(fabs(n.z) > .05)
+					continue;			// Floors, ceilings and slopes.
+				n.z = 0;
+				n.Unit();
+				const AuPoint c = (w.v[0] + w.v[1] + w.v[2]) * (1.0 / 3);
+				const bool front = room->IsInsideVoid(c + n * .3), back = room->IsInsideVoid(c - n * .3);
+				if(front == back)
+					continue;
+				if(back)
+					n = n * -1.0;
+				const double d = n.Dot(c);
+				const QString key = QString("%1 %2 %3").arg(qRound(n.x * 200)).arg(qRound(n.y * 200)).arg(qRound(d * 20));
+				int at = byPlane.value(key, -1);
+				if(at < 0)
+				{
+					Wall wall;
+					wall.n = n;
+					wall.t = n.Cross(AuPoint(0, 0, 1));
+					wall.t.Unit();
+					wall.at = c;
+					at = spot.walls.size();
+					spot.walls << wall;
+					byPlane.insert(key, at);
+				}
+				Wall& wall = spot.walls[at];
+				wall.tris << w;
+				for(const AuPoint& v : w.v)
+				{
+					wall.u0 = qMin(wall.u0, wall.t.Dot(v));
+					wall.u1 = qMax(wall.u1, wall.t.Dot(v));
+				}
+			}
+		}
+		// The longest walls first.
+		std::stable_sort(spot.walls.begin(), spot.walls.end(), [](const Wall& a, const Wall& b) {
+			return a.u1 - a.u0 > b.u1 - b.u0;
+		});
+		spots << spot;
+	}
+	if(spots.isEmpty())
+		return;
+	// Is the point (u along the wall, z) on one of the wall's faces?
+	auto onWall = [](const Wall& wall, double u, double z) {
+		for(const WallTri& w : wall.tris)
+		{
+			double pu[3], pz[3];
+			for(int k = 0; k < 3; ++k)
+			{
+				pu[k] = wall.t.Dot(w.v[k]);
+				pz[k] = w.v[k].z;
+			}
+			const double det = (pu[1] - pu[0]) * (pz[2] - pz[0]) - (pu[2] - pu[0]) * (pz[1] - pz[0]);
+			if(fabs(det) < 1e-9)
+				continue;
+			const double a = ((u - pu[0]) * (pz[2] - pz[0]) - (pu[2] - pu[0]) * (z - pz[0])) / det;
+			const double b = ((pu[1] - pu[0]) * (z - pz[0]) - (u - pu[0]) * (pz[1] - pz[0])) / det;
+			if(a >= -1e-4 && b >= -1e-4 && a + b <= 1 + 1e-4)
+				return true;
+		}
+		return false;
+	};
+	auto point = [](const Wall& wall, double u, double z, double out) {
+		AuPoint p = wall.at + wall.t * (u - wall.t.Dot(wall.at)) + wall.n * out;
+		p.z = z;
+		return p;
+	};
+	auto fits = [&](const Spot& spot, const Wall& wall, double u, double w, double z0, double h) {
+		for(const QPair<double, double>& o : wall.used)
+			if(u < o.second + gap && o.first < u + w + gap)
+				return false;
+		// On the wall all over: no doorway or window in it.
+		for(int i = 0; i <= 6; ++i)
+			for(int j = 0; j <= 4; ++j)
+				if(!onWall(wall, u + .02 + (w - .04) * i / 6, z0 + .02 + (h - .04) * j / 4))
+					return false;
+		// Clear of doors, ladders and stairs, and of furniture, with room to stand.
+		AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+		for(double uu : { u, u + w })
+			for(double zz : { z0, z0 + h })
+				for(double out : { .02, 2.0 })
+				{
+					const AuPoint p = point(wall, uu, zz, out);
+					mn = mn.Min(p);
+					mx = mx.Max(p);
+				}
+		for(const QPair<AuPoint, AuPoint>& k : opts.stationKeepOut)
+			if(boxesMeet(mn, mx, k.first, k.second))
+				return false;
+		for(const QPair<AuPoint, AuPoint>& f : furniture)
+			if(boxesMeet(mn, mx, f.first, f.second))
+				return false;
+		// Inside the room and the hull.
+		for(double fu : { 0.0, .5, 1.0 })
+			for(double fz : { 0.0, .5, 1.0 })
+			{
+				const AuPoint p = point(wall, u + w * fu, z0 + h * fz, inset + .05);
+				const AuScPart* room = design.Parts().value(spot.room->voidId);
+				if(!room || !room->IsInsideVoid(p))
+					return false;
+				if(!insideHull(p))
+					return false;
+			}
+		return true;
+	};
+
+	int placed = 0;
+	for(AuScPart::PART_TYPE type : panelTypes)
+	{
+		bool done = false;
+		for(double w = maxW; w >= minW - 1e-9 && !done; w -= 1.0)
+			for(Spot& spot : spots)
+			{
+				if(done)
+					break;
+				const double z0 = spot.floor + gap;
+				const double h = qMin(maxH, spot.top - spot.floor - 2 * gap);
+				if(h < minH)
+					continue;
+				for(Wall& wall : spot.walls)
+				{
+					if(done)
+						break;
+					for(double u = wall.u0 + gap; u + w <= wall.u1 - gap + 1e-9 && !done; u += step)
+					{
+						if(!fits(spot, wall, u, w, z0, h))
+							continue;
+						AuScPart* part = AuScPart::Create(type);
+						AuScScreen* screen = dynamic_cast<AuScScreen*>(part);
+						if(screen)
+						{
+							// As WallPlane: from the far end, the normal into the room.
+							const AuPoint ll = point(wall, u, z0, inset), ur = point(wall, u + w, z0 + h, inset);
+							AuMatrix4x4 m;
+							m.Translate(point(wall, u + w, z0, inset));
+							m.RotateToPlane(wall.t * -w, AuPoint(0, 0, h));
+							screen->MakeScreen(ll, ur, m);
+							if(screen->IsValid())
+							{
+								design.Parts().AddPart(*screen);
+								wall.used << qMakePair(u, u + w);
+								++placed;
+								done = true;
+							}
+						}
+						delete part;
+					}
+				}
+			}
+	}
+	if(placed < panelTypes.size())
+		result.warnings << QString("%1 of %2 maintenance consoles found no free wall in the engine room.")
+				.arg(panelTypes.size() - placed).arg(panelTypes.size());
+}
+
 static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnalysis& hull, const LayoutOptions& opts,
 		LayoutResult& result, const QList<DoorLink>& doorLinks)
 {
@@ -1911,12 +2148,18 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			module = COMMODITYID(f.module > 0 ? f.module : opts.fireControlModule > 0 ? opts.fireControlModule : int(module));
 		if(f.type == "engineer")
 		{
-			if(FtlDriveModule(brief.ftlDrive) == CID_Invalid || !canHaveFtl)
+			// Its own FTL drive when one was picked for it, else the ship's.
+			const COMMODITYID drive = f.module > 0 ? COMMODITYID(f.module) : FtlDriveModule(brief.ftlDrive);
+			if(drive == CID_Invalid && hullM3 >= 1000)
+				module = CID_Invalid;	// Runs the power plant and maneuver drive (see below).
+			else if(drive == CID_Invalid || !canHaveFtl)
 			{
-				result.warnings << QString("the engineer station placed in '%1' was left out: the ship has no FTL drive.").arg(f.room);
+				result.warnings << QString("the engineer station placed in '%1' was left out: %2.").arg(f.room)
+						.arg(drive == CID_Invalid ? "the ship has no FTL drive" : "the hull is too small for an FTL drive");
 				continue;
 			}
-			module = FtlDriveModule(brief.ftlDrive);
+			else
+				module = drive;
 		}
 		const AuScPart::PART_TYPE deskType = DeskStationType(partType);
 		const bool desk = deskType != partType && (f.seat == "desk" || (f.seat.isEmpty() && opts.bridgeStyle == "desks"));
@@ -1964,10 +2207,12 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			continue;
 		}
 		const AuScPart* added = design.Parts().value(partId);
-		if(added && added->ModuleSystem() == SYS_FTLDrive)
+		if(added && added->ModuleSystem() == SYS_FTLDrive && added->Module() != CID_Invalid)
 			ftlParts << partId;
 		else if(added && added->ModuleSystem() == SYS_Weapon)
 			weaponParts << partId;
+		if(partType == AuScPart::Part_ConsoleFireControl && f.module > 0)
+			result.handModuleParts.insert(partId);
 		placedStationTypes.insert(f.type);
 		if(partType != AuScPart::Part_ConsoleCommand)
 			++crewStations;
@@ -2008,16 +2253,27 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 		// the maneuver drive by itself, so no engineer is needed for it.
 		if(s.type == "engineer")
 		{
+			// Without an FTL drive an engineer still runs the power plant and
+			// maneuver drive: the game wants one when they are over 100 m3
+			// together, which they are in any bigger hull (a station). It
+			// gets no module, so it counts as no FTL drive.
 			if(FtlDriveModule(brief.ftlDrive) == CID_Invalid)
-				continue;
-			if(!canHaveFtl)
+			{
+				if(hullM3 < 1000 || placedStationTypes.contains("engineer"))
+					continue;
+				module = CID_Invalid;
+			}
+			else if(!canHaveFtl)
 			{
 				result.warnings << QString("no engineer station, because the hull has no room for an FTL drive.");
 				continue;
 			}
-			if(!ftlParts.isEmpty())
-				continue;
-			module = FtlDriveModule(brief.ftlDrive);
+			else
+			{
+				if(!ftlParts.isEmpty())
+					continue;
+				module = FtlDriveModule(brief.ftlDrive);
+			}
 		}
 		PlacedRoom target;
 		bool found = false;
@@ -2136,7 +2392,7 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 					if(station->IsValid())
 					{
 						const quint16 partId = design.Parts().AddPart(*station);
-						if(station->ModuleSystem() == SYS_FTLDrive)
+						if(station->ModuleSystem() == SYS_FTLDrive && station->Module() != CID_Invalid)
 							ftlParts << partId;
 						else if(station->ModuleSystem() == SYS_Weapon)
 							weaponParts << partId;
@@ -2332,7 +2588,7 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			continue;
 		}
 		const quint16 partId = design.Parts().AddPart(*console);
-		if(console->ModuleSystem() == SYS_FTLDrive)
+		if(console->ModuleSystem() == SYS_FTLDrive && console->Module() != CID_Invalid)
 			ftlParts << partId;
 		else if(console->ModuleSystem() == SYS_Weapon)
 			weaponParts << partId;
@@ -2499,26 +2755,7 @@ static void FurnishLayout(AuScDesign& design, const Brief& brief, const HullAnal
 			if(partType != AuScPart::Part_Invalid)
 				panelTypes << partType;
 		}
-		const PlacedRoom& r = result.rooms.first();
-		const double gap = .1;
-		const int n = panelTypes.size();
-		const double wallWidth = r.max.x - r.min.x, wallHeight = r.max.z - r.min.z;
-		const double w = n ? qMin(8.0, (wallWidth - gap * (n + 1)) / n) : 0;
-		const double h = qMin(6.0, wallHeight - 2 * gap);
-		for(int i = 0; i < n && w > .2 && h > .2; ++i)
-		{
-			AuScPart* part = AuScPart::Create(panelTypes.at(i));
-			AuScScreen* screen = dynamic_cast<AuScScreen*>(part);
-			if(screen)
-			{
-				const double x0 = r.min.x + gap + i * (w + gap), z0 = r.min.z + gap;
-				AuMatrix4x4 wall = WallPlane(x0, x0 + w, r.min.y, z0, z0 + h);
-				screen->MakeScreen(AuPoint(x0, r.min.y, z0), AuPoint(x0 + w, r.min.y, z0 + h), wall);
-				if(screen->IsValid())
-					design.Parts().AddPart(*screen);
-			}
-			delete part;
-		}
+		PlaceServicePanels(design, hull, opts, result, panelTypes);
 	}
 
 	if(opts.placeSystems)

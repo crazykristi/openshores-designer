@@ -34,8 +34,10 @@
 #include <functional>
 
 #include "auscface.h"
+#include "sohfile.h"
 #include "triplan.h"
 
+class AuDesign;
 class AuScDesign;
 
 // The shaped hull: its triangles with the colour of each, ready to become
@@ -89,9 +91,15 @@ struct PlanBuildReport
 	int				canopies = 0;			// Of them, canopies: glass from the sill up, walls opened under it.
 	int				ladders = 0;
 	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
+	int				zeroGNoLadder = 0;
+	int				windowLining = 0;	// Faces covering the hull's inside behind windows.
+	QStringList		canopyRooms;		// Rooms under a canopy: seen through, never lined.	// Of those, joins with no ladder placed by hand.
 	int				openJoins = 0;		// "Open to Deck Below" rooms opened into the room below.
 	int				stairs = 0;
 	int				parking = 0;			// Vehicle parking spots.
+	// Generic vehicle spots: ground parking spots in the design that are to
+	// be saved as the game's vehicle spots (SaveDesign's `vehicles`).
+	QList<VehicleSpotSave>	vehicleSpots;
 	int				contrails = 0;			// Contrail emitters.
 	int				markings = 0;			// Empire flags and names on the hull.
 	int				lifts = 0;				// Turbolifts.
@@ -109,6 +117,8 @@ struct PlanBuildReport
 	int				handBerths = 0;
 	int				handPads = 0;
 	int				handPaths = 0;
+	int				decals = 0;				// Decal parts laid over the hull.
+	int				decalFaces = 0;			// Their faces.
 	QStringList		notes;
 	QStringList		warnings;
 	QStringList		errors;			// The engine's own report.
@@ -117,7 +127,9 @@ struct PlanBuildReport
 
 // Builds the blueprint. The caller owns the design. Never returns null; a
 // design that could not be made complete says why in the report.
-AuScDesign*	BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options, PlanBuildReport& report);
+// A ship blueprint (AuScDesign), or in building mode a building blueprint
+// (AuBdDesign).
+AuDesign*	BuildPlanDesign(const TriPlan& plan, const PlanBuildOptions& options, PlanBuildReport& report);
 
 // A plan whose hull triangles are filled in from a 3D model (stl, 3ds or
 // obj), as a start to draw rooms, doors and paint on. The model is turned so
@@ -165,6 +177,12 @@ struct PlanFromModelOptions
 	double	deckFeet = 10.0;
 	bool	flip = false;		// Turn it round: the model's other end is fore.
 	bool	yUp = false;		// The model was made with y up (many obj files are), not z.
+	// Keep the model's axes and size (lengthFeet is then ignored): a
+	// blueprint's hull, which is in the game's feet with fore at +Y.
+	bool	asIs = false;
+	// asIs only: a height in the model that should be a deck's floor (the
+	// lowest room floor of a blueprint); NaN for none.
+	double	floorAt = NAN;
 	int		maxFaces = 20000;	// A bigger model is thinned to this first, as shipgen reduce does (0: never).
 	// Told what is being done and how far it has got ('total' 0 when that
 	// cannot be said); return false to stop. A big model takes a while
@@ -189,5 +207,13 @@ struct PlanFromModelReport
 };
 bool	PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options, TriPlan& plan,
 		QStringList& notes, QString& error, PlanFromModelReport* report = 0);
+
+// A plan from a blueprint (.SoH): its hull becomes the plan's hull as it is
+// (PlanFromModel with asIs), its rooms fill the cells whose triangles they
+// hold, and its doors become doors on the nearest room edges. Stations,
+// berths and the rest are furnished again by the template when it is built.
+// A building blueprint gives a plan in building mode.
+bool	PlanFromBlueprint(const QString& file, const PlanFromModelOptions& options, TriPlan& plan,
+		QStringList& notes, QString& error);
 
 #endif

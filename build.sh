@@ -395,7 +395,7 @@ mkdir -p "$OBJ/tool"
 for src in "$HERE/src"/*.cpp; do
 	base="$(basename "$src" .cpp)"
 	case "$base" in
-		brief|generate|building|paint|logging|audit|sohfile|interior|triplan|planbuild|aether|prototypes) continue ;;	# These live in the core library.
+		brief|generate|building|paint|decal|windowleak|logging|audit|sohfile|interior|triplan|planbuild|aether|prototypes) continue ;;	# These live in the core library.
 	esac
 	obj="$OBJ/tool/${base}.o"
 	# shellcheck disable=SC2086

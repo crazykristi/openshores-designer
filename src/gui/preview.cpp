@@ -22,6 +22,8 @@
 #include <QMap>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
+#include <QTimer>
 #include <QVector3D>
 
 #include "auglsl.h"
@@ -233,7 +235,9 @@ int DesignPreview::TextureForSlot(int slot)
 	if(m_texturesBySlot.contains(slot))
 		return slot;
 
-	QOpenGLTexture* texture = new QOpenGLTexture(m_paletteImages.at(slot));
+	// The game uploads images bottom row first (texture v = 0 is the bottom
+	// of the image); QOpenGLTexture starts at the top, so flip to match.
+	QOpenGLTexture* texture = new QOpenGLTexture(m_paletteImages.at(slot).mirrored());
 	texture->setMinificationFilter(QOpenGLTexture::LinearMipMapLinear);
 	texture->setMagnificationFilter(QOpenGLTexture::Linear);
 	texture->setWrapMode(QOpenGLTexture::Repeat);
@@ -497,7 +501,9 @@ void DesignPreview::RebuildGeometry()
 			// The hull and the site are drawn see through so that the inside
 			// of the ship or building can be seen.
 			const bool seeThrough = part->IsHullMesh() || part->IsSite();
-			const QColor colour = ColourForPart(part);
+			// A decal shows its own image, as solid as the game draws it.
+			const bool decal = part->IsDecal();
+			const QColor colour = decal ? QColor(255, 255, 255) : ColourForPart(part);
 			for(const AuScTriRender& t : opaqueTris.values())
 			{
 				const int slot = textureSlot(t);
@@ -515,7 +521,7 @@ void DesignPreview::RebuildGeometry()
 				const int slot = textureSlot(t);
 				const AuScPoint* v[3] = { &t.V0(), &t.V1(), &t.V2() };
 				for(int i = 0; i < 3; ++i)
-					addVertex(blend[slot], *v[i], colour, 0.5f, slot);
+					addVertex(blend[slot], *v[i], colour, decal ? t.Opacity() : 0.5f, slot);
 			}
 		}
 
@@ -687,17 +693,127 @@ void DesignPreview::FrameAll()
 void DesignPreview::BuildCameraMatrix(QMatrix4x4& projection, QMatrix4x4& view) const
 {
 	const double fov = 45.0;
-	const double nearP = 1.0;
+	// Inside the ship the near plane has to be close, or walls vanish.
+	const double nearP = m_fly ? 0.2 : 1.0;
 	const double farP = m_distance * 10.0 + 1000.0;
 	projection.perspective(fov, width() / qMax(1.0, double(height())), nearP, farP);
 
-	QVector3D eye(qSin(qDegreesToRadians(m_yaw)) * qCos(qDegreesToRadians(m_pitch)),
-			qCos(qDegreesToRadians(m_yaw)) * qCos(qDegreesToRadians(m_pitch)),
-			qSin(qDegreesToRadians(m_pitch)));
-	eye = eye * m_distance;
+	if(m_fly)
+	{
+		view.lookAt(m_eye, m_eye - OrbitOffset(), QVector3D(0, 0, 1));
+		return;
+	}
+	QVector3D eye = OrbitOffset() * m_distance;
 	eye += QVector3D(m_center.x(), m_center.y(), m_centerZ);
 	const QVector3D target(m_center.x(), m_center.y(), m_centerZ);
 	view.lookAt(eye, target, QVector3D(0, 0, 1));
+}
+
+QVector3D DesignPreview::OrbitOffset() const
+{
+	return QVector3D(qSin(qDegreesToRadians(m_yaw)) * qCos(qDegreesToRadians(m_pitch)),
+			qCos(qDegreesToRadians(m_yaw)) * qCos(qDegreesToRadians(m_pitch)),
+			qSin(qDegreesToRadians(m_pitch)));
+}
+
+void DesignPreview::SetFreeFly(bool on)
+{
+	if(on == m_fly)
+		return;
+	const QVector3D centre(m_center.x(), m_center.y(), m_centerZ);
+	if(on)
+	{
+		m_eye = centre + OrbitOffset() * m_distance;
+		m_flySpeed = qBound(5.f, m_distance / 10.f, 200.f);
+		if(!m_flyTimer)
+		{
+			m_flyTimer = new QTimer(this);
+			m_flyTimer->setInterval(16);
+			connect(m_flyTimer, &QTimer::timeout, this, &DesignPreview::FlyStep);
+		}
+		m_keys.clear();
+		m_flyClock.start();
+		m_flyTimer->start();
+		setFocus();
+	}
+	else
+	{
+		// Orbit round the point straight ahead, as far ahead as the
+		// orbit stood back.
+		const QVector3D ahead = m_eye - OrbitOffset() * m_distance;
+		m_center = QPoint(qRound(ahead.x()), qRound(ahead.y()));
+		m_centerZ = ahead.z();
+		if(m_flyTimer)
+			m_flyTimer->stop();
+		m_keys.clear();
+	}
+	m_fly = on;
+	update();
+	emit FreeFlyChanged(on);
+	emit ViewChanged();
+}
+
+void DesignPreview::FlyStep()
+{
+	const float dt = qMin(0.1f, m_flyClock.restart() / 1000.f);
+	if(m_keys.isEmpty())
+		return;
+	const QVector3D forward = -OrbitOffset();
+	QVector3D flat(forward.x(), forward.y(), 0);
+	flat = flat.lengthSquared() > 1e-6f ? flat.normalized() : QVector3D(0, 1, 0);
+	const QVector3D right = QVector3D::crossProduct(flat, QVector3D(0, 0, 1));
+	QVector3D move;
+	if(m_keys.contains(Qt::Key_W) || m_keys.contains(Qt::Key_Up))
+		move += forward;
+	if(m_keys.contains(Qt::Key_S) || m_keys.contains(Qt::Key_Down))
+		move -= forward;
+	if(m_keys.contains(Qt::Key_D) || m_keys.contains(Qt::Key_Right))
+		move += right;
+	if(m_keys.contains(Qt::Key_A) || m_keys.contains(Qt::Key_Left))
+		move -= right;
+	if(m_keys.contains(Qt::Key_E) || m_keys.contains(Qt::Key_PageUp))
+		move += QVector3D(0, 0, 1);
+	if(m_keys.contains(Qt::Key_Q) || m_keys.contains(Qt::Key_PageDown))
+		move -= QVector3D(0, 0, 1);
+	if(move.lengthSquared() < 1e-6f)
+		return;
+	const float speed = m_flySpeed * (m_keys.contains(Qt::Key_Shift) ? 4.f : 1.f);
+	m_eye += move.normalized() * speed * dt;
+	update();
+	emit ViewChanged();
+}
+
+void DesignPreview::keyPressEvent(QKeyEvent* event)
+{
+	if(!m_fly)
+	{
+		QOpenGLWidget::keyPressEvent(event);
+		return;
+	}
+	if(event->key() == Qt::Key_Escape)
+	{
+		SetFreeFly(false);
+		return;
+	}
+	if(!event->isAutoRepeat())
+		m_keys.insert(event->key());
+}
+
+void DesignPreview::keyReleaseEvent(QKeyEvent* event)
+{
+	if(!m_fly)
+	{
+		QOpenGLWidget::keyReleaseEvent(event);
+		return;
+	}
+	if(!event->isAutoRepeat())
+		m_keys.remove(event->key());
+}
+
+void DesignPreview::focusOutEvent(QFocusEvent* event)
+{
+	m_keys.clear();		// Or a key let go elsewhere keeps the flight going.
+	QOpenGLWidget::focusOutEvent(event);
 }
 
 void DesignPreview::paintGL()
@@ -789,6 +905,15 @@ void DesignPreview::paintGL()
 	m_vbo.release();
 	m_vao.release();
 	m_program->release();
+
+	if(m_fly)
+	{
+		QPainter painter(this);
+		painter.setPen(QColor(230, 230, 230));
+		painter.drawText(rect().adjusted(10, 8, -10, -8), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+				tr("Free flight: W A S D move, Q E down and up, Shift faster, drag to look round, "
+				   "wheel: speed (%1 ft/s), Esc leaves.").arg(m_flySpeed, 0, 'f', 0));
+	}
 }
 
 void DesignPreview::mousePressEvent(QMouseEvent* event)
@@ -797,7 +922,86 @@ void DesignPreview::mousePressEvent(QMouseEvent* event)
 	{
 		m_dragging = true;
 		m_lastMouse = event->pos();
+		m_pressMouse = event->pos();
 	}
+}
+
+void DesignPreview::mouseReleaseEvent(QMouseEvent* event)
+{
+	if(event->button() != Qt::LeftButton)
+		return;
+	m_dragging = false;
+	if(!m_picking || (event->pos() - m_pressMouse).manhattanLength() > 4)
+		return;
+	QVector3D point, normal, toward;
+	if(PickHull(event->pos(), point, normal, toward))
+		emit HullPicked(point, normal, toward);
+}
+
+void DesignPreview::SetPicking(bool on)
+{
+	m_picking = on;
+	setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+}
+
+bool DesignPreview::PickHull(const QPoint& pixel, QVector3D& point, QVector3D& normal, QVector3D& toward) const
+{
+	if(!m_design || width() <= 0 || height() <= 0)
+		return false;
+	QMatrix4x4 projection, view;
+	BuildCameraMatrix(projection, view);
+	bool invertible = false;
+	const QMatrix4x4 inverse = (projection * view).inverted(&invertible);
+	if(!invertible)
+		return false;
+	const float nx = 2.f * float(pixel.x()) / float(width()) - 1.f;
+	const float ny = 1.f - 2.f * float(pixel.y()) / float(height());
+	const QVector3D nearP = inverse.map(QVector3D(nx, ny, -1.f));
+	const QVector3D farP = inverse.map(QVector3D(nx, ny, 1.f));
+	const QVector3D dir = (farP - nearP).normalized();
+
+	double best = 1e30;
+	for(AuScParts::const_iterator it = m_design->Parts().constBegin(); it != m_design->Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || !part->IsHullMesh() || part->IsOmitted())
+			continue;
+		AuScFaceList faces;
+		part->Faces(faces);
+		AuScTriList tris;
+		faces.Triangles(tris);
+		for(const AuScTri& t : tris)
+		{
+			// Moller-Trumbore, both sides.
+			const QVector3D v0(t.V0().x, t.V0().y, t.V0().z), v1(t.V1().x, t.V1().y, t.V1().z), v2(t.V2().x, t.V2().y, t.V2().z);
+			const QVector3D e1 = v1 - v0, e2 = v2 - v0;
+			const QVector3D p = QVector3D::crossProduct(dir, e2);
+			const float det = QVector3D::dotProduct(e1, p);
+			if(qAbs(det) < 1e-9f)
+				continue;
+			const float inv = 1.f / det;
+			const QVector3D sv = nearP - v0;
+			const float u = QVector3D::dotProduct(sv, p) * inv;
+			if(u < 0 || u > 1)
+				continue;
+			const QVector3D q = QVector3D::crossProduct(sv, e1);
+			const float v = QVector3D::dotProduct(dir, q) * inv;
+			if(v < 0 || u + v > 1)
+				continue;
+			const float dist = QVector3D::dotProduct(e2, q) * inv;
+			if(dist <= 0 || dist >= best)
+				continue;
+			best = dist;
+			point = nearP + dir * dist;
+			normal = QVector3D::crossProduct(e1, e2).normalized();
+			if(QVector3D::dotProduct(normal, dir) > 0)
+				normal = -normal;
+		}
+	}
+	if(best >= 1e30)
+		return false;
+	toward = -dir;
+	return true;
 }
 
 void DesignPreview::mouseMoveEvent(QMouseEvent* event)
@@ -806,8 +1010,9 @@ void DesignPreview::mouseMoveEvent(QMouseEvent* event)
 		return;
 	const QPoint delta = event->pos() - m_lastMouse;
 	m_lastMouse = event->pos();
-	m_yaw += delta.x() * .5f;
-	m_pitch = qBound(-89.f, m_pitch + delta.y() * .5f, 89.f);
+	const float turn = m_fly ? .3f : .5f;
+	m_yaw += delta.x() * turn;
+	m_pitch = qBound(-89.f, m_pitch + delta.y() * turn, 89.f);
 	update();
 	emit ViewChanged();
 }
@@ -815,8 +1020,24 @@ void DesignPreview::mouseMoveEvent(QMouseEvent* event)
 void DesignPreview::wheelEvent(QWheelEvent* event)
 {
 	const int steps = event->angleDelta().y() / 120;
+	if(m_fly)
+	{
+		m_flySpeed = qBound(1.f, float(m_flySpeed * qPow(1.25, steps)), 1000.f);
+		update();
+		return;
+	}
 	m_distance *= qPow(0.8, steps);
 	m_distance = qBound(1.f, m_distance, 100000.f);
+	update();
+	emit ViewChanged();
+}
+
+void DesignPreview::SetViewAngles(float yaw, float pitch, float zoom)
+{
+	m_yaw = yaw;
+	m_pitch = qBound(-89.f, pitch, 89.f);
+	if(zoom > 0)
+		m_distance /= zoom;
 	update();
 	emit ViewChanged();
 }

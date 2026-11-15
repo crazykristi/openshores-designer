@@ -316,15 +316,19 @@ AuDesign* LoadDesign(const QString& fileName, DesignLoadReport* report)
 	return design;
 }
 
-bool SaveDesign(const AuDesign& design, const QString& fileName, const QList<OpaquePart>& opaque)
+bool SaveDesign(const AuDesign& design, const QString& fileName, const QList<OpaquePart>& opaque,
+		const QList<VehicleSpotSave>& vehicles)
 {
 	QByteArray ba = design.Pack();
 
-	if(!opaque.isEmpty())
+	if(!opaque.isEmpty() || !vehicles.isEmpty())
 	{
 		QHash<quint16, const OpaquePart*> byId;
 		for(const OpaquePart& op : opaque)
 			byId.insert(op.id, &op);
+		QHash<quint16, const VehicleSpotSave*> vehicleById;
+		for(const VehicleSpotSave& v : vehicles)
+			vehicleById.insert(v.id, &v);
 
 		PartList list = WalkParts(ba);
 		if(!list.complete)
@@ -334,6 +338,18 @@ bool SaveDesign(const AuDesign& design, const QString& fileName, const QList<Opa
 		{
 			if(r.known && r.type == AuScPart::Part_Sketch && r.group == OpaquePlaceholderGroup() && byId.contains(r.id))
 				records.append(byId.value(r.id)->record);
+			else if(r.known && r.type == AuScPart::Part_GroundVehicleParkingSpot && vehicleById.contains(r.id))
+			{
+				// id (2 bytes), type (1 byte), the icon data, then the
+				// vehicle spot's own commodity and rotation.
+				QByteArray rec = ba.mid(r.start, r.end - r.start);
+				rec[2] = (char)kPartTypeVehicleSpot;
+				QDataStream tail(&rec, QIODevice::Append);
+				tail.setVersion(QDataStream::Qt_4_1);
+				const VehicleSpotSave* v = vehicleById.value(r.id);
+				tail << v->commodity << v->rotation;
+				records.append(rec);
+			}
 			else
 				records.append(ba.mid(r.start, r.end - r.start));
 		}

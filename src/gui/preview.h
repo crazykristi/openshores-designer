@@ -6,7 +6,10 @@
 #define SHIPGEN_PREVIEW_H
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QHash>
+#include <QSet>
+#include <QVector3D>
 #include <QOpenGLBuffer>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
@@ -65,8 +68,27 @@ public:
 	// Frames the view on the whole model.
 	void	FrameAll();
 
+	// Turns the camera: degrees round and up, and how much closer than the
+	// framed view (2 is twice as close). For screenshots from the command line.
+	void	SetViewAngles(float yaw, float pitch, float zoom = 1.f);
+
+	// While on, a click (without dragging) on the hull sends HullPicked
+	// instead of only turning the view. The cursor becomes a cross.
+	void	SetPicking(bool on);
+	bool	Picking() const { return m_picking; }
+	// Free flight through the model: W A S D (or the arrow keys) move, Q and
+	// E go down and up, Shift goes faster, a drag looks round, the wheel sets
+	// the speed and Esc leaves. It starts from where the orbiting view
+	// stands, and leaving orbits round the point straight ahead.
+	void	SetFreeFly(bool on);
+	bool	FreeFly() const { return m_fly; }
+
 signals:
 	void	ViewChanged();
+	void	FreeFlyChanged(bool on);
+	// Where a click met the hull, the hull's face there (turned towards the
+	// viewer), and the way back to the viewer. In the blueprint's feet.
+	void	HullPicked(const QVector3D& point, const QVector3D& normal, const QVector3D& towardViewer);
 
 protected:
 	void	initializeGL() override;
@@ -74,7 +96,11 @@ protected:
 	void	paintGL() override;
 	void	mousePressEvent(QMouseEvent* event) override;
 	void	mouseMoveEvent(QMouseEvent* event) override;
+	void	mouseReleaseEvent(QMouseEvent* event) override;
 	void	wheelEvent(QWheelEvent* event) override;
+	void	keyPressEvent(QKeyEvent* event) override;
+	void	keyReleaseEvent(QKeyEvent* event) override;
+	void	focusOutEvent(QFocusEvent* event) override;
 
 private:
 	struct Vertex
@@ -146,6 +172,21 @@ private:
 	float	m_centerZ = 0.f;
 	bool	m_dragging = false;
 	QPoint	m_lastMouse;
+	QPoint	m_pressMouse;
+	bool	m_picking = false;
+
+	// Free flight.
+	bool			m_fly = false;
+	QVector3D		m_eye;
+	float			m_flySpeed = 20.f;		// Feet a second.
+	QSet<int>		m_keys;				// Held down.
+	class QTimer*	m_flyTimer = 0;
+	QElapsedTimer	m_flyClock;
+	QVector3D	OrbitOffset() const;		// From the centre to the eye, of length 1.
+	void		FlyStep();
+
+	// The hull point under a pixel, if any.
+	bool	PickHull(const QPoint& pixel, QVector3D& point, QVector3D& normal, QVector3D& toward) const;
 };
 
 #endif // SHIPGEN_PREVIEW_H

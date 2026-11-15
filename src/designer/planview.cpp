@@ -7,6 +7,7 @@
 
 #include <QHash>
 #include <QKeyEvent>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -153,7 +154,7 @@ QList<int> PlanView::ButtonRow(int door) const
 }
 
 // A button goes on a wall of one of the door's rooms, its middle within 12 ft
-// of the door, where the mouse is along the wall (in steps of a quarter of a
+// of the door (of its nearest part, for a row of doors), where the mouse is along the wall (in steps of a quarter of a
 // foot). A hull door's button can also go outside: on the hull beside the
 // door, clicked beyond the door's wall.
 bool PlanView::ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA, QPointF& wallB, QString* why) const
@@ -212,7 +213,7 @@ bool PlanView::ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA
 			along = qMin(along, lo - .8);
 		else
 			along = qMax(along, hi + .8);
-		if(fabs(along) > 12)
+		if(along < lo - 12 || along > hi + 12)
 		{
 			if(why)
 				*why = "A door's button has to be within 12 ft of the door (the game shows its switch within 3 m).";
@@ -245,7 +246,10 @@ bool PlanView::ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA
 	const double m = qMin(margin, len / 2);
 	const double at = qBound(m, qRound(QPointF::dotProduct(spot - a, along) / step) * step, len - m);
 	spot = a + along * at;
-	const QPointF toDoor = spot - middle;
+	// Measured from the nearest part of the door: a long door's ends are far
+	// from its middle, and every button beside it was refused.
+	const double u = qBound(lo, QPointF::dotProduct(spot - middle, dir), hi);
+	const QPointF toDoor = spot - (middle + dir * u);
 	if(QPointF::dotProduct(toDoor, toDoor) > 12.0 * 12.0)
 	{
 		if(why)
@@ -375,6 +379,54 @@ void PlanView::paintEvent(QPaintEvent*)
 			}
 	}
 
+	// Turbolifts run on one vertical axis: on the decks of a shaft, and the
+	// decks just above and below it, the shaft's cells (those of its lowest
+	// deck) are hatched in the room's colour where this deck lacks them, and
+	// lift cells off the shaft are hatched red.
+	if(m_mode != HullMode && m_mode != PaintMode)
+	{
+		for(int r = 0; r < m_plan->rooms.size(); ++r)
+		{
+			if(!IsLiftRoomType(m_plan->rooms.at(r).type))
+				continue;
+			const int base = m_plan->RoomLowestDeck(r);
+			if(base < 0 || base == m_deck)
+				continue;
+			auto onDeck = [&](int d) {
+				for(int cy = 0; cy < D; ++cy)
+					for(int cx = 0; cx < W; ++cx)
+						for(int k = 0; k < 4; ++k)
+							if(m_plan->Room(TriRef(d, cx, cy, k)) == r)
+								return true;
+				return false;
+			};
+			int top = base;
+			for(int d = m_plan->Decks() - 1; d > base && top == base; --d)
+				if(onDeck(d))
+					top = d;
+			if(m_deck < base - 1 || m_deck > top + 1)
+				continue;
+			QColor shaft = m_plan->rooms.at(r).colour;
+			shaft.setAlpha(200);
+			for(int cy = 0; cy < D; ++cy)
+				for(int cx = 0; cx < W; ++cx)
+					for(int k = 0; k < 4; ++k)
+					{
+						const bool inShaft = m_plan->Room(TriRef(base, cx, cy, k)) == r;
+						const bool here = m_plan->Room(TriRef(m_deck, cx, cy, k)) == r;
+						if(inShaft == here)
+							continue;
+						QPointF c[3];
+						m_plan->TriCorners(TriRef(m_deck, cx, cy, k), c);
+						QPolygonF poly;
+						poly << ToScreen(c[0]) << ToScreen(c[1]) << ToScreen(c[2]);
+						p.setPen(Qt::NoPen);
+						p.setBrush(QBrush(inShaft ? shaft : QColor(255, 80, 80), inShaft ? Qt::Dense6Pattern : Qt::DiagCrossPattern));
+						p.drawPolygon(poly);
+					}
+		}
+	}
+
 	// The centre line, which the mirror works about.
 	if(m_mirror)
 	{
@@ -493,7 +545,10 @@ void PlanView::paintEvent(QPaintEvent*)
 			p.setPen(QPen(QColor(255, 210, 60), qMax(1.5, cellPixels / 12), Qt::DashDotLine));
 			p.setBrush(Qt::NoBrush);
 			p.drawRect(r);
-			p.drawText(r, Qt::AlignCenter, spot.spacecraft ? "spacecraft landing" : spot.space ? "space vehicle" : "vehicle");
+			const PlanVehicle* vehicle = spot.vehicle.isEmpty() ? 0 : FindPlanVehicle(spot.vehicle);
+			p.drawText(r, Qt::AlignCenter, !spot.vehicle.isEmpty() ? (vehicle ? QString(vehicle->name) : spot.vehicle)
+					: spot.spacecraft ? "spacecraft landing" : spot.rocket ? "rocket" : spot.water ? "boat"
+					: spot.space ? "space vehicle" : "vehicle");
 		}
 		// Stairs: the steps on the deck they start from, the opening on the
 		// deck above.
@@ -633,13 +688,17 @@ void PlanView::paintEvent(QPaintEvent*)
 		}
 
 		// The outline of the parking spot the mouse would place.
-		if((m_mode == GroundParkingMode || m_mode == SpaceParkingMode || m_mode == SpacecraftParkingMode) && m_hovering)
+		if(IsParkingMode() && m_hovering)
 		{
 			PlanParking spot;
 			spot.deck = m_deck;
 			NearestCorner(m_hoverWorld, spot.cx, spot.cy);
 			spot.space = m_mode == SpaceParkingMode;
 			spot.spacecraft = m_mode == SpacecraftParkingMode;
+			spot.rocket = m_mode == RocketParkingMode;
+			spot.water = m_mode == WaterParkingMode;
+			if(m_mode == VehicleParkingMode)
+				spot.vehicle = m_parkingVehicle;
 			spot.across = m_parkingAcross;
 			const bool taken = SpacecraftSpotUnder(m_hoverWorld) >= 0 || (!spot.spacecraft && m_plan->ParkingAt(m_deck, spot.cx, spot.cy) >= 0);
 			const bool fits = m_plan->ParkingFits(spot);
@@ -654,10 +713,12 @@ void PlanView::paintEvent(QPaintEvent*)
 			p.setBrush(Qt::NoBrush);
 			p.drawText(QRectF(r.center().x() - 300, r.bottom() + 2, 600, 40), Qt::AlignHCenter | Qt::AlignTop,
 					taken ? "click takes this spot away" : fits ? "click to place, R turns it"
+					: m_plan->IsBuilding() ? "not on one room's floor nor all outside, R turns it"
 					: "does not fit on one room's floor, R turns it");
 		}
 
 		// Stations, berths, pads and paths placed by hand (Crew step).
+		PaintGround(p, cellPixels);
 		PaintCrew(p, cellPixels);
 
 		// Room names in the middle of each room.
@@ -989,7 +1050,57 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 		update();
 		return;
 	}
-	if(m_mode == GroundParkingMode || m_mode == SpaceParkingMode || m_mode == SpacecraftParkingMode)
+	if(m_mode == AreaMode)
+	{
+		const QPointF w = ToWorld(event->pos());
+		const int under = AreaAt(w);
+		if(erase || (under >= 0 && m_plan->areas.at(under).kind == m_areaKind))
+		{
+			if(under >= 0)
+			{
+				emit AboutToChange();
+				m_plan->areas.removeAt(under);
+				emit PlanChanged(false);
+				update();
+			}
+			return;
+		}
+		NearestCorner(w, m_areaX0, m_areaY0);
+		m_areaX1 = m_areaX0;
+		m_areaY1 = m_areaY0;
+		m_areaDrag = true;
+		update();
+		return;
+	}
+	if(m_mode == PropMode)
+	{
+		const QPointF w = ToWorld(event->pos());
+		const int under = PropAt(w);
+		emit AboutToChange();
+		if(under >= 0)
+			m_plan->props.removeAt(under);
+		else if(!erase)
+		{
+			const QPointF c = ToCells(w);
+			if(c.x() < 0 || c.y() < 0 || c.x() > m_plan->Width() || c.y() > m_plan->Depth())
+				return;
+			PlanProp pr;
+			pr.deck = m_deck;
+			pr.x = qRound(c.x() * 8) / 8.0;
+			pr.y = qRound(c.y() * 8) / 8.0;
+			pr.kind = m_propKind;
+			m_plan->props << pr;
+			if(m_mirror && qAbs(pr.y - m_plan->Depth() / 2.0) > .3)
+			{
+				pr.y = m_plan->Depth() - pr.y;
+				m_plan->props << pr;
+			}
+		}
+		emit PlanChanged(false);
+		update();
+		return;
+	}
+	if(IsParkingMode())
 	{
 		int ix, iy;
 		NearestCorner(ToWorld(event->pos()), ix, iy);
@@ -1019,6 +1130,10 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			spot.cx = cx;
 			spot.cy = cy;
 			spot.space = (m_mode == SpaceParkingMode);
+			spot.rocket = (m_mode == RocketParkingMode);
+			spot.water = (m_mode == WaterParkingMode);
+			if(m_mode == VehicleParkingMode)
+				spot.vehicle = m_parkingVehicle;
 			spot.spacecraft = spacecraft;
 			spot.across = m_parkingAcross;
 			if(!m_plan->ParkingFits(spot))
@@ -1032,8 +1147,9 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 		else if(spacecraft)
 			;
 		else if(!toggle(m_deck, ix, iy))
-			Notice(t, QString("A %1 parking spot (%2) has to lie on the floor of one room, centred on the grid corner "
+			Notice(t, QString("A %1 parking spot (%2) has to lie on the floor of one room%3, centred on the grid corner "
 					"nearest the mouse. Press R to turn it, make the room bigger, or click nearer its middle.")
+					.arg(m_plan->IsBuilding() ? ", or all outside the hull (on the ground, or on a roof)" : "")
 					.arg(m_mode == SpaceParkingMode ? "space vehicle" : "ground vehicle")
 					.arg(m_mode == SpaceParkingMode ? "12 by 17 m, about 40 by 56 ft" : "6 by 12 m, about 20 by 40 ft"));
 		else if(m_mirror)
@@ -1427,10 +1543,12 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 			update();
 		return;		// The hint about the buttons stays in the status bar.
 	}
-	if(m_mode == GroundParkingMode || m_mode == SpaceParkingMode || m_mode == SpacecraftParkingMode || CrewMode())
+	if(IsParkingMode() || m_mode == AreaMode || m_mode == PropMode || CrewMode())
 	{
 		m_hovering = true;
 		m_hoverWorld = ToWorld(event->pos());
+		if(m_areaDrag)
+			NearestCorner(m_hoverWorld, m_areaX1, m_areaY1);
 		if(m_pathDrag)
 			m_pathEnd = m_hoverWorld;
 		setFocus();		// For R.
@@ -1465,6 +1583,25 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 void PlanView::mouseReleaseEvent(QMouseEvent*)
 {
 	m_windowDrag = false;
+	if(m_areaDrag)
+	{
+		m_areaDrag = false;
+		PlanArea a;
+		a.deck = m_deck;
+		a.cx0 = qMin(m_areaX0, m_areaX1);
+		a.cx1 = qMax(m_areaX0, m_areaX1);
+		a.cy0 = qMin(m_areaY0, m_areaY1);
+		a.cy1 = qMax(m_areaY0, m_areaY1);
+		a.kind = m_areaKind;
+		if(a.cx1 > a.cx0 && a.cy1 > a.cy0)
+		{
+			emit AboutToChange();
+			m_plan->areas << a;
+			emit PlanChanged(false);
+		}
+		update();
+		return;
+	}
 	if(m_pathDrag)
 	{
 		m_pathDrag = false;
@@ -1631,7 +1768,7 @@ void PlanView::keyPressEvent(QKeyEvent* event)
 		update();
 		return;
 	}
-	if(event->key() == Qt::Key_R && (m_mode == GroundParkingMode || m_mode == SpaceParkingMode || m_mode == SpacecraftParkingMode))
+	if(event->key() == Qt::Key_R && IsParkingMode())
 	{
 		m_parkingAcross = !m_parkingAcross;
 		update();
@@ -1861,7 +1998,7 @@ void PlanView::CrewClick(const QPointF& world, const TriRef& t, bool erase)
 			st.yaw = yaw;
 			st.type = m_stationType;
 			st.seat = m_stationSeat;
-			st.module = m_stationType == "firecontrol" ? m_stationModule : 0;
+			st.module = m_stationType == "firecontrol" || m_stationType == "engineer" ? m_stationModule : 0;
 			m_plan->stations << st;
 		}
 		else if(kind == 1)
@@ -1899,7 +2036,8 @@ void PlanView::CrewClick(const QPointF& world, const TriRef& t, bool erase)
 void PlanView::PaintCrew(QPainter& p, double cellPixels)
 {
 	const double pen = qMax(1.5, cellPixels / 12);
-	auto drawOutline = [&](const QPolygonF& outline, double yaw, const QColor& colour, bool skipped, const QString& label) {
+	auto drawOutline = [&](const QPolygonF& outline, double yaw, const QColor& colour, bool skipped, const QString& label,
+			bool station = false) {
 		QColor c = skipped ? QColor(120, 120, 120) : colour;
 		QPolygonF screen;
 		for(const QPointF& w : outline)
@@ -1910,22 +2048,54 @@ void PlanView::PaintCrew(QPainter& p, double cellPixels)
 		p.setBrush(fill);
 		p.drawPolygon(screen);
 		p.setBrush(Qt::NoBrush);
-		// An arrow the way it faces.
 		const QPointF centre = (outline.at(0) + outline.at(2)) / 2.0;
 		const double a = yaw * M_PI / 180.0;
-		const QPointF tip = centre + QPointF(cos(a), sin(a)) * 2.5;
-		p.drawLine(ToScreen(centre), ToScreen(tip));
+		const QPointF f(cos(a), sin(a));
+		if(station)
+		{
+			// The desk or console in front, solid, with its screen as a thick
+			// bright edge; the seat behind as a circle; so which way it faces
+			// shows at a glance (the user placed one the wrong way round).
+			const QPointF front0 = outline.at(1), front1 = outline.at(2);
+			const QPointF back = f * 1.1;
+			QPolygonF deskShape;
+			deskShape << ToScreen(front0 - back) << ToScreen(front0) << ToScreen(front1) << ToScreen(front1 - back);
+			QColor solid = c;
+			solid.setAlpha(150);
+			p.setPen(Qt::NoPen);
+			p.setBrush(solid);
+			p.drawPolygon(deskShape);
+			p.setPen(QPen(c.lighter(150), pen * 2.2, Qt::SolidLine, Qt::FlatCap));
+			p.drawLine(ToScreen(front0), ToScreen(front1));
+			const QPointF seat = (outline.at(0) + outline.at(3)) / 2.0 + f * 1.0;
+			const double r = (ToScreen(seat + QPointF(.75, 0)) - ToScreen(seat)).manhattanLength();
+			p.setPen(QPen(c, pen));
+			p.setBrush(Qt::NoBrush);
+			p.drawEllipse(ToScreen(seat), r, r);
+		}
+		// An arrow the way it faces, with a head.
+		const QPointF from = station ? (outline.at(0) + outline.at(3)) / 2.0 + f * 1.0 : centre;
+		const QPointF tip = from + f * (station ? 2.6 : 2.5);
+		p.setPen(QPen(c, pen, Qt::SolidLine, Qt::RoundCap));
+		p.drawLine(ToScreen(from), ToScreen(tip));
+		const QPointF side(-f.y(), f.x());
+		QPolygonF head;
+		head << ToScreen(tip + f * .5) << ToScreen(tip - f * .3 + side * .55) << ToScreen(tip - f * .3 - side * .55);
+		p.setBrush(c);
+		p.drawPolygon(head);
+		p.setBrush(Qt::NoBrush);
 		if(!label.isEmpty() && cellPixels > 18)
 		{
 			p.setPen(c.lighter(140));
-			const QPointF s = ToScreen(centre);
-			p.drawText(QRectF(s.x() - 60, s.y() + 2, 120, 16), Qt::AlignHCenter | Qt::AlignTop, label);
+			// Under the outline, clear of the desk and its arrow.
+			const QRectF box = screen.boundingRect();
+			p.drawText(QRectF(box.center().x() - 80, box.bottom() + 2, 160, 18), Qt::AlignHCenter | Qt::AlignTop | Qt::TextDontClip, label);
 		}
 	};
 	for(const PlanStation& st : m_plan->stations)
 		if(st.deck == m_deck)
 			drawOutline(ItemOutline(0, m_plan->CellPointToWorld(st.x, st.y), st.yaw, st.seat), st.yaw, QColor(120, 200, 255), st.skip,
-					st.type + (st.seat.isEmpty() ? QString() : " (" + st.seat + ")"));
+					st.type + (st.seat.isEmpty() ? QString() : " (" + st.seat + ")"), true);
 	for(const PlanBerth& b : m_plan->berths)
 		if(b.deck == m_deck)
 			drawOutline(ItemOutline(1, m_plan->CellPointToWorld(b.x, b.y), b.yaw, QString()), b.yaw, QColor(230, 180, 255), b.skip,
@@ -1987,10 +2157,141 @@ void PlanView::PaintCrew(QPainter& p, double cellPixels)
 	const bool fits = OutlineRoom(m_deck, outline) >= 0;
 	const QColor colour = taken ? QColor(255, 160, 60) : fits ? QColor(90, 230, 120) : QColor(255, 90, 90);
 	if(!taken)
-		drawOutline(outline, m_itemYaw, colour, false, QString());
+		drawOutline(outline, m_itemYaw, colour, false, QString(), kind == 0);
+	// Which way it faces, in words: a plan heading turns from fore towards port.
+	QString facing;
+	if(kind != 2)
+	{
+		static const char* names[] = { "fore", "fore-port", "port", "aft-port", "aft", "aft-starboard", "starboard", "fore-starboard" };
+		double yaw = fmod(m_itemYaw, 360.0);
+		if(yaw < 0)
+			yaw += 360.0;
+		facing = QString(kind == 0 ? ", faces %1" : ", points %1").arg(names[int(floor(yaw / 45.0 + .5)) % 8]);
+	}
 	const QPointF s = ToScreen(snapped);
 	p.setPen(colour);
 	p.drawText(QRectF(s.x() - 250, s.y() + cellPixels * .6 + 8, 500, 20), Qt::AlignHCenter | Qt::AlignTop,
-			taken ? "click takes this away" : fits ? (kind == 2 ? "click to place" : "click to place, R turns it")
-			: "does not fit in one room" + QString(kind == 2 ? "" : ", R turns it"));
+			taken ? "click takes this away" : fits ? (kind == 2 ? "click to place" : "click to place" + facing + ", R turns it")
+			: "does not fit in one room" + QString(kind == 2 ? "" : facing + ", R turns it"));
+}
+
+//-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+// Building mode: ground areas and props.
+
+int PlanView::AreaAt(const QPointF& world) const
+{
+	if(!m_plan)
+		return -1;
+	const QPointF c = ToCells(world);
+	for(int i = m_plan->areas.size() - 1; i >= 0; --i)
+	{
+		const PlanArea& a = m_plan->areas.at(i);
+		if(a.deck == m_deck && c.x() >= a.cx0 && c.x() <= a.cx1 && c.y() >= a.cy0 && c.y() <= a.cy1)
+			return i;
+	}
+	return -1;
+}
+
+int PlanView::PropAt(const QPointF& world) const
+{
+	if(!m_plan)
+		return -1;
+	const QPointF c = ToCells(world);
+	int best = -1;
+	double bestD = .6;
+	for(int i = 0; i < m_plan->props.size(); ++i)
+	{
+		const PlanProp& pr = m_plan->props.at(i);
+		if(pr.deck != m_deck)
+			continue;
+		const double d = QLineF(c, QPointF(pr.x, pr.y)).length();
+		if(d < bestD)
+		{
+			bestD = d;
+			best = i;
+		}
+	}
+	return best;
+}
+
+static QColor AreaColour(const QString& kind)
+{
+	if(kind == "field")		return QColor(170, 120, 60);
+	if(kind == "grass")		return QColor(80, 170, 70);
+	if(kind == "buildzone")	return QColor(90, 160, 255);
+	if(kind == "cobbles")	return QColor(160, 150, 140);
+	if(kind == "tarmac")	return QColor(70, 70, 80);
+	return QColor(190, 190, 190);	// Paving.
+}
+
+static QString AreaLabel(const QString& kind)
+{
+	if(kind == "field")		return "field";
+	if(kind == "grass")		return "lawn";
+	if(kind == "buildzone")	return "build zone";
+	if(kind == "cobbles")	return "cobbles";
+	if(kind == "tarmac")	return "tarmac";
+	return "paving";
+}
+
+void PlanView::PaintGround(QPainter& p, double cellPixels)
+{
+	if(!m_plan)
+		return;
+	auto rectOf = [this](int x0, int y0, int x1, int y1) {
+		return QRectF(ToScreen(m_plan->Corner(x0, y0)), ToScreen(m_plan->Corner(x1, y1))).normalized();
+	};
+	for(const PlanArea& a : m_plan->areas)
+	{
+		if(a.deck != m_deck)
+			continue;
+		const QRectF r = rectOf(a.cx0, a.cy0, a.cx1, a.cy1);
+		QColor c = AreaColour(a.kind);
+		p.setPen(QPen(c.darker(130), qMax(1.5, cellPixels / 14), Qt::DashLine));
+		c.setAlpha(60);
+		p.setBrush(c);
+		p.drawRect(r);
+		p.setBrush(Qt::NoBrush);
+		const double feet2 = (a.cx1 - a.cx0) * (a.cy1 - a.cy0) * m_plan->cellFeet * m_plan->cellFeet;
+		QString text = AreaLabel(a.kind);
+		if(a.kind == "field")
+			text += QString(" - %1 m², %2 field(s)").arg(qRound(feet2 * 0.09290304)).arg(int(feet2 * 0.09290304 / 4000));
+		p.drawText(r, Qt::AlignCenter | Qt::TextWordWrap, text);
+	}
+	if(m_areaDrag)
+	{
+		const QRectF r = rectOf(m_areaX0, m_areaY0, m_areaX1, m_areaY1);
+		QColor c = AreaColour(m_areaKind);
+		p.setPen(QPen(c, qMax(1.5, cellPixels / 10)));
+		c.setAlpha(45);
+		p.setBrush(c);
+		p.drawRect(r);
+		p.setBrush(Qt::NoBrush);
+		const double feet2 = r.width() * r.height() / (cellPixels * cellPixels) * m_plan->cellFeet * m_plan->cellFeet;
+		p.drawText(r, Qt::AlignCenter, QString("%1 - %2 m²").arg(AreaLabel(m_areaKind)).arg(qRound(feet2 * 0.09290304)));
+	}
+	for(const PlanProp& pr : m_plan->props)
+	{
+		if(pr.deck != m_deck)
+			continue;
+		const QPointF at = ToScreen(m_plan->CellPointToWorld(pr.x, pr.y));
+		const double rad = qMax(4.0, cellPixels * (pr.kind == "tree" ? .6 : .35));
+		QColor c = pr.kind == "tree" ? QColor(40, 140, 50) : pr.kind == "shrub" ? QColor(90, 170, 80)
+				: pr.kind == "lamp" ? QColor(255, 210, 120) : pr.kind == "guard" ? QColor(200, 70, 70)
+				: pr.kind == "livestock" ? QColor(170, 120, 70) : QColor(80, 140, 230);
+		p.setPen(QPen(c.darker(150), 1.5));
+		p.setBrush(c);
+		p.drawEllipse(at, rad, rad);
+		p.setBrush(Qt::NoBrush);
+		const QString letter = pr.kind == "tree" ? "T" : pr.kind == "shrub" ? "s" : pr.kind == "lamp" ? "L"
+				: pr.kind == "guard" ? "G" : pr.kind == "livestock" ? "A" : "C";
+		p.setPen(Qt::black);
+		p.drawText(QRectF(at.x() - rad, at.y() - rad, 2 * rad, 2 * rad), Qt::AlignCenter, letter);
+	}
+	if(m_mode == PropMode && m_hovering && !m_areaDrag)
+	{
+		const QPointF at = ToScreen(m_hoverWorld);
+		p.setPen(QPen(PropAt(m_hoverWorld) >= 0 ? QColor(255, 160, 60) : QColor(90, 230, 120), 1.5));
+		p.drawEllipse(at, qMax(4.0, cellPixels * .4), qMax(4.0, cellPixels * .4));
+	}
 }

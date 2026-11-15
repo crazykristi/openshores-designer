@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
 	parser.setApplicationDescription("Draw a ship with triangles and turn it into a Shores of Hazeron blueprint.");
 	parser.addHelpOption();
 	parser.addVersionOption();
-	QCommandLineOption openOption(QStringList() << "o" << "open", "The plan to open.", "plan.json");
+	QCommandLineOption openOption(QStringList() << "o" << "open", "The plan to open, or a blueprint (.SoH) to make a plan from.", "plan.json");
 	parser.addOption(openOption);
 	QCommandLineOption stepOption(QStringList() << "step", "The step to show: 1 ship, 2 hull, 3 rooms, 4 crew, 5 paint, 6 build.", "n");
 	parser.addOption(stepOption);
@@ -86,8 +86,15 @@ int main(int argc, char* argv[])
 	}
 
 	DesignerWindow window;
-	if(parser.isSet(openOption) && !window.OpenPlan(parser.value(openOption)))
-		return 1;
+	if(parser.isSet(openOption))
+	{
+		// A blueprint (.SoH) becomes a new plan; a plan is opened.
+		const QString file = parser.value(openOption);
+		const bool scripted = parser.isSet(shotOption) || parser.isSet(exportOption);
+		if(file.endsWith(".soh", Qt::CaseInsensitive) ? !window.ImportModel(file, PlanFromModelOptions(), !scripted)
+				: !window.OpenPlan(file))
+			return 1;
+	}
 	window.show();
 	QTimer::singleShot(0, &window, &DesignerWindow::FrameView);
 	if(parser.isSet(modelOption))

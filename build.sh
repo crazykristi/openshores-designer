@@ -13,7 +13,7 @@
 #   ./build.sh -j8        # build with 8 parallel jobs
 #
 # On Linux this writes to build/. In an MSYS2/MinGW-w64 shell on Windows it
-# writes to build-windows/ and makes .exe files. See docs/WINDOWS.md.
+# writes to build-windows/ and makes .exe files. See the Windows section of README.md.
 # CROSS=x86_64-w64-mingw32 makes the Windows build on Linux with that MinGW
 # cross compiler and its Qt (packaging/build-windows-cross.sh does it in a
 # container).
@@ -114,7 +114,7 @@ if [ "$ON_WINDOWS" = 1 ]; then
 		done
 	fi
 	command -v "$CXX" >/dev/null 2>&1 || die "C++ compiler '$CXX' is not on PATH"
-	[ -n "$QMAKE" ] || die "qmake was not found; open the MSYS2 MINGW64 shell (see docs/WINDOWS.md)"
+	[ -n "$QMAKE" ] || die "qmake was not found; open the MSYS2 MINGW64 shell (see the Windows section of README.md)"
 	command -v "$QMAKE" >/dev/null 2>&1 || die "qmake '$QMAKE' is not on PATH"
 
 	QT_INC="$(unix_path "$("$QMAKE" -query QT_INSTALL_HEADERS)")"

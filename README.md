@@ -6,7 +6,7 @@ checked by the engine's own report and opens in the game.
 
 The main program is the **triangle designer**: draw a ship deck by deck
 with triangles, draw its rooms, doors, windows, ladders and stairs on the
-same triangles, paint it, and build the blueprint (`docs/DESIGNER.md`). The
+same triangles, paint it, and build the blueprint. The
 long-term aim is an offline designer inside the OpenShores client.
 
 | Program | What it is for |
@@ -28,8 +28,7 @@ choosing what gets built, turbolifts, landing spots, door buttons, liveries,
 quarter turns, FBX and glTF models, and fighter mode (experimental). Problems:
 contact the author or open an issue at
 <https://github.com/crazykristi/openshores-designer/issues>) are an AppImage holding the designer, `shipgen-gui` and the
-command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below. **Code, git and making a release:**
-`docs/GIT_AND_RELEASES.md`.
+command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below.
 
 The generator from the command line, for example:
 
@@ -37,14 +36,12 @@ The generator from the command line, for example:
 shipgen generate --model ship.3ds --brief frigate.json --out designs/
 ```
 
-The full documentation is in `docs/`, starting at `docs/README.md`.
-
 ---
 
 ## What the generator does
 
 The rest of this page is mostly about the generator (`shipgen`,
-`shipgen-gui`); the designer has its own page, `docs/DESIGNER.md`.
+`shipgen-gui`); the designer explains itself in its window, step by step.
 
 | Input | What happens |
 |---|---|
@@ -444,14 +441,6 @@ remaining models are put together again.
 
 ---
 
-## What comes next
-
-The work list agreed with the user is `docs/BUILDING_TODO.md` (buildings
-first, power plants at the top, then ships, plus the designer's open
-items). The idea of an MCP server, letting an AI drive these tools, is
-written up in `docs/MCP_AND_OFFLINE_DESIGNER.md`; it is not started and
-waits on the user.
-
 ## Building
 
 The tool needs a C++ compiler and Qt 5 (Core, Gui, Widgets, Network, Sql and
@@ -481,10 +470,8 @@ and Qt 5. The same `build.sh` detects the MSYS2 shell and writes
 `build-windows/bin/*.exe`; a separate deployment script copies the Qt,
 OpenAL and MinGW DLLs into a folder that can be moved to another PC.
 
-See [docs/WINDOWS.md](docs/WINDOWS.md) for the package list, build commands
-and the first things to check. That path has not been run on a Windows
-machine in this workspace, so it is documented rather than claimed as
-tested.
+`build-windows.ps1` runs `build.sh` from PowerShell, and
+`deploy-windows.sh` collects the DLLs.
 
 ### macOS
 
@@ -505,7 +492,7 @@ OpenGL 3.3 context, as on Windows.
 `packaging/build-macos-app.sh` packs that build as
 `build/shipgen-designer-<version>-macos-<arm64|x86_64>.dmg`, with Qt inside the
 app. `.github/workflows/macos.yml` does this on GitHub's Macs, for Apple and
-Intel processors, and adds the dmg to the release (`docs/GIT_AND_RELEASES.md`).
+Intel processors, and adds the dmg to the release.
 The app is signed ad hoc, not by a paid Apple Developer account, so macOS asks
 the first time it is opened (`packaging/macos-readme.txt`).
 
@@ -523,8 +510,7 @@ Releases are an AppImage of the triangle designer that also holds
 ./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage shipgen <command> ...
 ```
 
-The version is in `src/version.h`; the steps of a release are in
-`docs/GIT_AND_RELEASES.md`.
+The version is in `src/version.h`.
 It bundles Qt 5 with its X11 and Wayland plugins, OpenAL, Assimp and the
 other libraries, but not the C library, the OpenGL drivers, X11/xcb, the
 Wayland libraries or the font libraries, which come from the system (the
@@ -537,7 +523,7 @@ runs on systems with a glibc at least as new as the one it was built on,
 so the release is built on Ubuntu 22.04 in a container:
 `packaging/build-appimage-portable.sh` (glibc 2.35 and newer). For
 Windows, `packaging/build-windows-cross.sh` cross-builds a zip of the
-programs on Linux (`docs/WINDOWS.md`). The script
+programs on Linux. The script
 downloads `appimagetool` into `build/tools/` the first time;
 `APPDIR_ONLY=1 ./package-appimage.sh` makes only the folder
 `build/AppDir`, which runs as `build/AppDir/AppRun`.
@@ -609,7 +595,7 @@ the Project panel on the left, one row for each file.
   void is never tied to a door: the engine treats a tied void as one that
   comes and goes with the door, so the room would only exist while the door
   was open. Blueprints generated before 30 October 2026 have exactly that
-  fault; generate them again. See `docs/SOH_FORMAT.md` section 5. The
+  fault; generate them again. The
   building generator adds its entrance door the same way. `shipgen inspect` lists every
   door and the voids associated with it, so an unassociated door is easy to
   spot. On a deep hull the layout stays in the horizontal band with the most
@@ -666,6 +652,8 @@ src/interior.*    rooms, doors, doorway and hull voids, ladders, walk paths
 src/sohfile.*     reading blueprints from newer game builds
 src/triplan.*     the designer's triangle plan
 src/planbuild.*   a triangle plan into a blueprint
+src/decal.*       images laid onto the hull (the game's Decal part)
+src/windowleak.*  covers the hull seen from inside through windows
 src/audit.*       the exact solid and containment tests
 src/mesh.*, src/shape.*, src/names.*   models, shapes, the game's names
 src/main.cpp      the command line interface
@@ -686,6 +674,4 @@ RELEASE_NOTES.md  the notes of the current release
 build-windows.ps1 convenience wrapper that runs build.sh in MSYS2
 deploy-windows.sh collects the Qt/OpenAL/MinGW DLLs for a Windows folder
 test.sh           runs the generator over a matrix of templates and hulls
-HANDOFF.md        the state of the work and what is left to do
-docs/             the documentation (docs/README.md is the index)
 ```

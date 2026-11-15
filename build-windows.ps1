@@ -7,7 +7,7 @@
 #   .\build-windows.ps1 -Deploy
 #
 # MSYS2 must be installed with the MINGW64 toolchain and Qt 5; see
-# docs/WINDOWS.md. The default location is C:\msys64. Pass -Msys2Root if
+# the Windows section of README.md. The default location is C:\msys64. Pass -Msys2Root if
 # yours is elsewhere.
 
 param(

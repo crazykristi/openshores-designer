@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "planbuild.h"
+#include "paint.h"
 #include "decal.h"
 #include "windowleak.h"
 #include "sohfile.h"
@@ -1633,10 +1634,19 @@ void ApplyPaint(AuScFace& face, const TriPlan& plan, int paint)
 	if(paint < 0 || paint >= plan.palette.size())
 		paint = 0;
 	const PlanPaint& p = plan.palette.at(paint);
+	// A textured colour: the texture's slot, with as much of the colour over
+	// it as 'tint' says (the paint's alpha is how much of it the game mixes in).
+	const int tintAlpha = p.slot >= 0 ? qRound(qBound(0.f, p.tint, 1.f) * 255) : 255;
+	if(p.slot >= 0)
+		face.SetTextureIndex(quint8(p.slot));
 	if(p.theme >= 0 && p.theme <= 2)
-		face.SetPaint(AuScFace::COLOR_THEME(AuScFace::THEME_ExteriorPrimary + p.theme), 255);
+		face.SetPaint(AuScFace::COLOR_THEME(AuScFace::THEME_ExteriorPrimary + p.theme), quint8(tintAlpha));
 	else
-		face.SetPaint(p.colour);
+	{
+		QColor c = p.colour;
+		c.setAlpha(tintAlpha);
+		face.SetPaint(c);
+	}
 	if(!p.HasFinish())
 		return;
 	face.SetOpacity(p.opacity);
@@ -1716,7 +1726,16 @@ static bool UnderOrOverStairs(const TriPlan& plan, const TriRef& t)
 	if(below < 0)
 		return false;
 	const PlanStair& stair = plan.stairs.at(below);
-	return !(t.cx == stair.cx && t.cy == stair.cy && t.k == (stair.side + 2) % 4);
+	if(t.k != (stair.side + 2) % 4)
+		return true;
+	for(int lane = 0; lane < qMax(1, stair.width); ++lane)
+	{
+		int x, y;
+		plan.StairCell(stair, 0, x, y, lane);
+		if(t.cx == x && t.cy == y)
+			return false;
+	}
+	return true;
 }
 
 QList<TriRef> RoomWalk(const TriPlan& plan, int room, const TriRef& from, const TriRef& to)
@@ -3016,6 +3035,194 @@ static bool HullSkylight(AuScDesign& design, quint16 roomMeshId, const QString& 
 			design.Parts().AddPart(liningPart);
 	}
 	return ok;
+}
+
+namespace
+{
+// Moller-Trumbore, both sides: how far along 'dir' the ray meets the
+// triangle, or a negative number.
+inline float RayTriangle(const QVector3D& from, const QVector3D& dir, const QVector3D& v0, const QVector3D& v1,
+						 const QVector3D& v2)
+{
+	const QVector3D e1 = v1 - v0, e2 = v2 - v0;
+	const QVector3D p = QVector3D::crossProduct(dir, e2);
+	const float det = QVector3D::dotProduct(e1, p);
+	if(qAbs(det) < 1e-12f)
+		return -1.f;
+	const float inv = 1.f / det;
+	const QVector3D s = from - v0;
+	const float u = QVector3D::dotProduct(s, p) * inv;
+	if(u < -1e-5f || u > 1.f + 1e-5f)
+		return -1.f;
+	const QVector3D q = QVector3D::crossProduct(s, e1);
+	const float v = QVector3D::dotProduct(dir, q) * inv;
+	if(v < -1e-5f || u + v > 1.f + 1e-5f)
+		return -1.f;
+	return QVector3D::dotProduct(e2, q) * inv;
+}
+
+inline QVector3D V3(const AuPoint& p)
+{
+	return QVector3D(float(p.x), float(p.y), float(p.z));
+}
+}
+
+int FirstTriangleHit(const AuScTriList& tris, const QVector3D& from, const QVector3D& dir, float* distance)
+{
+	int best = -1;
+	float bestT = 1e30f;
+	for(int i = 0; i < tris.size(); ++i)
+	{
+		const AuScTri& t = tris.at(i);
+		const float d = RayTriangle(from, dir, V3(t.V0()), V3(t.V1()), V3(t.V2()));
+		if(d > 1e-4f && d < bestT)
+		{
+			bestT = d;
+			best = i;
+		}
+	}
+	if(distance)
+		*distance = bestT;
+	return best;
+}
+
+int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
+{
+	if(plan.strokes.isEmpty() || hull.tris.isEmpty())
+		return 0;
+	const int n = hull.tris.size();
+	hull.paint.resize(n);
+	const QVector<int> own = hull.paint;		// What rubbing out goes back to.
+	QVector<QVector3D> v(n * 3);
+	for(int i = 0; i < n; ++i)
+	{
+		const AuScTri& t = hull.tris.at(i);
+		v[i * 3] = V3(t.V0());
+		v[i * 3 + 1] = V3(t.V1());
+		v[i * 3 + 2] = V3(t.V2());
+	}
+	QVector<bool> touched(n, false);
+	QVector<int> near;
+	for(const PlanStroke& stroke : plan.strokes)
+	{
+		if(stroke.paint >= plan.palette.size())
+			continue;
+		const float radius = float(qMax(0.05, stroke.size / 2));
+		// The footprint is sampled about every twelfth of the brush (not
+		// finer than a quarter foot): each sample paints one triangle.
+		const float step = qMax(0.25f, radius * 2.f / 12.f);
+		const int half = qMin(24, int(std::ceil(radius / step)));
+		for(const PlanStamp& st : stroke.stamps)
+		{
+			QVector3D d = st.at - st.eye;
+			const float reach = d.length();
+			if(reach < 1e-3f)
+				continue;
+			d /= reach;
+			QVector3D up = st.up - d * QVector3D::dotProduct(st.up, d);
+			if(up.lengthSquared() < 1e-8f)
+				up = qAbs(d.z()) < .9f ? QVector3D(0, 0, 1) - d * d.z() : QVector3D(1, 0, 0) - d * d.x();
+			up.normalize();
+			const QVector3D right = QVector3D::crossProduct(d, up);
+			// Only the triangles whose corners, seen from the eye, come near
+			// the footprint (or that reach behind the eye).
+			near.clear();
+			const float margin = radius + step;
+			for(int i = 0; i < n; ++i)
+			{
+				float minA = 1e30f, maxA = -1e30f, minB = 1e30f, maxB = -1e30f;
+				bool behind = false, inFront = false;
+				for(int c = 0; c < 3; ++c)
+				{
+					const QVector3D t = v.at(i * 3 + c) - st.eye;
+					const float depth = QVector3D::dotProduct(t, d);
+					if(depth <= 1e-3f)
+					{
+						behind = true;
+						continue;
+					}
+					inFront = true;
+					const float a = QVector3D::dotProduct(t, right) * reach / depth;
+					const float b = QVector3D::dotProduct(t, up) * reach / depth;
+					minA = qMin(minA, a);
+					maxA = qMax(maxA, a);
+					minB = qMin(minB, b);
+					maxB = qMax(maxB, b);
+				}
+				if(!inFront)
+					continue;
+				if(behind || (maxA >= -margin && minA <= margin && maxB >= -margin && minB <= margin))
+					near << i;
+			}
+			if(near.isEmpty())
+				continue;
+			auto paintIt = [&](int i) {
+				hull.paint[i] = stroke.paint < 0 ? own.at(i) : stroke.paint;
+				touched[i] = true;
+			};
+			// Every triangle whose middle is inside the footprint and is the
+			// first thing seen there: so a big brush misses none between its
+			// rays.
+			for(int i : near)
+			{
+				const QVector3D mid = (v.at(i * 3) + v.at(i * 3 + 1) + v.at(i * 3 + 2)) / 3.f;
+				const QVector3D t = mid - st.eye;
+				const float depth = QVector3D::dotProduct(t, d);
+				if(depth <= 1e-3f)
+					continue;
+				const float a = QVector3D::dotProduct(t, right) * reach / depth;
+				const float b = QVector3D::dotProduct(t, up) * reach / depth;
+				if(stroke.square ? (qAbs(a) > radius || qAbs(b) > radius) : (a * a + b * b > radius * radius))
+					continue;
+				float own = RayTriangle(st.eye, t, v.at(i * 3), v.at(i * 3 + 1), v.at(i * 3 + 2));
+				if(own <= 0)
+					own = 1.f;
+				bool hidden = false;
+				for(int j : near)
+				{
+					if(j == i)
+						continue;
+					const float h = RayTriangle(st.eye, t, v.at(j * 3), v.at(j * 3 + 1), v.at(j * 3 + 2));
+					if(h > 1e-4f && h < own - 1e-3f)
+					{
+						hidden = true;
+						break;
+					}
+				}
+				if(!hidden)
+					paintIt(i);
+			}
+			for(int ib = -half; ib <= half; ++ib)
+				for(int ia = -half; ia <= half; ++ia)
+				{
+					float a = ia * step, b = ib * step;
+					if(qAbs(a) > radius || qAbs(b) > radius)
+					{
+						// The edge of the brush itself, so a small brush still
+						// reaches its rim.
+						a = qBound(-radius, a, radius);
+						b = qBound(-radius, b, radius);
+					}
+					if(!stroke.square && a * a + b * b > radius * radius * 1.0001f)
+						continue;
+					const QVector3D dir = (st.at + right * a + up * b) - st.eye;
+					int hit = -1;
+					float best = 1e30f;
+					for(int i : near)
+					{
+						const float t = RayTriangle(st.eye, dir, v.at(i * 3), v.at(i * 3 + 1), v.at(i * 3 + 2));
+						if(t > 1e-4f && t < best)
+						{
+							best = t;
+							hit = i;
+						}
+					}
+					if(hit >= 0)
+						paintIt(hit);
+				}
+		}
+	}
+	return int(std::count(touched.begin(), touched.end(), true));
 }
 
 AuScDesign* BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull)
@@ -5310,6 +5517,182 @@ static void GrowSite(AuBdDesign& design, const AuPoint& mn, const AuPoint& mx)
 // a building blueprint, and furnish it there.
 // Decals, last, so that they lie on the finished hull (a ship's or a
 // building's: the aim was picked on the finished blueprint).
+// Textured colours (PlanPaint::texLib, texFile): their images go into the
+// slots TriPlan::ForBuild gave them, and every hull face in such a slot (set
+// by ApplyPaint, kept through the cuts) gets texture coordinates the way the
+// colour is wrapped. Last, on the finished hull, so the cuts made after the
+// paint cannot spoil the wrapping.
+static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, PlanBuildReport& report)
+{
+	QMap<int, const PlanPaint*> bySlot;
+	int noRoom = 0;
+	for(const PlanPaint& p : plan.palette)
+		if(p.HasTexture())
+		{
+			if(p.slot < 0)
+				++noRoom;
+			else if(!bySlot.contains(p.slot))
+				bySlot.insert(p.slot, &p);
+		}
+	if(noRoom)
+		report.warnings << QString("%1 textured colour(s) found no room in the ship's palette of textures; they are "
+				"plain paint.").arg(noRoom);
+	if(bySlot.isEmpty())
+		return;
+
+	AuDesignTex palette[SCTEXI_Count];
+	design.TexturePalette(palette);
+	for(auto it = bySlot.constBegin(); it != bySlot.constEnd(); ++it)
+	{
+		const PlanPaint& p = *it.value();
+		if(p.texLib >= 0)
+		{
+			palette[it.key()].SetTexLibId(quint16(p.texLib));
+			continue;
+		}
+		QImage image(p.texFile);		// Loaded here so that the build can say it was made smaller.
+		QString error;
+		if(image.isNull() && !LoadPaintImage(p.texFile, image, error))
+		{
+			report.warnings << QString("The texture of the colour '%1' could not be read (%2); it shows the game's "
+					"Wall Metal instead.").arg(p.name, error);
+			palette[it.key()].SetTexLibId(96);
+			continue;
+		}
+		const int most = AuDesignTex::MaxImageDimension();
+		if(image.width() > most || image.height() > most)
+		{
+			image = image.scaled(most, most, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+			report.notes << QString("The texture of the colour '%1' was made smaller, to %2 by %3 pixels (the game "
+					"holds %4 at most).").arg(p.name).arg(image.width()).arg(image.height()).arg(most);
+		}
+		palette[it.key()].SetImage(QFileInfo(p.texFile).fileName(), image);
+	}
+	design.SetTexturePalette(palette);
+
+	// The hull's extent: the middle for the round wraps, the long axis.
+	AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+		if(it.value() && it.value()->IsHullMesh())
+		{
+			AuPoint a, b;
+			it.value()->ModelExtents(a, b);
+			mn = mn.Min(a);
+			mx = mx.Max(b);
+		}
+	if(mn.x > mx.x)
+		return;
+	const AuPoint mid = (mn + mx) * .5;
+	const int longAxis = (mx.y - mn.y) >= (mx.x - mn.x) ? 1 : 0;
+	const AuPoint along = longAxis ? AuPoint(0, 1, 0) : AuPoint(1, 0, 0);
+	const AuPoint across = longAxis ? AuPoint(1, 0, 0) : AuPoint(0, 1, 0);
+	const AuPoint up(0, 0, 1);
+
+	int faces = 0;
+	for(AuScParts::iterator it = design.Parts().begin(); it != design.Parts().end(); ++it)
+	{
+		AuScPart* part = it.value();
+		if(!part || !part->IsHullMesh())
+			continue;
+		AuScFaceList list;
+		part->Faces(list);
+		bool changed = false;
+		for(auto sit = bySlot.constBegin(); sit != bySlot.constEnd(); ++sit)
+		{
+			const quint8 slot = quint8(sit.key());
+			const PlanPaint& p = *sit.value();
+			const double size = qMax(0.25, p.texFeet);
+			AuScSelectInfo sel;
+			for(int i = 0; i < list.size(); ++i)
+				if(list.at(i)->TextureIndex() == slot)
+					sel.m_Faces.insert(i);
+			if(sel.m_Faces.isEmpty())
+				continue;
+			changed = true;
+			faces += sel.m_Faces.size();
+			if(p.wrap == "face")
+				list.TextureUnwrap(sel, slot, size, AuScFaceList::UNWRAP_ByFace, 45.f, true, longAxis,
+						AuMatrix4x4::IdentityMatrix());
+			else
+			{
+				// Round the length: as many repeats round it as keep the texture
+				// about 'size' feet across; round a ball the same at its widest.
+				const double round = p.wrap == "sphere" ? qMax(mx.x - mn.x, qMax(mx.y - mn.y, mx.z - mn.z))
+						: (longAxis ? qMax(mx.x - mn.x, mx.z - mn.z) : qMax(mx.y - mn.y, mx.z - mn.z));
+				const double reps = qMax(1.0, std::round(M_PI * qMax(1.0, round) / size));
+				for(int fi : sel.m_Faces)
+				{
+					AuScFace* f = list[fi];
+					const int n = f->VertexCount();
+					QVector<QPointF> uv(n);
+					QVector<double> lon(n);
+					for(int v = 0; v < n; ++v)
+					{
+						const AuPoint q = f->Vertex(v) - mid;
+						if(p.wrap == "top")
+							uv[v] = QPointF(q.Dot(across), q.Dot(along)) / size;
+						else if(p.wrap == "side")
+							uv[v] = QPointF(q.Dot(along), q.z) / size;
+						else if(p.wrap == "front")
+							uv[v] = QPointF(q.Dot(across), q.z) / size;
+						else if(p.wrap == "cylinder")
+						{
+							lon[v] = atan2(q.z, q.Dot(across));
+							uv[v] = QPointF(0, q.Dot(along) / size);
+						}
+						else		// sphere
+						{
+							lon[v] = atan2(q.Dot(along), q.Dot(across));
+							const double r = sqrt(q.Dot(q));
+							const double lat = r > 1e-9 ? asin(qBound(-1.0, q.z / r, 1.0)) : 0.0;
+							uv[v] = QPointF(0, (lat + M_PI / 2) / M_PI * reps);
+						}
+					}
+					if(p.wrap == "cylinder" || p.wrap == "sphere")
+					{
+						// Across the seam behind, the face would run the whole
+						// way round the other way: keep its corners together.
+						bool high = false, low = false;
+						for(double l : lon)
+						{
+							high = high || l > M_PI / 2;
+							low = low || l < -M_PI / 2;
+						}
+						for(int v = 0; v < n; ++v)
+						{
+							const double l = (high && low && lon[v] < 0) ? lon[v] + 2 * M_PI : lon[v];
+							uv[v].setX(l / (2 * M_PI) * reps);
+						}
+					}
+					if(p.texRotate != 0)
+					{
+						const double a = p.texRotate * M_PI / 180, c = cos(a), sn = sin(a);
+						for(QPointF& t : uv)
+							t = QPointF(t.x() * c - t.y() * sn, t.x() * sn + t.y() * c);
+					}
+					for(int v = 0; v < n; ++v)
+					{
+						const AuScPoint now = f->Vertex(v);
+						f->TextureMove(v, QPointF(uv[v].x() - now.m_Tx, uv[v].y() - now.m_Ty));
+					}
+					f->SetTextureIndex(slot);
+				}
+			}
+			if(p.wrap == "face" && p.texRotate != 0)
+				for(int fi : sel.m_Faces)
+				{
+					AuScFace* f = list[fi];
+					for(int v = 0; v < f->VertexCount(); ++v)
+						f->TextureRotate(v, QPointF(0, 0), p.texRotate * M_PI / 180);
+				}
+		}
+		if(changed)
+			part->SetFaces(list);
+	}
+	if(faces)
+		report.notes << QString("Textured paint: %1 hull face(s) in %2 texture(s).").arg(faces).arg(bySlot.size());
+}
+
 static void ApplyPlanDecals(AuDesign& design, const TriPlan& plan, PlanBuildReport& report)
 {
 	if(!plan.buildLeaveOut.contains("decals"))
@@ -5331,8 +5714,83 @@ static void ApplyPlanDecals(AuDesign& design, const TriPlan& plan, PlanBuildRepo
 	}
 }
 
+// The weapon emitters (already where they go in the blueprint), one to each
+// fire control station and console. A station placed by hand with its own
+// weapon bay keeps it (the Tarpan's six energy bays were turned ballistic by
+// their emitters' older choice): an emitter goes first to a station that runs
+// its bay already, then to one whose bay was not chosen by hand (which takes
+// the emitter's), and only then to a hand-chosen one of another bay, which is
+// a warning.
+static void AssignWeaponEmitters(AuScParts& parts, const QVector<AuPoint>& emitters, const QVector<int>& modules,
+		const QSet<quint16>& handChosenIds, PlanBuildReport& report)
+{
+	QList<AuScPart*> stations;
+	QSet<AuScPart*> handChosen;
+	for(AuScParts::iterator it = parts.begin(); it != parts.end(); ++it)
+	{
+		AuScPart* part = it.value();
+		if(!part || (part->Type() != AuScPart::Part_StationFireControl && part->Type() != AuScPart::Part_ConsoleFireControl))
+			continue;
+		stations << part;
+		if(handChosenIds.contains(it.key()))
+			handChosen.insert(part);
+	}
+	auto moduleName = [](int module) {
+		for(const QPair<int, QString>& choice : FireControlModules())
+			if(choice.first == module)
+				return choice.second;
+		return QString("module %1").arg(module);
+	};
+	QVector<bool> used(stations.size(), false);
+	int placedEmitters = 0;
+	QMap<QPair<int, int>, int> kept;		// (emitter's bay, station's hand-chosen bay): how many.
+	for(int e = 0; e < emitters.size(); ++e)
+	{
+		const int want = modules.value(e);
+		int pick = -1;
+		for(int i = 0; i < stations.size() && pick < 0; ++i)
+			if(!used[i] && int(stations.at(i)->Module()) == want)
+				pick = i;
+		for(int i = 0; i < stations.size() && pick < 0; ++i)
+			if(!used[i] && !handChosen.contains(stations.at(i)))
+				pick = i;
+		for(int i = 0; i < stations.size() && pick < 0; ++i)
+			if(!used[i])
+				pick = i;
+		if(pick < 0)
+			break;
+		used[pick] = true;
+		AuScPart* part = stations.at(pick);
+		if(int(part->Module()) != want)
+		{
+			bool known = false;
+			for(const QPair<int, QString>& choice : FireControlModules())
+				known = known || choice.first == want;
+			if(handChosen.contains(part))
+				kept[qMakePair(want, int(part->Module()))] += 1;
+			else if(known)
+				part->SetModule(COMMODITYID(want));
+			else
+				report.warnings << QString("Weapon bay module %1 is not one a station can run; that bay keeps module %2.")
+						.arg(want).arg(int(part->Module()));
+		}
+		part->SetEmitLoc(emitters.at(e));
+		++placedEmitters;
+		++report.weaponEmitters;
+	}
+	for(auto it = kept.constBegin(); it != kept.constEnd(); ++it)
+		report.warnings << QString("%1 weapon emitter(s) ask for a %2, but the fire control station(s) they went to "
+								   "were set to a %3 by hand, which they keep. Set the emitters' bay to match "
+								   "(Rooms page, right click on each) to make this go away.")
+								   .arg(it.value()).arg(moduleName(it.key().first), moduleName(it.key().second));
+	if(placedEmitters < emitters.size())
+		report.warnings << QString("%1 weapon emitter(s) left over: the game keeps one on each fire control "
+								   "station, and there %2 %3.").arg(emitters.size() - placedEmitters)
+								   .arg(placedEmitters == 1 ? "is" : "are").arg(placedEmitters);
+}
+
 static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, const QList<DeckRoom>& deckRooms,
-		PlanBuildReport& report)
+		const QVector<AuPoint>& weaponEmitters, const QVector<int>& weaponModules, PlanBuildReport& report)
 {
 	AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
 	for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
@@ -5440,7 +5898,37 @@ static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, con
 			const QPointF c = plan.Corner(p.cx, p.cy), half = plan.ParkingSize(p) / 2.0;
 			drawnSpots << QRectF(c.x() + shift.x - half.x(), c.y() + shift.y - half.y(), 2 * half.x(), 2 * half.y());
 		}
+	// The stations placed by hand (Crew page): the building is not turned to
+	// the game's axes, so a plan heading (from fore, +x, towards port) is 90
+	// degrees less from +Y, which a console's facing is measured from.
+	brief.weaponModule = plan.fireControlModule;
+	for(const PlanStation& st : plan.stations)
+	{
+		double z0, z1;
+		RoomHeights(plan, st.deck, z0, z1);
+		const QPointF w = plan.CellPointToWorld(st.x, st.y);
+		BuildingStation bs;
+		bs.type = st.type;
+		bs.x = w.x() + shift.x;
+		bs.y = w.y() + shift.y;
+		bs.z = z0 + shift.z;
+		bs.facing = (st.yaw - 90.0) * M_PI / 180.0;
+		bs.module = st.module;
+		brief.stations << bs;
+	}
+	report.handStations = plan.stations.size();
+	// Weapon emitters drawn on the Rooms page make weapon bays: at least one
+	// fire control station for each.
+	if(!weaponEmitters.isEmpty())
+		brief.volumes.weaponBays = qMax(brief.volumes.weaponBays, weaponEmitters.size());
 	const BuildingResult result = GenerateBuilding(*building, brief, "drawn", &rooms, &drawnSpots);
+	if(!weaponEmitters.isEmpty())
+	{
+		QVector<AuPoint> at;
+		for(const AuPoint& p : weaponEmitters)
+			at << p + shift;
+		AssignWeaponEmitters(building->Parts(), at, weaponModules, result.handModuleParts, report);
+	}
 	{
 		const int iid = IndustryIdFor(brief.industry);
 		const bool noSite = brief.structure == "seaplatform" || brief.structure == "aerialplatform"
@@ -5508,8 +5996,10 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	}
 
 	// The hull.
-	const PlanHull hull = BuildPlanHull(plan);
+	PlanHull hull = BuildPlanHull(plan);
 	report.notes << hull.notes;
+	if(const int brushed = ApplyPaintStrokes(plan, hull))
+		report.notes << QString("Paint brushed in the 3D view: %1 hull face(s).").arg(brushed);
 	if(hull.tris.isEmpty())
 	{
 		report.errors << "The plan has no hull.";
@@ -5752,6 +6242,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	PathSet paths;
 	QList<AuPoint> onTheGround;		// Where a path meets the ground outside the ship.
 	QList<QPair<quint16, int> > texturedDoors;		// Door part, library texture.
+	QList<quint16> openDoors;						// Doors that start open (PlanDoor::open, PlanHatch::open).
 	const double s = plan.cellFeet;
 	struct DoorRun { PlanDoor door; int count = 1; QPointF mid; QList<QPointF> buttons; };
 	QList<DoorRun> runs;
@@ -5987,6 +6478,8 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			addButtons(run, doorId, ra, rb, z0, (mn + mx) * .5);
 			if(lift)
 				liftDoors.insert(doorId, qMakePair(lift, plan.rooms.at((lift == ra ? rb : ra)->room).label));
+			else if(door.open)
+				openDoors << doorId;
 			if((door.tex >= 0 ? door.tex : plan.doorTex) >= 0)
 				texturedDoors << qMakePair(doorId, door.tex >= 0 ? door.tex : plan.doorTex);
 			// Between two rooms with no gravity, the doorway has none either.
@@ -6118,6 +6611,8 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			continue;
 		}
 		++report.doors;
+		if(door.open)
+			openDoors << doorId;
 		HullSide hullSide;
 		hullSide.outward = outward;
 		hullSide.roomWall = roomWall;
@@ -7168,8 +7663,107 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 				report.warnings << QString("'%1' is open to the deck below, but has no room under it: its floor stays.").arg(dr.group);
 		}
 
+	// The doors in floors and ceilings (hatches): the cells of one row, between
+	// the same two rooms, in as few rectangles as they make, each one door.
+	QHash<QString, quint16> hatchDoorAt;		// "deck,cx,cy" (the lower deck) -> its door.
+	auto hatchKey = [](int deck, int cx, int cy) { return QString("%1,%2,%3").arg(deck).arg(cx).arg(cy); };
+	{
+		struct HatchGroup
+		{
+			int deck = 0;
+			const DeckRoom* lower = 0;
+			const DeckRoom* upper = 0;
+			bool open = false;
+			int tex = -1;
+			QSet<QPair<int, int> > cells;
+		};
+		QMap<QString, HatchGroup> groups;
+		for(const PlanHatch& h : plan.hatches)
+		{
+			const DeckRoom* lower = deckRoomOf(TriRef(h.deck, h.cx, h.cy, 0));
+			const DeckRoom* upper = deckRoomOf(TriRef(h.deck + 1, h.cx, h.cy, 0));
+			if(!lower || !upper)
+				continue;
+			if(lower->meshId == upper->meshId || lower->lift || upper->lift)
+			{
+				report.warnings << QString("A door in the floor on deck %1 is inside '%2', which goes through both decks; "
+						"it was left out.").arg(h.deck + 2).arg(upper->group);
+				continue;
+			}
+			if(IsOpenToDeckBelowType(upper->type) || (IsZeroGRoomType(lower->type) && IsZeroGRoomType(upper->type)))
+			{
+				report.warnings << QString("A door in the floor between '%1' and '%2' was left out: the floor there is "
+						"open already.").arg(lower->group, upper->group);
+				continue;
+			}
+			const QString key = QString("%1/%2/%3/%4").arg(h.deck)
+					.arg(h.row ? QString::number(h.row) : QString("c%1_%2").arg(h.cx).arg(h.cy))
+					.arg(lower->meshId).arg(upper->meshId);
+			HatchGroup& g = groups[key];
+			if(g.cells.isEmpty())
+			{
+				g.deck = h.deck;
+				g.lower = lower;
+				g.upper = upper;
+				g.open = h.open;
+				g.tex = h.tex;
+			}
+			g.cells.insert(qMakePair(h.cx, h.cy));
+		}
+		for(HatchGroup& g : groups)
+		{
+			while(!g.cells.isEmpty())
+			{
+				// The lowest row's first cell, as far along x as the cells go,
+				// then as many whole rows of that width as follow.
+				QPair<int, int> first = *g.cells.constBegin();
+				for(const QPair<int, int>& c : g.cells)
+					if(c.second < first.second || (c.second == first.second && c.first < first.first))
+						first = c;
+				const int x0 = first.first, y0 = first.second;
+				int x1 = x0, y1 = y0;
+				while(g.cells.contains(qMakePair(x1 + 1, y0)))
+					++x1;
+				for(bool more = true; more; )
+				{
+					for(int x = x0; x <= x1 && more; ++x)
+						more = g.cells.contains(qMakePair(x, y1 + 1));
+					if(more)
+						++y1;
+				}
+				for(int y = y0; y <= y1; ++y)
+					for(int x = x0; x <= x1; ++x)
+						g.cells.remove(qMakePair(x, y));
+
+				double lz0, lz1, uz0, uz1;
+				RoomHeights(plan, g.deck, lz0, lz1);
+				RoomHeights(plan, g.deck + 1, uz0, uz1);
+				const QPointF a = plan.Corner(x0, y0), b = plan.Corner(x1 + 1, y1 + 1);
+				const double inset = qMin(0.5, s / 4);
+				const AuPoint mn(qMin(a.x(), b.x()) + inset, qMin(a.y(), b.y()) + inset, lz1 - 0.4);
+				const AuPoint mx(qMax(a.x(), b.x()) - inset, qMax(a.y(), b.y()) - inset, uz0 + 0.4);
+				quint16 doorId = 0;
+				if(!AddHatch(*design, mn, mx, 1.0, g.lower->group, doorId, g.lower->meshId, g.upper->meshId))
+				{
+					report.warnings << QString("The engine did not accept the door in the floor between '%1' and '%2'.")
+							.arg(g.lower->group, g.upper->group);
+					continue;
+				}
+				++report.hatches;
+				for(int y = y0; y <= y1; ++y)
+					for(int x = x0; x <= x1; ++x)
+						hatchDoorAt.insert(hatchKey(g.deck, x, y), doorId);
+				if((g.tex >= 0 ? g.tex : plan.doorTex) >= 0)
+					texturedDoors << qMakePair(doorId, g.tex >= 0 ? g.tex : plan.doorTex);
+				if(g.open)
+					openDoors << doorId;
+			}
+		}
+	}
+
 	// The ladders: a shaft through the floor between the two rooms, and a
-	// ladder path up it.
+	// ladder path up it. Under a door in the floor, the shaft and the path
+	// are only there while it is open, and the door is the opening.
 	for(const PlanLadder& ladder : plan.ladders)
 	{
 		const DeckRoom* lower = deckRoomOf(TriRef(ladder.deck, ladder.cx, ladder.cy, 0));
@@ -7183,7 +7777,10 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		const double inset = qMin(0.5, s / 4);
 		quint16 shaftVoid = 0, shaftMesh = 0;
 		const AuPoint mn(lo.x() + inset, lo.y() + inset, lz1 - 1.0), mx(hi.x() - inset, hi.y() - inset, uz0 + 1.0);
-		if(!AddShaft(*design, QString("%1 %2 to %3").arg(LadderGroupPrefix(), lower->group, upper->group), mn, mx, shaftVoid))
+		// Under a door in the floor, the door's own doorway (there while it is
+		// open) is the way through, and no shaft is needed.
+		const quint16 hatchDoor = hatchDoorAt.value(hatchKey(ladder.deck, ladder.cx, ladder.cy), 0);
+		if(!hatchDoor && !AddShaft(*design, QString("%1 %2 to %3").arg(LadderGroupPrefix(), lower->group, upper->group), mn, mx, shaftVoid))
 		{
 			report.warnings << QString("The engine did not accept the ladder from '%1'.").arg(lower->group);
 			continue;
@@ -7191,7 +7788,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		Q_UNUSED(shaftMesh);
 		// In a zero-G shaft the ladder's void has no gravity either: where two
 		// voids overlap, either may answer for gravity.
-		if(IsZeroGRoomType(lower->type) && IsZeroGRoomType(upper->type))
+		if(shaftVoid && IsZeroGRoomType(lower->type) && IsZeroGRoomType(upper->type))
 			SetVoidGravity(*design, shaftVoid, G_Zero);
 		auto hasLadder = [&plan](int deck, int cx, int cy) {
 			for(const PlanLadder& other : plan.ladders)
@@ -7235,11 +7832,11 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		}
 		const double toEdge = qMax(0.0, s / 2 - inset - SHIPGEN_LADDER_TO_EDGE);
 		const QPointF c = cellMid + QPointF(facing.x, facing.y) * toEdge;
-		AddLadderPath(*design, AuPoint(c.x(), c.y(), lz0), AuPoint(c.x(), c.y(), uz0), facing);
+		AddLadderPath(*design, AuPoint(c.x(), c.y(), lz0), AuPoint(c.x(), c.y(), uz0), facing, hatchDoor);
 		// So that it can be seen: the opening through the ceiling and the
-		// floor, and a ladder.
+		// floor (unless a door is there), and a ladder.
 		const QString ladderGroup = QString("%1 %2 to %3").arg(LadderGroupPrefix(), lower->group, upper->group);
-		if(!CutLadderOpening(*design, mn, mx, lower->meshId, upper->meshId))
+		if(!hatchDoor && !CutLadderOpening(*design, mn, mx, lower->meshId, upper->meshId))
 			report.warnings << QString("The opening for the ladder from '%1' could not be cut.").arg(lower->group);
 		AddLadderMesh(*design, AuPoint(c.x(), c.y(), lz0), AuPoint(c.x(), c.y(), uz0), facing, ladderGroup,
 				SHIPGEN_LADDER_TO_EDGE - .15);
@@ -7288,52 +7885,65 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	// round the opening on the deck above.
 	for(const PlanStair& stair : plan.stairs)
 	{
-		const int n = plan.StairCells();
+		const int n = plan.StairCells(stair);
+		const int lanes = qMax(1, stair.width);
+		// The walk goes up the middle lane.
 		int x0, y0, xl, yl;
-		plan.StairCell(stair, 0, x0, y0);
-		plan.StairCell(stair, n, xl, yl);
+		plan.StairCell(stair, 0, x0, y0, (lanes - 1) / 2);
+		plan.StairCell(stair, n, xl, yl, (lanes - 1) / 2);
 		const DeckRoom* lower = deckRoomOf(TriRef(stair.deck, x0, y0, 0));
 		const DeckRoom* upper = deckRoomOf(TriRef(stair.deck + 1, xl, yl, 0));
-		if(!lower || !upper || !plan.StairFits(stair))
+		QString why;
+		if(!plan.StairFits(stair, &why) || !lower || !upper)
+		{
+			report.warnings << QString("The %1 on deck %2 at cell %3, %4 was left out: %5").arg(stair.IsRamp() ? "ramp" : "stairs")
+					.arg(stair.deck + 1).arg(stair.cx).arg(stair.cy).arg(why.isEmpty() ? QString("it is not in a room.") : why);
 			continue;
+		}
 		double lz0, lz1, uz0, uz1;
 		RoomHeights(plan, stair.deck, lz0, lz1);
 		RoomHeights(plan, stair.deck + 1, uz0, uz1);
 		const AuPoint dir(stair.side == TRI_E ? 1 : stair.side == TRI_W ? -1 : 0,
 				stair.side == TRI_N ? 1 : stair.side == TRI_S ? -1 : 0, 0);
 		const bool alongX = stair.side == TRI_E || stair.side == TRI_W;
-		const double run = n * s, rise = uz0 - lz0, inset = qMin(0.5, s / 4);
-		const QPointF c0 = plan.CellCentre(x0, y0);
-		// The middle of the run's back edge, where it starts.
+		const double run = n * s, rise = uz0 - lz0, inset = qMin(0.5, s / 4), width = lanes * s;
+		// The middle of the run's back edge, where it starts, between the
+		// first lane and the last.
+		int xa, ya, xb, yb;
+		plan.StairCell(stair, 0, xa, ya, 0);
+		plan.StairCell(stair, 0, xb, yb, lanes - 1);
+		const QPointF c0 = (plan.CellCentre(xa, ya) + plan.CellCentre(xb, yb)) / 2;
 		const AuPoint foot(c0.x() - dir.x * s / 2, c0.y() - dir.y * s / 2, lz0);
 		const AuPoint top = foot + dir * run;
-		// The opening: over the run, the width of a cell less an inset, from
-		// an inset in from the foot to the edge of the landing.
+		// The opening: over the run, the width of the lanes less an inset,
+		// from an inset in from the foot to the edge of the landing.
 		AuPoint a = foot + dir * inset, b = foot + dir * run;
 		if(alongX)
 		{
-			a.y -= s / 2 - inset;
-			b.y += s / 2 - inset;
+			a.y -= width / 2 - inset;
+			b.y += width / 2 - inset;
 		}
 		else
 		{
-			a.x -= s / 2 - inset;
-			b.x += s / 2 - inset;
+			a.x -= width / 2 - inset;
+			b.x += width / 2 - inset;
 		}
 		a.z = lz1 - 1.0;
 		b.z = uz0 + 1.0;
 		const AuPoint mn = a.Min(b), mx = a.Max(b);
-		const QString group = QString("%1 (stairs) %2 to %3").arg(LadderGroupPrefix(), lower->group, upper->group);
+		const QString what = stair.IsRamp() ? "ramp" : "stairs";
+		const QString group = QString("%1 (%2) %3 to %4").arg(LadderGroupPrefix(), what, lower->group, upper->group);
 		quint16 shaftVoid = 0;
 		if(!AddShaft(*design, group, mn, mx, shaftVoid))
 		{
-			report.warnings << QString("The engine did not accept the stairs from '%1'.").arg(lower->group);
+			report.warnings << QString("The engine did not accept the %1 from '%2'.").arg(what, lower->group);
 			continue;
 		}
 		if(!CutLadderOpening(*design, mn, mx, lower->meshId, upper->meshId))
-			report.warnings << QString("The opening for the stairs from '%1' could not be cut.").arg(lower->group);
-		if(!AddStairFlight(*design, foot, dir, s - 2 * inset, run, rise, group))
-			report.warnings << QString("The engine did not accept the steps of the stairs from '%1'.").arg(lower->group);
+			report.warnings << QString("The opening for the %1 from '%2' could not be cut.").arg(what, lower->group);
+		if(!AddStairFlight(*design, foot, dir, width - 2 * inset, run, rise, group, stair.IsRamp()))
+			report.warnings << QString("The engine did not accept the %1 from '%2'.")
+					.arg(stair.IsRamp() ? "slope of the ramp" : "steps of the stairs", lower->group);
 		// The rail round the opening on the deck above: along both sides and
 		// across the foot end; the landing end is the way off.
 		{
@@ -7393,6 +8003,12 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		design->TexturePalette(palette);
 		QSet<int> busy;
 		busy << SCTEXI_Material << 0 << 1 << 2 << 5;
+		// The textured colours' slots (filled last, ApplyPlanTexturePaint).
+		QSet<int> paintSlots;
+		for(const PlanPaint& p : plan.palette)
+			if(p.slot >= 0)
+				paintSlots << p.slot;
+		busy += paintSlots;
 		for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
 		{
 			if(!it.value())
@@ -7407,7 +8023,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			if(texture < 0)
 				return -1;
 			for(int i = 0; i < SCTEXI_Count; ++i)
-				if(i != SCTEXI_Material && int(palette[i].TexLibId()) == texture)
+				if(i != SCTEXI_Material && !paintSlots.contains(i) && int(palette[i].TexLibId()) == texture)
 				{
 					busy << i;
 					return i;
@@ -7449,6 +8065,18 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 					"the rest keep their usual look.";
 		ClearWindowGlass(*design);
 	}
+
+	// Doors that start open: the state the blueprint is saved in is the one
+	// the door has when it is built. An automatic door closes again as soon
+	// as nobody is near it, so one that starts open is a standard door, which
+	// stays as it is left (hull doors are never automatic).
+	for(quint16 id : openDoors)
+		if(AuScDoor* door = dynamic_cast<AuScDoor*>(design->Parts().value(id)))
+		{
+			door->SetDoorProperties(Qt::Unchecked, Qt::PartiallyChecked, Qt::PartiallyChecked, Qt::PartiallyChecked);
+			door->AddState(AuScDoor::Open);
+			door->SetState(AuScDoor::Open);
+		}
 
 	// The turbolifts: each car becomes the game's lift part (AuScLift), with
 	// its car mesh and its void as states, and a stop for each deck it has a
@@ -7781,11 +8409,12 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	// in a building blueprint, leaving the drawn rooms as they are.
 	if(plan.IsBuilding())
 	{
-		AuDesign* building = FinishPlanBuilding(design, plan, deckRooms, report);
+		AuDesign* building = FinishPlanBuilding(design, plan, deckRooms, weaponEmitters, weaponModules, report);
 		if(building)
 		{
 			if(plan.windowLining)
 				report.windowLining = SealWindowLeaks(*building, report.notes, report.canopyRooms);
+			ApplyPlanTexturePaint(*building, plan, report);
 			ApplyPlanDecals(*building, plan, report);
 		}
 		return building;
@@ -7932,12 +8561,11 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			}
 			for(const PlanStair& stair : plan.stairs)
 			{
-				const int n = plan.StairCells();
-				const int dx = stair.side == TRI_E ? n : stair.side == TRI_W ? -n : 0;
-				const int dy = stair.side == TRI_N ? n : stair.side == TRI_S ? -n : 0;
+				int xa, ya, xb, yb;
+				plan.StairCell(stair, 0, xa, ya, 0);
+				plan.StairCell(stair, plan.StairCells(stair), xb, yb, qMax(1, stair.width) - 1);
 				for(int deck : { stair.deck, stair.deck + 1 })
-					keepClear(deck, qMin(stair.cx, stair.cx + dx), qMin(stair.cy, stair.cy + dy),
-							qMax(stair.cx, stair.cx + dx), qMax(stair.cy, stair.cy + dy));
+					keepClear(deck, qMin(xa, xb), qMin(ya, yb), qMax(xa, xb), qMax(ya, yb));
 			}
 		}
 		// What was placed by hand on the Crew page, turned and moved as the rest.
@@ -7998,69 +8626,10 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		if(!weaponEmitters.isEmpty())
 		{
 			const AuMatrix4x4 turn = QuarterTurnToFore();
-			QList<AuScPart*> stations;
-			QSet<AuScPart*> handChosen;
-			for(AuScParts::iterator it = design->Parts().begin(); it != design->Parts().end(); ++it)
-			{
-				AuScPart* part = it.value();
-				if(!part || (part->Type() != AuScPart::Part_StationFireControl && part->Type() != AuScPart::Part_ConsoleFireControl))
-					continue;
-				stations << part;
-				if(furnished.handModuleParts.contains(it.key()))
-					handChosen.insert(part);
-			}
-			auto moduleName = [](int module) {
-				for(const QPair<int, QString>& choice : FireControlModules())
-					if(choice.first == module)
-						return choice.second;
-				return QString("module %1").arg(module);
-			};
-			QVector<bool> used(stations.size(), false);
-			int placedEmitters = 0;
-			QMap<QPair<int, int>, int> kept;		// (emitter's bay, station's hand-chosen bay): how many.
-			for(int e = 0; e < weaponEmitters.size(); ++e)
-			{
-				const int want = weaponModules.at(e);
-				int pick = -1;
-				for(int i = 0; i < stations.size() && pick < 0; ++i)
-					if(!used[i] && int(stations.at(i)->Module()) == want)
-						pick = i;
-				for(int i = 0; i < stations.size() && pick < 0; ++i)
-					if(!used[i] && !handChosen.contains(stations.at(i)))
-						pick = i;
-				for(int i = 0; i < stations.size() && pick < 0; ++i)
-					if(!used[i])
-						pick = i;
-				if(pick < 0)
-					break;
-				used[pick] = true;
-				AuScPart* part = stations.at(pick);
-				if(int(part->Module()) != want)
-				{
-					bool known = false;
-					for(const QPair<int, QString>& choice : FireControlModules())
-						known = known || choice.first == want;
-					if(handChosen.contains(part))
-						kept[qMakePair(want, int(part->Module()))] += 1;
-					else if(known)
-						part->SetModule(COMMODITYID(want));
-					else
-						report.warnings << QString("Weapon bay module %1 is not one a station can run; that bay keeps module %2.")
-								.arg(want).arg(int(part->Module()));
-				}
-				part->SetEmitLoc(turn.Project(weaponEmitters.at(e)) + originShift);
-				++placedEmitters;
-				++report.weaponEmitters;
-			}
-			for(auto it = kept.constBegin(); it != kept.constEnd(); ++it)
-				report.warnings << QString("%1 weapon emitter(s) ask for a %2, but the fire control station(s) they went to "
-										   "were set to a %3 by hand, which they keep. Set the emitters' bay to match "
-										   "(Rooms page, right click on each) to make this go away.")
-										   .arg(it.value()).arg(moduleName(it.key().first), moduleName(it.key().second));
-			if(placedEmitters < weaponEmitters.size())
-				report.warnings << QString("%1 weapon emitter(s) left over: the game keeps one on each fire control "
-										   "station, and there %2 %3.").arg(weaponEmitters.size() - placedEmitters)
-										   .arg(placedEmitters == 1 ? "is" : "are").arg(placedEmitters);
+			QVector<AuPoint> at;
+			for(const AuPoint& p : weaponEmitters)
+				at << turn.Project(p) + originShift;
+			AssignWeaponEmitters(design->Parts(), at, weaponModules, furnished.handModuleParts, report);
 		}
 		report.berths = furnished.berthsPlaced;
 		report.notes << furnished.warnings;
@@ -8082,6 +8651,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		report.windowLining = SealWindowLeaks(*design, report.notes, report.canopyRooms);
 
 	// Decals, last, so that they lie on the finished hull.
+	ApplyPlanTexturePaint(*design, plan, report);
 	ApplyPlanDecals(*design, plan, report);
 
 	// A fighter's pilot has to see out: what the helm (and a captain's

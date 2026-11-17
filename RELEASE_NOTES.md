@@ -1,4 +1,4 @@
-# Shipgen Designer 0.3.7-beta-rc3
+# Shipgen Designer 0.3.7-beta-rc4
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
@@ -6,24 +6,128 @@ triangles, paint it, and build a blueprint the game loads. The download
 also holds `shipgen-gui` (the automatic generator's window) and the
 `shipgen` command line.
 
-0.3.7-beta-rc3 is the third **release candidate** of the first beta: please
-try it and report what goes wrong before the final 0.3.7. It is rc2 (which
-was tagged but never released as downloads) with a fix for the Windows
-build. Since rc1 it adds
-a finish for each colour, canopies for fighters, less geometry sticking out
-of the hull, a check of what the pilot and captain see, more freedom in
-placing door buttons, and a fix for large hull doors. It also brings
-everything from rc1, all since 0.3.6-alpha: three rounds of testing in the
-game (doors, features, liveries), a new Crew step for placing stations, beds
-and walk paths yourself, a choice of what gets built, and a first,
-experimental fighter mode.
+0.3.7-beta-rc4 is the fourth **release candidate** of the first beta. Since
+rc3 it adds a building mode (with military weapons and shield bases),
+decals, textured paint and a paint brush in the 3D view, doors in floors and
+ceilings, stairs and ramps of several widths and slopes, clearer hull
+windows, copying decks, free flight through the 3D view, and a check for new
+versions, with fixes for problems found in the game (maintenance consoles, zero-G shafts, holes
+round windows, weapon bays).
 
 **Problems?** If something goes wrong, please either contact the author
 (Kristiana Moretti, `crazykristi` on GitHub) or report an issue at
 <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
 plan file (`.json`) and what you expected help most.
 
-## New since rc1
+## New since rc3
+
+* **Updates from inside the designer**: *Help > Check for a new version...*
+  shows the notes of a newer release and can download and install it (the
+  AppImage is put next to the old one and started; on Windows the new zip is
+  unpacked over the folder once the designer has closed; on macOS the disk
+  image is downloaded and opened). The download is checked against the
+  checksum GitHub gives. *Look for new versions at start* looks once a day
+  and can be switched off in the Help menu. It works from this release on.
+* **Drag and drop**: drop a plan (`.json`) or a blueprint (`.SoH`) on the
+  window to open it, or an image on the Decals box to add it as a decal.
+* **Open a blueprint as a plan**: *File > Open blueprint (.SoH)...* (and
+  `shipgen plan-from-blueprint`) makes a plan from a blueprint, with its
+  hull, rooms (also over several decks), doors, ladders and turbolifts.
+* **Copy decks**: *Copy this deck...* stacks copies of a deck on top of it,
+  with its rooms, doors, windows and the rest; *Copy the floor...* copies
+  only the outline and paint. The Decks box is on the Hull page as well.
+* **Fly through the 3D view** (*View*, F6): W A S D, Q and E, Shift for
+  speed, drag to look round, Esc leaves.
+* **Pictures of the game's textures** in the texture boxes, read from the
+  game's own texture library when it is installed (*View > The game's
+  texture pictures...*).
+* **Turbolifts are checked while you draw**: a lift only works on one
+  vertical shaft; the Rooms page marks shaft cells drawn wrong, and the build
+  warns.
+* **Which way a desk faces** shows on the Crew page (desk, screen edge, seat
+  and an arrow), and in its tooltip.
+* **Engineer stations placed by hand can run their own FTL drive.**
+* **Window lining can be switched off** (Hull page).
+* `shipgen window-check` counts where the sky shows through round windows;
+  `shipgen decal` puts an image on any blueprint.
+* **Building mode**: *File > New building...* (or from a 3D model) turns a
+  drawn plan into a building blueprint with its site, industry and volumes,
+  outdoor parking (also rocket and boat spots), ground areas (fields, lawns,
+  paving, build zones) and trees, shrubs, lamps and posts.
+* **Decals**: an image on the hull at a place you click in the 3D view, flat
+  or wrapped round the hull, on one side or both, turned, mirrored, self-lit
+  or see-through (at most 256 pixels). The Decals box is on the Build page.
+* **Textured paint**: a colour on the Paint page can be one of the game's
+  textures or an image of your own, wrapped per face, flat from above, the
+  side or the front, round the length or round a ball, with the size of one
+  repeat, a turn, and how much of the colour lies over it.
+* **Doors in floors and ceilings**: two tools on the Rooms page; drag over
+  cells for one door. A ladder can stand under it and is climbed while the
+  door is open.
+* **Doors that start open**: *Doors start* closed or open, per door row
+  (right click). A door that starts open is a standard door, since an
+  automatic one would close again.
+* **Clearer hull windows**: windows that follow the hull now have a flat
+  pane of glass the size of the window by default (upright or on the hull's
+  slope), instead of the hull's own faces, which on a thinned model hull
+  could be large shards reaching far past the window. *The hull's own faces*
+  is still a choice, for the whole ship and per window.
+* **Vehicle spots**: *Place vehicle spots* (Rooms page) puts in the game's
+  vehicle spot for one vehicle (SUV, dirt bike, helicopter, space fighter,
+  ...), drawn at the vehicle's size.
+* **Space stations**: *Space station* on the first page; built in space,
+  with no FTL drive.
+* **Military weapons bases and shield bases**: two new building industries
+  and templates. A weapons base gets a fire control station for every weapon
+  bay (*Weapon bays* in the Building box, and one for each weapon emitter
+  drawn on the Rooms page), with its bay volume, its weapon emitter on the
+  hull and a battery for energy bays; what the bays are is the *Fire
+  control* choice. A shield base gets its shields and a shield station.
+  Sensor, shield, fire control, medic and transporter stations placed by
+  hand on the Crew page are used in buildings as well.
+
+## Experimental since rc3
+
+* **A paint brush in the 3D view** (Paint page): paint straight on the hull
+  with the colour or texture picked, a round or square brush of a size in
+  feet. Only the first face in view under the brush is painted. The strokes
+  are kept in the plan and stay where they were brushed when the hull is
+  shaped again; *Rub out* goes back to the drawn paint.
+* **Stairs and ramps in several versions** (Rooms page, the Stairs tool):
+  stairs or a ramp, 1, 2 or 3 cells wide, steep, normal or gentle; the
+  length and angle show under the choice, and a right click on a flight
+  gives it the choice picked. A ramp is a smooth slope instead of steps.
+
+## Changes and fixes since rc3
+
+* **Maintenance consoles** no longer stand in doorways or stick out of the
+  hull: they go only into an engine room, on a stretch of its own wall with
+  no door or window, clear of ladders, stairs and furniture. A ship without
+  an engine room gets none.
+* **Zero-G shafts**: a ladder placed in a shaft is the crew's way up, its
+  opening has no gravity any more, and a shaft without a ladder is a warning
+  in the build report.
+* **Holes round windows**: the game does not draw the hull from inside, so
+  the sky showed through beside the glass. The hull seen from inside through
+  a window is now covered (a *Window Lining* part).
+* **Weapon bays chosen by hand** at a fire control station were overwritten
+  by the weapon emitter's choice; the station's choice now wins.
+* **Door buttons of long door rows**: buttons are found along the whole row,
+  and outside buttons of hull doors are no longer left out where the wall
+  lies on the hull.
+* **Decals on buildings** reach the blueprint.
+* **Generated parking no longer overlaps** the building, its berths or spots
+  drawn by hand.
+* **Building rules**: parks are ground only, platforms have no rooms and get
+  a build zone, street lights a dimmed lamp; the build warns about known
+  traps. New templates: power plant, farm, park, street light and three
+  platforms.
+* **Very big models** (over a thousand feet) no longer run out of memory when
+  the hull is shaped.
+* **The 3D view** shows images the right way up, and the hull no longer turns
+  see-through after text or the brush outline is drawn over it.
+
+## New in rc2 and rc3 (since rc1)
 
 * **Door buttons go where you click** along the wall, no longer only at the
   middle of a cell edge.
@@ -33,7 +137,7 @@ plan file (`.json`) and what you expected help most.
   pilot has.
 * `shipgen audit` lists parts that reach out of the hull.
 
-## Experimental since rc1
+## Experimental in rc2 and rc3
 
 * **A finish for each colour** (Paint step): transparency, self-lit,
   shininess, reflectivity, glow and the game's animated surface effects, with
@@ -45,7 +149,7 @@ plan file (`.json`) and what you expected help most.
 * **A button outside a hull door**: click beyond the door's wall, beside the
   door, for a button on the hull that opens it from outside.
 
-## Changes and fixes since rc1
+## Changes and fixes in rc2 and rc3
 
 * **Less sticks out of the hull**: room corners, frames and door linings are
   moved back inside where the hull curves in over them, and service panels
@@ -148,10 +252,10 @@ before relying on them, and tell us how they behave.
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc3-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage
+./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -159,14 +263,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.7-beta-rc3-windows-x86_64.zip` and start
+`shipgen-designer-0.3.7-beta-rc4-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc3-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc4-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The
@@ -191,7 +295,9 @@ downloads, once GitHub has built them.
 * **Furnishing** from a ship template (stations, berths, systems sized to
   the hull, 3.5 times the maneuver drive), with shields, weapon bay and
   transporter optional.
-* **Paint** in plain or empire colours.
+* **Paint** in plain or empire colours, with a finish, a texture or a
+  brush in the 3D view; **decals** on the hull.
+* **Buildings** as well as ships, space stations and fighters.
 * **From a 3D model:** *File > New plan from a 3D model* slices an STL,
   3DS or OBJ file into decks and makes the model itself the hull, sharp or
   smooth, simplified to the face budget, with its progress shown at the
@@ -200,15 +306,10 @@ downloads, once GitHub has built them.
   emitters**.
 * Feet or meters (*View > Metric units*).
 
-## Tried in the game, and not yet
-
-Tried in the game for this release: door rows, ramps and ladders at hull doors,
-door buttons, windows that follow the hull, ceiling windows, liveries (the MCRN
-logo, fixed after the test), a cockpit only 4 ft high. Not yet tried: the Crew
-step's hand-placed items, leaving things out of the build, turbolifts, landing
-spots, flags and names, quarter turns, FBX models, and fighter mode.
-
 ## Known limits
+
+* The paint brush paints whole faces: the hull's own faces set how fine it
+  can paint. Decals and image textures are at most 256 pixels a side.
 
 * Fighter mode: no belly hatch yet; wings and other thin parts stay on the
   hull but get no cells, so a side door over a wing gets a ladder that runs

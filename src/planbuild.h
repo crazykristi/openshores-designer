@@ -58,6 +58,15 @@ typedef std::function<bool(const QString& step, int done, int total)> PlanProgre
 
 PlanHull	BuildPlanHull(const TriPlan& plan, const PlanProgress& progress = PlanProgress());
 
+// The paint brushed in the 3D view (TriPlan::strokes), laid on the hull's
+// triangles: each stamp paints the first triangle met by rays from its eye
+// through its footprint. Returns how many triangles it painted.
+int		ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull);
+
+// The first triangle of 'tris' met by the ray from 'from' along 'dir' (either
+// side), or -1; 'distance' is how far along it is (dir need not be a unit).
+int		FirstTriangleHit(const AuScTriList& tris, const QVector3D& from, const QVector3D& dir, float* distance = 0);
+
 // A design holding only the painted hull, for showing it quickly.
 AuScDesign*	BuildPlanHullDesign(const TriPlan& plan, const PlanHull& hull);
 
@@ -90,6 +99,7 @@ struct PlanBuildReport
 	int				hullSkylights = 0;		// Of them, following the hull.
 	int				canopies = 0;			// Of them, canopies: glass from the sill up, walls opened under it.
 	int				ladders = 0;
+	int				hatches = 0;			// Doors in floors and ceilings.
 	int				zeroGJoins = 0;		// Zero-G shafts opened into the one above.
 	int				zeroGNoLadder = 0;
 	int				windowLining = 0;	// Faces covering the hull's inside behind windows.

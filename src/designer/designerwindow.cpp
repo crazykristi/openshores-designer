@@ -5,6 +5,7 @@
 #include "mesh.h"
 #include "designerwindow.h"
 #include "texturepreview.h"
+#include "updater.h"
 #include "interior.h"
 #include "auscface.h"
 #include <QStandardItemModel>
@@ -245,11 +246,21 @@ bool* BuildItemSkip(TriPlan& plan, const QString& key, int index, int* deck, QSt
 				return found(l.skip, l.deck, cell(l.deck, l.cx, l.cy) + QString(" up to deck %1").arg(l.deck + 2));
 		return 0;
 	}
+	if(key == "hatches")
+	{
+		for(PlanHatch& h : plan.hatches)
+			if(n++ == index)
+				return found(h.skip, h.deck, cell(h.deck, h.cx, h.cy) + QString(" to deck %1").arg(h.deck + 2)
+						+ (h.row ? QString(", door %1").arg(h.row) : QString()) + (h.open ? ", starts open" : ""));
+		return 0;
+	}
 	if(key == "stairs")
 	{
 		for(PlanStair& st : plan.stairs)
 			if(n++ == index)
-				return found(st.skip, st.deck, cell(st.deck, st.cx, st.cy) + QString(" up to deck %1").arg(st.deck + 2));
+				return found(st.skip, st.deck, cell(st.deck, st.cx, st.cy) + QString(" up to deck %1").arg(st.deck + 2)
+						+ (st.IsRamp() ? ", ramp" : "") + (st.width > 1 ? QString(", %1 wide").arg(st.width) : QString())
+						+ (st.slope.isEmpty() ? QString() : ", " + st.slope));
 		return 0;
 	}
 	if(key == "parking")
@@ -474,6 +485,18 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	connect(m_autoRedrawBox, &QCheckBox::toggled, autoRedraw, &QAction::setChecked);
 	connect(autoRedraw, &QAction::toggled, m_autoRedrawBox, &QCheckBox::setChecked);
 	QMenu* help = menuBar()->addMenu("&Help");
+	m_updater = new Updater(this, [this]() { return SaveIfChanged(); });
+	help->addAction("Check for a &new version...", this, [this]() { m_updater->Check(false); });
+	QAction* updateAtStart = help->addAction("Look for new versions at start");
+	updateAtStart->setCheckable(true);
+	updateAtStart->setChecked(Updater::CheckAtStart());
+	updateAtStart->setToolTip("Once a day, when the designer starts, it asks GitHub whether there is a newer "
+			"release, and says so if there is.");
+	connect(updateAtStart, &QAction::toggled, this, [](bool on) { Updater::SetCheckAtStart(on); });
+	connect(help, &QMenu::aboutToShow, updateAtStart, [updateAtStart]() {
+		updateAtStart->setChecked(Updater::CheckAtStart());
+	});
+	help->addSeparator();
 	help->addAction("&About", this, [this]() {
 		QMessageBox::about(this, "About the Shipgen designer",
 				SHIPGEN_ABOUT_HTML("Shipgen designer", "Draw a ship with triangles and turn it into a Shores of Hazeron "
@@ -679,7 +702,8 @@ QWidget* DesignerWindow::MakeShipPage()
 	form->addRow("Fire control", m_fireControl);
 	connect(m_fireControl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	m_shipForm = form;
-	m_shipOnly = { m_fighter, m_template, m_ftl, m_station, m_noShields, m_noWeapons, m_noTransporter, m_fireControl };
+	// The fire control choice stays for buildings: a weapons base's bays.
+	m_shipOnly = { m_fighter, m_template, m_ftl, m_station, m_noShields, m_noWeapons, m_noTransporter };
 	m_cellFeet = new QDoubleSpinBox;
 	m_cellFeet->setRange(2, 20);
 	m_cellFeet->setSingleStep(0.5);
@@ -877,6 +901,17 @@ QWidget* DesignerWindow::MakeRoomPage()
 							 "drawn orange and dotted). Nobody walks through it. Drag for a wide one; click it again "
 							 "to take it away. A click on a door or window makes it a balcony." },
 		{ "Place ladders", "Click a cell of a room; the ladder goes up into the room above it." },
+		{ "Place doors in the ceiling", "Click a cell of a room with a room over it, on the deck above: a door in the "
+										"ceiling (a hatch, drawn amber and dashed). Drag over cells for a rectangle "
+										"that becomes one door. A ladder may stand in the same cell: it can only be "
+										"climbed while the door is open. Click a door again to take it (all of it) "
+										"away; a right click gives it the door texture and the start open or closed "
+										"picked below." },
+		{ "Place doors in the floor", "Click a cell of a room with a room under it, on the deck below: a door in the "
+									  "floor (a hatch, drawn amber). Drag over cells for a rectangle that becomes "
+									  "one door. Place a ladder up from the deck below to climb through it. Click a "
+									  "door again to take it (all of it) away; a right click gives it the door "
+									  "texture and the start open or closed picked below." },
 		{ "Place windows", "Click near the edge between a room and the outside, or drag along the walls for a row of "
 						   "windows that builds as one window. A click or drag from a window takes them out." },
 		{ "Place ground vehicle parking", "A 6 by 12 m spot on the floor of a room, centred on the grid corner "
@@ -922,7 +957,8 @@ QWidget* DesignerWindow::MakeRoomPage()
 													  "room's floor: a tree, a shrub, a street lamp, or a post for a "
 													  "citizen, a guard or livestock. Click one again to take it away." },
 	};
-	const QStringList toolKeys = { "rooms", "doors", "innerWindows", "balconies", "ladders", "windows", "groundParking",
+	const QStringList toolKeys = { "rooms", "doors", "innerWindows", "balconies", "ladders", "ceilingHatches",
+			"floorHatches", "windows", "groundParking",
 			"spaceParking", "stairs", "contrails", "weapons", "skylights", "spacecraftParking", "markings",
 			"rocketParking", "waterParking", "areas", "vehicleParking", "props" };
 	for(int i = 0; i < tools.size(); ++i)
@@ -1203,6 +1239,48 @@ QWidget* DesignerWindow::MakeRoomPage()
 	};
 	connect(m_doorExit, QOverload<int>::of(&QComboBox::activated), this, doorExitChanged);
 	connect(m_doorRampRun, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, doorExitChanged);
+	m_doorOpen = new QComboBox;
+	m_doorOpen->addItem("Closed", false);
+	m_doorOpen->addItem("Open", true);
+	m_doorOpen->setToolTip("How doors you place from now on (in walls, floors and ceilings) are when the blueprint is "
+			"built. With the door tool or a floor or ceiling door tool, a right click on a door gives it and the rest of "
+			"its row this. A door that starts open shows an O in the plan.");
+	form->addRow("Doors start", m_doorOpen);
+	connect(m_doorOpen, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		m_view->SetDoorOpen(m_doorOpen->currentData().toBool());
+	});
+	{
+		const QString tip = "For the Stairs tool: what the stairs placed from now on are like. A right click on stairs "
+				"or a ramp gives it this, where it still fits. A flight climbs from the cell clicked towards the "
+				"side clicked; more cells wide go to the left of the way up.";
+		QWidget* row = new QWidget;
+		QHBoxLayout* h = new QHBoxLayout(row);
+		h->setContentsMargins(0, 0, 0, 0);
+		m_stairKind = new QComboBox;
+		m_stairKind->addItem("Stairs", QString());
+		m_stairKind->addItem("Ramp", QString("ramp"));
+		m_stairKind->setToolTip(tip);
+		m_stairWidth = new QSpinBox;
+		m_stairWidth->setRange(1, 3);
+		m_stairWidth->setSuffix(" wide");
+		m_stairWidth->setToolTip(tip + " Cells across.");
+		m_stairSlope = new QComboBox;
+		m_stairSlope->addItem("Steep", QString("steep"));
+		m_stairSlope->addItem("Normal", QString());
+		m_stairSlope->addItem("Gentle", QString("gentle"));
+		m_stairSlope->setCurrentIndex(1);
+		m_stairSlope->setToolTip(tip + " Steeper is shorter.");
+		h->addWidget(m_stairKind);
+		h->addWidget(m_stairWidth);
+		h->addWidget(m_stairSlope);
+		form->addRow("Stairs", row);
+		m_stairInfo = new QLabel;
+		m_stairInfo->setToolTip(tip);
+		form->addRow("", m_stairInfo);
+		connect(m_stairKind, QOverload<int>::of(&QComboBox::activated), this, [this]() { UpdateStairStyle(); });
+		connect(m_stairSlope, QOverload<int>::of(&QComboBox::activated), this, [this]() { UpdateStairStyle(); });
+		connect(m_stairWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() { UpdateStairStyle(); });
+	}
 	m_roomLabel = new QLineEdit;
 	m_roomLabel->setToolTip("The name of the room picked in the list, as the blueprint has it. Every room needs "
 							"its own.");
@@ -1538,6 +1616,109 @@ QWidget* DesignerWindow::MakePaintPage()
 		OnPlanChanged(true);
 	});
 
+	// The brush: paint straight on the hull in the 3D view.
+	QGroupBox* brush = new QGroupBox("Brush in the 3D view");
+	QFormLayout* brushForm = new QFormLayout(brush);
+	m_brushOn = new QPushButton("Paint in the 3D view");
+	m_brushOn->setCheckable(true);
+	m_brushOn->setToolTip("Paint straight on the hull in the 3D view with the colour (or texture) picked above: drag "
+			"with the left button to paint, the right button turns the view, the wheel zooms. Only the first face "
+			"in view under the brush is painted, never what is behind it. The brushed paint stays where it was "
+			"brushed when the hull is shaped again.");
+	brushForm->addRow(m_brushOn);
+	m_brushShape = new QComboBox;
+	m_brushShape->addItem("Round", false);
+	m_brushShape->addItem("Square", true);
+	brushForm->addRow("Shape:", m_brushShape);
+	m_brushSize = new QDoubleSpinBox;
+	m_brushSize->setRange(0.25, 200);
+	m_brushSize->setDecimals(2);
+	m_brushSize->setSingleStep(0.5);
+	m_brushSize->setSuffix(" ft");
+	m_brushSize->setValue(QSettings().value("designer/brushFeet", 4.0).toDouble());
+	m_brushSize->setToolTip("Across the brush, where it meets the hull. Every face the brush touches is painted "
+			"whole, so the hull's own faces set how fine it can paint.");
+	brushForm->addRow("Size:", m_brushSize);
+	m_brushRubOut = new QCheckBox("Rub out (back to the paint drawn on the plan)");
+	brushForm->addRow(m_brushRubOut);
+	QPushButton* clearBrushed = new QPushButton("Remove all brushed paint");
+	brushForm->addRow(clearBrushed);
+	m_brushInfo = new QLabel;
+	m_brushInfo->setWordWrap(true);
+	brushForm->addRow(m_brushInfo);
+	layout->addWidget(brush);
+	m_brushTimer = new QTimer(this);
+	m_brushTimer->setSingleShot(true);
+	m_brushTimer->setInterval(60);
+	connect(m_brushTimer, &QTimer::timeout, this, &DesignerWindow::RefreshBrushedHull);
+	connect(m_brushOn, &QPushButton::toggled, this, &DesignerWindow::SetBrushOn);
+	auto brushChanged = [this]() {
+		QSettings().setValue("designer/brushFeet", m_brushSize->value());
+		if(m_brushOn->isChecked())
+			m_preview->SetBrush(true, m_brushSize->value(), m_brushShape->currentData().toBool());
+	};
+	connect(m_brushShape, QOverload<int>::of(&QComboBox::currentIndexChanged), this, brushChanged);
+	connect(m_brushSize, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, brushChanged);
+	connect(clearBrushed, &QPushButton::clicked, this, [this]() {
+		if(m_plan.strokes.isEmpty())
+			return;
+		OnAboutToChange();
+		m_plan.strokes.clear();
+		OnPlanChanged(false);
+		RefreshBrushedHull();
+		RefreshBrushInfo();
+	});
+	connect(m_preview, &DesignPreview::BrushBegan, this, [this]() {
+		const int row = m_palette->currentRow();
+		if(row < 0 || row >= m_plan.palette.size())
+			return;
+		OnAboutToChange();
+		PlanStroke stroke;
+		stroke.paint = m_brushRubOut->isChecked() ? -1 : row;
+		stroke.square = m_brushShape->currentData().toBool();
+		stroke.size = m_brushSize->value();
+		m_plan.strokes << stroke;
+		m_stroking = true;
+	});
+	connect(m_preview, &DesignPreview::BrushStamp, this,
+			[this](const QVector3D& at, const QVector3D& eye, const QVector3D& up) {
+		if(!m_stroking || m_plan.strokes.isEmpty())
+			return;
+		// From the game's axes (the 3D view) back to plan space: the turn is
+		// a rotation, so its inverse is its transpose.
+		const AuMatrix4x4 turn = QuarterTurnToFore();
+		auto axis = [&turn](double x, double y, double z) {
+			const AuPoint p = turn.Project(AuPoint(x, y, z));
+			return QVector3D(float(p.x), float(p.y), float(p.z));
+		};
+		const QVector3D ex = axis(1, 0, 0), ey = axis(0, 1, 0), ez = axis(0, 0, 1);
+		auto back = [&](const QVector3D& v) {
+			return QVector3D(QVector3D::dotProduct(ex, v), QVector3D::dotProduct(ey, v), QVector3D::dotProduct(ez, v));
+		};
+		PlanStroke& stroke = m_plan.strokes.last();
+		PlanStamp st;
+		st.at = back(at);
+		st.eye = back(eye);
+		st.up = back(up);
+		// A stamp about every third of the brush along the drag.
+		if(!stroke.stamps.isEmpty() && (stroke.stamps.last().at - st.at).length() < stroke.size * 0.3)
+			return;
+		stroke.stamps << st;
+		if(!m_brushTimer->isActive())
+			m_brushTimer->start();
+	});
+	connect(m_preview, &DesignPreview::BrushEnded, this, [this]() {
+		if(!m_stroking)
+			return;
+		m_stroking = false;
+		if(!m_plan.strokes.isEmpty() && m_plan.strokes.last().stamps.isEmpty())
+			m_plan.strokes.removeLast();
+		m_brushTimer->stop();
+		RefreshBrushedHull();
+		OnPlanChanged(false);
+		RefreshBrushInfo();
+	});
+
 	// The finish: what the game's own designer calls Transparency, Self
 	// Illumination, Polish, Glow and the surface effects, for every face
 	// painted in this colour.
@@ -1590,6 +1771,108 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_finishNote->setStyleSheet("color: #c08000;");
 	form->addRow(m_finishNote);
 	layout->addWidget(finish);
+
+	// A texture instead of plain paint: one of the game's or an image of one's
+	// own, and how it is wrapped round the hull.
+	QGroupBox* texture = new QGroupBox("Texture of this colour");
+	QFormLayout* texForm = new QFormLayout(texture);
+	m_texKind = new QComboBox;
+	m_texKind->addItem("None (plain paint)", "none");
+	m_texKind->addItem("A texture of the game's", "game");
+	m_texKind->addItem("An image of my own", "file");
+	m_texKind->setToolTip("Paint the hull in this colour with a texture instead: one from the game's library, or an "
+			"image file of your own (the game holds at most 256 pixels a side; bigger ones are made smaller). Each "
+			"texture takes one of the 15 places in the ship's palette of textures, shared with rooms, doors and "
+			"decals.");
+	texForm->addRow("Texture:", m_texKind);
+	m_texLib = new QComboBox;
+	m_texLib->setIconSize(QSize(32, 32));
+	for(const QPair<int, QString>& t : GameLibraryTextures())
+		m_texLib->addItem(GameTextureIcon(t.first), QString("%1 (%2)").arg(t.second).arg(t.first), t.first);
+	m_texLib->setToolTip("A texture from the game's own library (the pictures show when the designer finds the "
+			"game: View, The game's texture pictures).");
+	m_textureBoxes << m_texLib;
+	texForm->addRow("Game texture:", m_texLib);
+	m_texFile = new QPushButton("Choose an image...");
+	m_texFile->setToolTip("An image file of your own (PNG, JPG, ...). It repeats over the hull, so one that tiles "
+			"without seams looks best.");
+	texForm->addRow("Image:", m_texFile);
+	m_texWrap = new QComboBox;
+	m_texWrap->addItem("Per face (no stretching)", "face");
+	m_texWrap->addItem("Flat, from above", "top");
+	m_texWrap->addItem("Flat, from the side", "side");
+	m_texWrap->addItem("Flat, from the front", "front");
+	m_texWrap->addItem("Round the length (cylinder)", "cylinder");
+	m_texWrap->addItem("Round a ball (sphere)", "sphere");
+	m_texWrap->setToolTip("How the texture is wrapped round the hull.\n"
+			"Per face: each face gets the texture laid flat on it, all the same size; no stretching, but it does "
+			"not run on across edges.\n"
+			"Flat from above, the side or the front: projected straight through the hull from that way, like a "
+			"slide projector; even on faces square to it, stretched on faces that slant away.\n"
+			"Round the length: wrapped round the hull's long axis, for a round fuselage or a tower.\n"
+			"Round a ball: for round hulls.");
+	texForm->addRow("Wrapping:", m_texWrap);
+	m_texFeet = new QDoubleSpinBox;
+	m_texFeet->setRange(0.25, 1000);
+	m_texFeet->setDecimals(2);
+	m_texFeet->setSuffix(" ft");
+	m_texFeet->setKeyboardTracking(false);
+	m_texFeet->setToolTip("How many feet one repeat of the texture covers: smaller makes the pattern smaller.");
+	texForm->addRow("Size of one repeat:", m_texFeet);
+	m_texRotate = new QDoubleSpinBox;
+	m_texRotate->setRange(-180, 180);
+	m_texRotate->setDecimals(1);
+	m_texRotate->setSuffix(" °");
+	m_texRotate->setKeyboardTracking(false);
+	m_texRotate->setToolTip("Turns the texture on the hull.");
+	texForm->addRow("Turn:", m_texRotate);
+	m_texTint = percent("How much of the colour itself is laid over the texture: 0 % shows the texture as it is, "
+			"100 % only the colour. The game mixes them this way.");
+	texForm->addRow("Colour over it:", m_texTint);
+	layout->addWidget(texture);
+	connect(m_texKind, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		const QString kind = m_texKind->currentData().toString();
+		if(kind == "file")
+		{
+			const QString file = QFileDialog::getOpenFileName(this, "An image for the texture", QString(),
+					"Images (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.webp);;All files (*)");
+			if(file.isEmpty())
+			{
+				RefreshTexture();
+				return;
+			}
+			EditTexture([file](PlanPaint& p) { p.texLib = -1; p.texFile = file; });
+			return;
+		}
+		const int lib = m_texLib->currentData().toInt();
+		EditTexture([kind, lib](PlanPaint& p) {
+			p.texFile.clear();
+			p.texLib = kind == "game" ? qMax(0, lib) : -1;
+		});
+	});
+	connect(m_texLib, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		const int lib = m_texLib->currentData().toInt();
+		EditTexture([lib](PlanPaint& p) { p.texFile.clear(); p.texLib = lib; });
+	});
+	connect(m_texFile, &QPushButton::clicked, this, [this]() {
+		const QString file = QFileDialog::getOpenFileName(this, "An image for the texture", QString(),
+				"Images (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.webp);;All files (*)");
+		if(!file.isEmpty())
+			EditTexture([file](PlanPaint& p) { p.texLib = -1; p.texFile = file; });
+	});
+	connect(m_texWrap, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		const QString wrap = m_texWrap->currentData().toString();
+		EditTexture([wrap](PlanPaint& p) { p.wrap = wrap; });
+	});
+	connect(m_texFeet, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		EditTexture([v](PlanPaint& p) { p.texFeet = v; });
+	});
+	connect(m_texRotate, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		EditTexture([v](PlanPaint& p) { p.texRotate = v; });
+	});
+	connect(m_texTint, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+		EditTexture([v](PlanPaint& p) { p.tint = float(v) / 100.f; });
+	});
 
 	connect(m_finishPreset, QOverload<int>::of(&QComboBox::activated), this, [this](int which) {
 		if(which <= 0)
@@ -2188,6 +2471,7 @@ void DesignerWindow::RefreshTitle()
 
 void DesignerWindow::RefreshAll()
 {
+	RefreshBrushInfo();
 	m_updating = true;
 	m_name->setText(m_plan.name);
 	m_template->setCurrentIndex(qMax(0, m_template->findData(m_plan.templateKey)));
@@ -2196,7 +2480,7 @@ void DesignerWindow::RefreshAll()
 	m_noShields->setChecked(m_plan.leaveOut.contains("shield"));
 	m_noWeapons->setChecked(m_plan.leaveOut.contains("firecontrol"));
 	m_fireControl->setCurrentIndex(qMax(0, m_fireControl->findData(m_plan.fireControlModule)));
-	m_fireControl->setEnabled(!m_noWeapons->isChecked());
+	m_fireControl->setEnabled(m_plan.IsBuilding() || !m_noWeapons->isChecked());
 	m_noTransporter->setChecked(m_plan.leaveOut.contains("transporter"));
 	ApplyUnits();
 	m_cellFeet->setValue(Shown(m_plan.cellFeet));
@@ -2259,8 +2543,22 @@ void DesignerWindow::RefreshDecks()
 	m_updating = false;
 }
 
+void DesignerWindow::UpdateStairStyle()
+{
+	if(!m_stairKind)
+		return;
+	const QString kind = m_stairKind->currentData().toString(), slope = m_stairSlope->currentData().toString();
+	m_view->SetStairStyle(kind, m_stairWidth->value(), slope);
+	const int n = m_plan.StairCells(kind, slope);
+	const double run = n * m_plan.cellFeet;
+	const double degrees = atan2(m_plan.deckFeet, run) * 180.0 / M_PI;
+	m_stairInfo->setText(QString("%1 cells long (%2 ft) and %3 wide, about %4 degrees, and a landing cell.")
+			.arg(n).arg(run, 0, 'f', 0).arg(m_stairWidth->value()).arg(degrees, 0, 'f', 0));
+}
+
 void DesignerWindow::RefreshRooms()
 {
+	UpdateStairStyle();
 	m_updating = true;
 	const int row = m_rooms->currentRow();
 	m_rooms->clear();
@@ -2289,7 +2587,26 @@ void DesignerWindow::RefreshPalette()
 			text += "  (L: livery)";
 		if(p.HasFinish())
 			text += "  (F: finish)";
-		QListWidgetItem* item = new QListWidgetItem(Swatch(p.colour), text);
+		if(p.HasTexture())
+		{
+			QString what = QFileInfo(p.texFile).fileName();
+			if(p.texLib >= 0)
+			{
+				const int at = m_texLib ? m_texLib->findData(p.texLib) : -1;
+				what = at >= 0 ? m_texLib->itemText(at) : QString("texture %1").arg(p.texLib);
+			}
+			text += "  (T: " + what + ")";
+		}
+		QIcon icon = Swatch(p.colour);
+		if(p.texLib >= 0 && !GameTextureIcon(p.texLib).isNull())
+			icon = GameTextureIcon(p.texLib);
+		else if(!p.texFile.isEmpty())
+		{
+			const QImage image(p.texFile);
+			if(!image.isNull())
+				icon = QIcon(QPixmap::fromImage(image.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
+		}
+		QListWidgetItem* item = new QListWidgetItem(icon, text);
 		if(p.HasFinish())
 			item->setToolTip("Finish: " + FinishSummary(p));
 		m_palette->addItem(item);
@@ -2318,7 +2635,9 @@ void DesignerWindow::ApplyDrawMode()
 			{ "skylights", PlanView::SkylightMode }, { "spacecraftParking", PlanView::SpacecraftParkingMode },
 			{ "markings", PlanView::MarkingMode }, { "rocketParking", PlanView::RocketParkingMode },
 			{ "waterParking", PlanView::WaterParkingMode }, { "areas", PlanView::AreaMode }, { "props", PlanView::PropMode },
-			{ "vehicleParking", PlanView::VehicleParkingMode } };
+			{ "vehicleParking", PlanView::VehicleParkingMode },
+			{ "ceilingHatches", PlanView::HatchMode }, { "floorHatches", PlanView::HatchMode } };
+		m_view->SetHatchFloor(tool == "floorHatches");
 		// The door tool puts in doors, windows between rooms or balconies.
 		m_view->SetDoorKind(tool == "innerWindows" ? "window" : tool == "balconies" ? "balcony" : "");
 		m_view->SetMode(modes.value(tool, PlanView::RoomMode));
@@ -2370,6 +2689,10 @@ void DesignerWindow::SetDeck(int deck)
 void DesignerWindow::OnStepChanged(int step)
 {
 	ApplyDrawMode();
+	if(step != StepPaint && m_brushOn && m_brushOn->isChecked())
+		m_brushOn->setChecked(false);
+	if(step == StepPaint)
+		RefreshBrushInfo();
 	if(step == StepCrew)
 		RefreshCrew();
 	if(step == StepBuild)
@@ -2551,7 +2874,10 @@ static const BuildingCount kBuildingCounts[] = {
 	{ "lifeSupport", "Life support", "Cubic meters of life support (harsh and airless worlds).", 100000 },
 	{ "capacitor", "Battery", "Cubic meters of battery (power plants want one).", 100000 },
 	{ "sensors", "Sensors", "Cubic meters of sensors (a sensor console is put in).", 100000 },
-	{ "shields", "Shields", "Cubic meters of shields.", 100000 },
+	{ "shields", "Shields", "Cubic meters of shields (a shield station is put in; a shield base needs them).", 100000 },
+	{ "weaponBays", "Weapon bays", "Weapon bays, each run by a fire control station of its own (a weapons base needs "
+			"one). What they are is the Fire control choice above; each weapon emitter drawn makes one too.", 20 },
+	{ "weaponBayVolume", "Each weapon bay", "Cubic meters for each weapon bay; 0 gives each 2 % of the building.", 100000 },
 	{ "hold", "Hold", "Cubic meters of hold: storage for commodities.", 100000 },
 	{ "auditorium", "Auditorium", "Cubic meters of auditorium.", 100000 },
 	{ "arena", "Arena", "Cubic meters of arena.", 100000 },
@@ -2575,6 +2901,8 @@ static int* BuildingCountField(BuildingBrief& b, const QString& key)
 	if(key == "citizenPosts") return &b.citizenPosts;
 	if(key == "guardPosts") return &b.guardPosts;
 	if(key == "field") return &v.field;
+	if(key == "weaponBays") return &v.weaponBays;
+	if(key == "weaponBayVolume") return reinterpret_cast<int*>(&v.weaponBayVolume);
 	quint32* u = key == "offices" ? &v.offices : key == "shops" ? &v.shops : key == "store" ? &v.store
 			: key == "lounge" ? &v.lounge : key == "homesLarge" ? &v.homesLarge : key == "homesMedium" ? &v.homesMedium
 			: key == "homesSmall" ? &v.homesSmall : key == "powerPlant" ? &v.powerPlant : key == "lifeSupport" ? &v.lifeSupport
@@ -2693,7 +3021,8 @@ void DesignerWindow::RefreshBuilding()
 		{
 			const QString key = m_roomTool->itemData(i).toString();
 			const bool buildingOnly = key == "rocketParking" || key == "waterParking" || key == "areas" || key == "props";
-			const bool shipOnly = key == "contrails" || key == "weapons" || key == "markings";
+			// Weapon emitters: a military weapons base has weapon bays too.
+			const bool shipOnly = key == "contrails" || key == "markings";
 			if(QStandardItem* item = model->item(i))
 			{
 				const bool on = building ? !shipOnly : !buildingOnly;
@@ -3046,6 +3375,29 @@ void DesignerWindow::OnSave()
 	m_status->setText("Saved " + m_planFile);
 }
 
+bool DesignerWindow::SaveIfChanged()
+{
+	if(!m_dirty)
+		return true;
+	const QMessageBox::StandardButton answer = QMessageBox::question(this, "Shipgen designer",
+			"The plan has changes that are not saved. Save them first?",
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+	if(answer == QMessageBox::Cancel)
+		return false;
+	if(answer == QMessageBox::Save)
+	{
+		OnSave();
+		return !m_dirty;
+	}
+	return true;
+}
+
+void DesignerWindow::CheckForUpdatesAtStart()
+{
+	if(m_updater && Updater::CheckAtStart())
+		m_updater->Check(true);
+}
+
 void DesignerWindow::OnSaveAs()
 {
 	QString fileName = QFileDialog::getSaveFileName(this, "Save the plan", SanitiseName(m_plan.name) + ".json",
@@ -3215,7 +3567,7 @@ void DesignerWindow::OnSettingsChanged()
 	if(m_noWeapons->isChecked())
 		m_plan.leaveOut << "firecontrol";
 	m_plan.fireControlModule = m_fireControl->currentData().toInt();
-	m_fireControl->setEnabled(!m_noWeapons->isChecked());
+	m_fireControl->setEnabled(m_plan.IsBuilding() || !m_noWeapons->isChecked());
 	if(m_noTransporter->isChecked())
 		m_plan.leaveOut << "transporter";
 	// Only what was changed: a length shown in meters and read back would
@@ -3468,6 +3820,11 @@ void DesignerWindow::OnRemoveColour()
 					else if(p > row)
 						m_plan.SetPaint(t, p - 1);
 				}
+	for(PlanStroke& s : m_plan.strokes)
+		if(s.paint == row)
+			s.paint = 0;
+		else if(s.paint > row)
+			--s.paint;
 	m_plan.palette.removeAt(row);
 	RefreshPalette();
 	OnPlanChanged(true);
@@ -3485,6 +3842,7 @@ void DesignerWindow::OnColourSelected(int row)
 		m_updating = was;
 	}
 	RefreshFinish();
+	RefreshTexture();
 }
 
 // Puts the finish of the colour picked in the controls.
@@ -3529,6 +3887,55 @@ void DesignerWindow::RefreshFinish()
 }
 
 // Changes the finish of the colour picked, as one step to undo.
+// Puts the texture of the colour picked in the controls.
+void DesignerWindow::RefreshTexture()
+{
+	if(!m_texKind)
+		return;
+	const int row = m_palette->currentRow();
+	const bool valid = row >= 0 && row < m_plan.palette.size();
+	const PlanPaint p = valid ? m_plan.palette.at(row) : PlanPaint();
+	const bool was = m_updating;
+	m_updating = true;
+	const QString kind = p.texLib >= 0 ? "game" : (!p.texFile.isEmpty() ? "file" : "none");
+	m_texKind->setEnabled(valid);
+	m_texKind->setCurrentIndex(qMax(0, m_texKind->findData(kind)));
+	m_texLib->setEnabled(valid && kind == "game");
+	if(p.texLib >= 0)
+		m_texLib->setCurrentIndex(qMax(0, m_texLib->findData(p.texLib)));
+	m_texFile->setEnabled(valid && kind != "game");
+	m_texFile->setText(kind == "file" ? QFileInfo(p.texFile).fileName() : QString("Choose an image..."));
+	m_texFile->setToolTip(kind == "file" ? p.texFile : QString("An image file of your own (PNG, JPG, ...). It "
+			"repeats over the hull, so one that tiles without seams looks best."));
+	const bool textured = valid && kind != "none";
+	m_texWrap->setEnabled(textured);
+	m_texWrap->setCurrentIndex(qMax(0, m_texWrap->findData(p.wrap)));
+	m_texFeet->setEnabled(textured && p.wrap != "sphere");
+	m_texFeet->setValue(p.texFeet);
+	m_texRotate->setEnabled(textured);
+	m_texRotate->setValue(p.texRotate);
+	m_texTint->setEnabled(textured);
+	m_texTint->setValue(qRound(p.tint * 100.f));
+	m_updating = was;
+}
+
+void DesignerWindow::EditTexture(const std::function<void(PlanPaint&)>& change)
+{
+	const int row = m_palette->currentRow();
+	if(m_updating || row < 0 || row >= m_plan.palette.size())
+		return;
+	PlanPaint p = m_plan.palette.at(row);
+	change(p);
+	const PlanPaint& old = m_plan.palette.at(row);
+	if(p.texLib == old.texLib && p.texFile == old.texFile && p.wrap == old.wrap && p.texFeet == old.texFeet &&
+			p.texRotate == old.texRotate && p.tint == old.tint)
+		return;
+	OnAboutToChange();
+	m_plan.palette[row] = p;
+	RefreshPalette();
+	OnPlanChanged(true);
+}
+
 void DesignerWindow::EditFinish(const std::function<void(PlanPaint&)>& change)
 {
 	const int row = m_palette->currentRow();
@@ -3559,8 +3966,56 @@ void DesignerWindow::RunShapeJob(ShapeJob& job, const PlanProgress& progress)
 	{
 		if(progress)
 			progress(QString("Making the 3D view of %1 faces").arg(job.hull.tris.size()), 0, 0);
-		job.design = BuildPlanHullDesign(job.plan, job.hull);
+		// The brushed paint on a copy: the hull itself stays as shaped, so
+		// that brushing again needs no shaping (RefreshBrushedHull).
+		PlanHull painted = job.hull;
+		ApplyPaintStrokes(job.plan, painted);
+		job.design = BuildPlanHullDesign(job.plan, painted);
 	}
+}
+
+void DesignerWindow::SetBrushOn(bool on)
+{
+	if(on && m_preview->Picking())
+		m_preview->SetPicking(false);
+	if(on && m_preview->FreeFly())
+		m_preview->SetFreeFly(false);
+	m_preview->SetBrush(on, m_brushSize->value(), m_brushShape->currentData().toBool());
+	if(on)
+	{
+		if(!m_hullShaped)
+			ShapeSoon();
+		else if(m_designIsBlueprint || !m_design)
+			RefreshBrushedHull();
+		m_status->setText("Brush: drag with the left button on the hull to paint; the right button turns the view.");
+	}
+	RefreshBrushInfo();
+}
+
+// The shaped hull with the brushed paint on it, in the 3D view, without
+// shaping it again.
+void DesignerWindow::RefreshBrushedHull()
+{
+	if(!m_hullShaped || m_steps->currentIndex() == StepBuild)
+		return;
+	PlanHull painted = m_hull;
+	ApplyPaintStrokes(m_plan, painted);
+	AuScDesign* design = BuildPlanHullDesign(m_plan, painted);
+	m_preview->SetDesign(design, false);
+	delete m_design;
+	m_design = design;
+	m_designIsBlueprint = false;
+}
+
+void DesignerWindow::RefreshBrushInfo()
+{
+	if(!m_brushInfo)
+		return;
+	int stamps = 0;
+	for(const PlanStroke& s : m_plan.strokes)
+		stamps += s.stamps.size();
+	m_brushInfo->setText(m_plan.strokes.isEmpty() ? QString("Nothing brushed yet.")
+			: QString("%1 stroke(s) brushed (%2 dabs). Undo takes back the last.").arg(m_plan.strokes.size()).arg(stamps));
 }
 
 void DesignerWindow::ApplyShapeJob(ShapeJob& job)

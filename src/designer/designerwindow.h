@@ -77,6 +77,11 @@ public:
 	// 'fighter': a plan in fighter mode (experimental, TriPlan::MakeFighter),
 	// at the model's real length with small cells and low decks.
 	void	OpenBlueprint(const QString& fileName);
+	// Asks to save changes that are not saved yet: false if the user cancels.
+	bool	SaveIfChanged();
+	// Looks for a new version on GitHub (Updater), quietly and at most once a
+	// day, unless that is turned off in the Help menu.
+	void	CheckForUpdatesAtStart();
 	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true, bool fighter = false);
 
 private slots:
@@ -141,6 +146,12 @@ private:
 	void		RefreshPalette();
 	void		RefreshFinish();
 	void		EditFinish(const std::function<void(PlanPaint&)>& change);
+	void		RefreshTexture();
+	// The paint brush in the 3D view (TriPlan::strokes).
+	void		SetBrushOn(bool on);
+	void		RefreshBrushedHull();
+	void		RefreshBrushInfo();
+	void		EditTexture(const std::function<void(PlanPaint&)>& change);
 	void		RefreshDecks();
 	void		RefreshTitle();
 	void		ApplyDrawMode();
@@ -177,6 +188,7 @@ private:
 	TriPlan			m_plan;
 	QString			m_planFile;
 	bool			m_dirty = false;
+	class Updater*	m_updater = 0;
 	QList<TriPlan>	m_undo;
 	QList<TriPlan>	m_redo;
 	bool			m_updating = false;		// Filling the controls; their signals are not edits.
@@ -264,6 +276,12 @@ private:
 	QComboBox*		m_doorTex = 0;
 	QComboBox*		m_doorExit = 0;
 	QDoubleSpinBox*	m_doorRampRun = 0;
+	QComboBox*		m_doorOpen = 0;		// Doors placed start open or closed (PlanDoor::open, PlanHatch::open).
+	QComboBox*		m_stairKind = 0;	// Stairs or a ramp, for those placed or right clicked.
+	QSpinBox*		m_stairWidth = 0;	// Cells across.
+	QComboBox*		m_stairSlope = 0;	// Steep, normal or gentle.
+	QLabel*			m_stairInfo = 0;	// How long and steep that makes it.
+	void			UpdateStairStyle();
 	QCheckBox*		m_slopedDecks = 0;
 	QComboBox*		m_hullStyle = 0;
 	QComboBox*		m_hullDoorExit = 0;
@@ -299,6 +317,21 @@ private:
 	QSpinBox*		m_reflect = 0;			// Percent.
 	QPushButton*	m_glow = 0;
 	QComboBox*		m_effect = 0;
+	// The texture of the colour picked (PlanPaint::texLib, texFile, wrap, ...).
+	QComboBox*		m_texKind = 0;		// Plain paint, a game texture, an image of one's own.
+	QComboBox*		m_texLib = 0;
+	QPushButton*	m_texFile = 0;
+	QComboBox*		m_texWrap = 0;
+	QDoubleSpinBox*	m_texFeet = 0;
+	QDoubleSpinBox*	m_texRotate = 0;
+	QSpinBox*		m_texTint = 0;
+	QPushButton*	m_brushOn = 0;
+	QComboBox*		m_brushShape = 0;
+	QDoubleSpinBox*	m_brushSize = 0;
+	QCheckBox*		m_brushRubOut = 0;
+	QLabel*			m_brushInfo = 0;
+	class QTimer*	m_brushTimer = 0;
+	bool			m_stroking = false;
 	QLabel*			m_finishNote = 0;
 	QDoubleSpinBox*	m_markingSize = 0;
 

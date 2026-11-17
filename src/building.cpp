@@ -74,7 +74,9 @@ const IndustryEntry kIndustries[] = {
 	{ IID_BaseBarracks, "Base Barracks", 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseMarineBarracks, "Marine Barracks", 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseHeadquarters, "Base Headquarters", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-	{ IID_BaseWeapon, "Weapon System", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+	// A weapon base: a weapon bay (a fire control station with bay volume).
+	// The stand-in asked for a turret as well, which the designer cannot make.
+	{ IID_BaseWeapon, "Weapon System", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseShield, "Shield Generator", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseRadar, "Radar", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 	{ IID_BaseGuardPost, "Guard Post", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -344,6 +346,39 @@ QList<BuildingTemplate> AllBuildingTemplates()
 
 	{
 		BuildingTemplate t;
+		t.key = "weapons_base";
+		t.label = "Weapons base";
+		t.description = "A military weapon emplacement: a fire control station running a weapon bay, with its "
+				"battery and sensors.";
+		t.footprintX = 120;
+		t.footprintY = 120;
+		t.rooms.clear();
+		t.volumes.weaponBays = 1;
+		t.volumes.sensors = 200;
+		t.volumes.capacitor = 300;
+		t.volumes.armor = 300;
+		t.industry = "military weapons base";
+		t.guardPosts = 2;
+		list << t;
+	}
+
+	{
+		BuildingTemplate t;
+		t.key = "shield_base";
+		t.label = "Shield base";
+		t.description = "A military shield generator: shields and their station.";
+		t.footprintX = 120;
+		t.footprintY = 120;
+		t.rooms.clear();
+		t.volumes.shields = 1500;
+		t.volumes.armor = 300;
+		t.industry = "military shield base";
+		t.guardPosts = 2;
+		list << t;
+	}
+
+	{
+		BuildingTemplate t;
 		t.key = "warehouse";
 		t.label = "Warehouse";
 		t.description = "Storage and distribution.";
@@ -528,6 +563,7 @@ static void briefFromJson(const QJsonObject& o, BuildingBrief& brief)
 	if(b.contains("buildZone"))		brief.buildZone = b.value("buildZone").toBool();
 	if(b.contains("lightRange"))	brief.lightRange = b.value("lightRange").toDouble();
 	if(b.contains("stackFields"))	brief.stackFields = b.value("stackFields").toBool();
+	if(b.contains("weaponModule"))	brief.weaponModule = b.value("weaponModule").toInt();
 
 	if(b.contains("footprint"))
 	{
@@ -592,6 +628,7 @@ static void briefFromJson(const QJsonObject& o, BuildingBrief& brief)
 		v.livestockPosts = vo.value("livestockPosts").toInt();
 		v.turrets = vo.value("turrets").toInt();
 		v.weaponBays = vo.value("weaponBays").toInt();
+		v.weaponBayVolume = quint32(qMax(0, vo.value("weaponBayVolume").toInt()));
 		v.surgery = vo.value("surgery").toInt();
 		v.transporters = vo.value("transporters").toInt();
 		v.parkGround = vo.value("parkGround").toInt();
@@ -670,6 +707,8 @@ QJsonObject BuildingBriefToJson(const BuildingBrief& brief)
 		o["buildZone"] = false;
 	if(brief.lightRange > 0)
 		o["lightRange"] = brief.lightRange;
+	if(brief.weaponModule)
+		o["weaponModule"] = brief.weaponModule;
 	QJsonArray fp;
 	fp.append(brief.footprintX);
 	fp.append(brief.footprintY);
@@ -714,6 +753,8 @@ QJsonObject BuildingBriefToJson(const BuildingBrief& brief)
 	vo["livestockPosts"] = v.livestockPosts;
 	vo["turrets"] = v.turrets;
 	vo["weaponBays"] = v.weaponBays;
+	if(v.weaponBayVolume)
+		vo["weaponBayVolume"] = int(v.weaponBayVolume);
 	vo["surgery"] = v.surgery;
 	vo["transporters"] = v.transporters;
 	vo["parkGround"] = v.parkGround;
@@ -985,6 +1026,13 @@ QStringList BuildingRuleWarnings(const BuildingBrief& brief)
 		w << "a park is only ground: one field (4,000 m2 of field paving), no hull, rooms or parking; the rest is left out.";
 	if((iid == IID_SeaPlatform || iid == IID_AerialPlatform) && brief.groundParking > 0)
 		w << "a sea or aerial platform has no site, so it has no ground parking.";
+	// The military bases: what their industry needs. The weapon emitters and
+	// stations drawn in the designer are counted when the building is built.
+	if(iid == IID_BaseWeapon && brief.volumes.weaponBays == 0 && brief.stations.isEmpty())
+		w << "a weapons base needs a weapon bay: set 'Weapon bays' to 1 or more, or draw a weapon emitter "
+			 "(Rooms page) or place a fire control station (Crew page).";
+	if(iid == IID_BaseShield && brief.volumes.shields == 0)
+		w << "a shield base needs shields: give it shield volume (a shield station is put in with it).";
 	if(brief.volumes.field > 1 && !brief.stackFields)
 		w << "several fields side by side take a lot of ground; 'stackFields' lays them on top of each other (the game adds up their area).";
 	return w;
@@ -1452,19 +1500,78 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 
 	}
 
-	// Control stations for the sensors and the shields. The engine insists
-	// that there is a station for every system that has volume allocated.
+	// Control stations for the sensors, the shields, the weapon bays and the
+	// rest. The engine insists that there is a station for every system that
+	// has volume allocated. Those placed by hand (the designer's Crew page)
+	// go first, where they were put; the generator adds only the rest.
 	{
 		AuMatrix4x4 plane = AuMatrix4x4::IdentityMatrix();
-		struct StationEntry { bool wanted; AuScPart::PART_TYPE type; COMMODITYID module; };
-		StationEntry entries[] = {
-			{ brief.volumes.sensors > 0, AuScPart::Part_ConsoleSensor, CID_SensorModule },
-			{ brief.volumes.shields > 0, AuScPart::Part_ConsoleShield, CID_EnergyShieldModule },
-			// No engineer's station for a battery: the game takes a building
-			// with battery and no station (seen in game, 9 November 2026).
-			{ brief.volumes.surgery > 0, AuScPart::Part_ConsoleMedic, CID_SurgeryMedicalModule },
-			{ brief.volumes.transporters > 0, AuScPart::Part_ConsoleTransporter, CID_PersonnelTransporterModule },
+		const COMMODITYID weaponModule = brief.weaponModule > 0 ? COMMODITYID(brief.weaponModule)
+				: CID_EnergyWeaponBayModule;
+		struct StationKind { const char* type; AuScPart::PART_TYPE part; COMMODITYID module; };
+		const StationKind kinds[] = {
+			{ "sensor", AuScPart::Part_ConsoleSensor, CID_SensorModule },
+			{ "shield", AuScPart::Part_ConsoleShield, CID_EnergyShieldModule },
+			{ "firecontrol", AuScPart::Part_ConsoleFireControl, weaponModule },
+			{ "medic", AuScPart::Part_ConsoleMedic, CID_SurgeryMedicalModule },
+			{ "transporter", AuScPart::Part_ConsoleTransporter, CID_PersonnelTransporterModule },
 		};
+		auto kindOf = [&kinds](const QString& type) -> const StationKind* {
+			for(const StationKind& k : kinds)
+				if(type == k.type)
+					return &k;
+			return nullptr;
+		};
+		// One console: true when the engine took it.
+		auto addConsole = [&](const StationKind& k, const AuPoint& at, double facing, COMMODITYID module, bool hand) {
+			AuScPart* part = AuScPart::Create(k.part);
+			AuScConsole* console = dynamic_cast<AuScConsole*>(part);
+			bool ok = false;
+			if(console)
+			{
+				console->MakeIcon(at, float(facing), plane);
+				console->SetModule(module);
+				// A weapon bay fires from its station until an emitter is set.
+				if(AuScConsoleFireControl* fc = dynamic_cast<AuScConsoleFireControl*>(console))
+					fc->SetEmitLoc(at + AuPoint(0, 0, 3.0));
+				if(console->IsValid())
+				{
+					const quint16 id = design.Parts().AddPart(*console);
+					if(id)
+					{
+						ok = true;
+						++result.postsPlaced;
+						if(k.part == AuScPart::Part_ConsoleFireControl)
+						{
+							result.weaponBayParts << id;
+							if(hand && module != weaponModule)
+								result.handModuleParts.insert(id);
+						}
+					}
+				}
+			}
+			delete part;
+			return ok;
+		};
+
+		QMap<QString, int> byHand;
+		for(const BuildingStation& st : brief.stations)
+		{
+			const StationKind* k = kindOf(st.type);
+			if(!k)
+			{
+				result.warnings << QString("a building has no use for a '%1' station; the one placed by hand was left out.")
+						.arg(st.type);
+				continue;
+			}
+			const COMMODITYID module = k->part == AuScPart::Part_ConsoleFireControl && st.module > 0
+					? COMMODITYID(st.module) : k->module;
+			if(addConsole(*k, AuPoint(st.x, st.y, st.z), st.facing, module, true))
+				byHand[st.type] += 1;
+			else
+				result.warnings << QString("the '%1' station placed by hand was not taken by the engine.").arg(st.type);
+		}
+
 		// The transporter goes in a transporter (teleporter) room when there
 		// is one, against its back wall, and gets its pads there.
 		const BuildingRoom* padRoom = 0;
@@ -1475,35 +1582,35 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 				padRoom = &br;
 				break;
 			}
+		// The rest: one of each system with volume (no engineer's station for
+		// a battery: the game takes a building with battery and no station,
+		// seen in game, 9 November 2026), and a fire control station for
+		// every weapon bay not placed by hand.
+		struct Wanted { const char* type; int count; };
+		const Wanted wanted[] = {
+			{ "sensor", brief.volumes.sensors > 0 ? 1 : 0 },
+			{ "shield", brief.volumes.shields > 0 ? 1 : 0 },
+			{ "medic", brief.volumes.surgery > 0 ? 1 : 0 },
+			{ "transporter", brief.volumes.transporters > 0 ? 1 : 0 },
+			{ "firecontrol", brief.volumes.weaponBays },
+		};
 		int slot = 0;
-		for(const StationEntry& e : entries)
+		for(const Wanted& w : wanted)
 		{
-			if(!e.wanted)
-				continue;
-			AuScPart* part = AuScPart::Create(e.type);
-			if(!part)
-				continue;
-			AuScConsole* console = dynamic_cast<AuScConsole*>(part);
-			if(!console)
+			const StationKind* k = kindOf(w.type);
+			for(int n = byHand.value(w.type); n < w.count; ++n)
 			{
-				delete part;
-				continue;
+				const double px = -brief.footprintX/4 + slot * 8;
+				AuPoint at;
+				if(k->part == AuScPart::Part_ConsoleTransporter && padRoom)
+					at = AuPoint((padRoom->mn.x + padRoom->mx.x) / 2, padRoom->mx.y - 4, padRoom->mn.z + 4);
+				else if(drawn && !allRooms.isEmpty())
+					at = DrawnSpot(allRooms, slot, 4);
+				else
+					at = AuPoint(px, brief.footprintY/4, wall + 4);
+				addConsole(*k, at, 0.0, k->module, false);
+				++slot;
 			}
-			const double px = -brief.footprintX/4 + slot * 8;
-			if(drawn && !allRooms.isEmpty() && !(e.type == AuScPart::Part_ConsoleTransporter && padRoom))
-				console->MakeIcon(DrawnSpot(allRooms, slot, 4), 0.f, plane);
-			else if(e.type == AuScPart::Part_ConsoleTransporter && padRoom)
-				console->MakeIcon(AuPoint((padRoom->mn.x + padRoom->mx.x) / 2, padRoom->mx.y - 4, padRoom->mn.z + 4), 0.f, plane);
-			else
-				console->MakeIcon(AuPoint(px, brief.footprintY/4, wall + 4), 0.f, plane);
-			console->SetModule(e.module);
-			if(console->IsValid())
-			{
-				design.Parts().AddPart(*console);
-				++result.postsPlaced;
-			}
-			delete part;
-			++slot;
 		}
 	}
 
@@ -1562,9 +1669,25 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 		const quint32 hullVolume = qMax(1u, design.HullVolume());
 
 		BuildingVolumes v = brief.volumes;
+		// Each weapon bay its own volume (as a ship's: 2 % of the hull each,
+		// unless the brief says), and an energy weapon bay needs a battery to
+		// fire: enough for a few shots at full power when the brief has none.
+		const int bays = result.weaponBayParts.size();
+		quint32 bayVolume = bays ? (v.weaponBayVolume ? v.weaponBayVolume : qMax(1u, quint32(hullVolume * .02))) : 0;
+		bool energyBays = false;
+		for(quint16 id : result.weaponBayParts)
+			if(const AuScPart* part = design.Parts().value(id))
+				energyBays = energyBays || part->Module() == CID_EnergyWeaponBayModule;
+		if(energyBays && v.capacitor == 0)
+		{
+			const quint32 projectors = AuBdDesign::BayWeaponProjectors(quint32(bayVolume * CubicFeetPerCubicMeter()));
+			v.capacitor = quint32(std::ceil(4.0 * projectors * bays * 256. / CubicFeetPerCubicMeter())) + 10;
+			result.warnings << QString("the energy weapon bay(s) need a battery to fire, so %1 cubic meters of battery "
+					"were added.").arg(v.capacitor);
+		}
 		const quint32 requested = v.offices + v.shops + v.store + v.lounge + v.homesLarge + v.homesMedium +
 			v.homesSmall + v.powerPlant + v.lifeSupport + v.capacitor + v.sensors + v.shields + v.hold + v.armor +
-			v.arena + v.auditorium;
+			v.arena + v.auditorium + bays * bayVolume;
 		if(requested > hullVolume)
 		{
 			// More than the building can hold. Scale it down.
@@ -1585,12 +1708,13 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 			v.armor = quint32(v.armor * factor);
 			v.arena = quint32(v.arena * factor);
 			v.auditorium = quint32(v.auditorium * factor);
+			bayVolume = qMax(bays ? 1u : 0u, quint32(bayVolume * factor));
 			result.warnings << QString("the building asked for more room than it has, so the systems were scaled down.");
 		}
 
 		const quint32 used = v.offices + v.shops + v.store + v.lounge + v.homesLarge + v.homesMedium +
 			v.homesSmall + v.powerPlant + v.lifeSupport + v.capacitor + v.sensors + v.shields + v.hold + v.armor +
-			v.arena + v.auditorium;
+			v.arena + v.auditorium + bays * bayVolume;
 		v.skeleton = (hullVolume > used) ? (hullVolume - used) : 0;
 
 		design.SetOfficeVolume(v.offices);
@@ -1614,16 +1738,19 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 		design.SetHoldVolume(v.hold);
 		design.SetArmorVolume(v.armor);
 		design.SetArenaVolume(v.arena);
+		for(quint16 id : result.weaponBayParts)
+			design.SetBayVolume(id, bayVolume);
 		design.SetAuditoriumVolume(v.auditorium);
 		design.SetSkeletonVolume(v.skeleton);
 
 		result.warnings << QString("hull volume %1 cubic meters: offices %2, shops %3, store %4, lounge %5, homes %6, "
 				"auditorium %7, arena %8, hold %9, power plant %10, life support %11, capacitor %12, sensors %13, "
-				"shields %14, armor %15, structure %16.")
+				"shields %14, armor %15, structure %16%17.")
 				.arg(hullVolume).arg(v.offices).arg(v.shops).arg(v.store).arg(v.lounge)
 				.arg(v.homesLarge + v.homesMedium + v.homesSmall).arg(v.auditorium).arg(v.arena).arg(v.hold)
 				.arg(v.powerPlant).arg(v.lifeSupport).arg(v.capacitor).arg(v.sensors).arg(v.shields)
-				.arg(v.armor).arg(v.skeleton);
+				.arg(v.armor).arg(v.skeleton)
+				.arg(bays ? QString(", %1 weapon bay(s) of %2").arg(bays).arg(bayVolume) : QString());
 	}
 
 	// The industry says what the building is for. When the brief does not

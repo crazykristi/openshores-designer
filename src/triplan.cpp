@@ -78,6 +78,14 @@ void TriPlan::Resize(int width, int depth)
 	const int ox = (width - m_width) / 2;
 	const int oy = (depth - m_depth) / 2;
 	const bool empty = m_hull.isEmpty();
+	// Plan space is centred on the grid: the cells move by half a cell where
+	// the grid grows by an odd number of them.
+	{
+		const QVector3D shift(float((ox - (width - m_width) / 2.0) * cellFeet),
+							  float((oy - (depth - m_depth) / 2.0) * cellFeet), 0.f);
+		if(!shift.isNull())
+			TransformStrokes([shift](const QVector3D& p) { return p + shift; }, [](const QVector3D& v) { return v; });
+	}
 
 	QVector<QVector<quint8> > hull(m_decks), paint(m_decks);
 	QVector<QVector<qint16> > room(m_decks);
@@ -125,6 +133,11 @@ void TriPlan::Resize(int width, int depth)
 	{
 		ladder.cx += ox;
 		ladder.cy += oy;
+	}
+	for(PlanHatch& hatch : hatches)
+	{
+		hatch.cx += ox;
+		hatch.cy += oy;
 	}
 	for(PlanSkylight& window : skylights)
 	{
@@ -193,12 +206,16 @@ void TriPlan::AddDeck(bool below)
 		m_hull.prepend(hull);
 		m_paint.prepend(paint);
 		m_room.prepend(room);
+		const QVector3D up(0.f, 0.f, float(deckFeet));
+		TransformStrokes([up](const QVector3D& p) { return p + up; }, [](const QVector3D& v) { return v; });
 		for(PlanDoor& door : doors)
 			++door.deck;
 		for(PlanDoor& window : windows)
 			++window.deck;
 		for(PlanLadder& ladder : ladders)
 			++ladder.deck;
+		for(PlanHatch& hatch : hatches)
+			++hatch.deck;
 		for(PlanSkylight& window : skylights)
 			++window.deck;
 		for(PlanParking& spot : parking)
@@ -296,6 +313,12 @@ int TriPlan::CopyDeck(int deck, int times, bool withRooms)
 				roomGrid[i] = (qint16)map.value(r);
 			}
 		}
+		{
+			// What was brushed on the decks from 'at' up goes up with them.
+			const QVector3D up(0.f, 0.f, float(deckFeet));
+			TransformStrokes([up](const QVector3D& p) { return p + up; }, [](const QVector3D& v) { return v; },
+							 [this, at](const PlanStamp& s) { return DeckAt(s.at.z()) >= at; });
+		}
 		m_hull.insert(at, m_hull.at(from));
 		m_paint.insert(at, m_paint.at(from));
 		m_room.insert(at, roomGrid);
@@ -303,6 +326,7 @@ int TriPlan::CopyDeck(int deck, int times, bool withRooms)
 		InsertDeckCopy(doors, from, at, withRooms);
 		InsertDeckCopy(windows, from, at, withRooms);
 		InsertDeckCopy(ladders, from, at, withRooms);
+		InsertDeckCopy(hatches, from, at, withRooms);
 		InsertDeckCopy(skylights, from, at, withRooms);
 		InsertDeckCopy(parking, from, at, withRooms);
 		InsertDeckCopy(stairs, from, at, withRooms);
@@ -378,6 +402,21 @@ void TriPlan::RemoveDeck(int deck)
 {
 	if(m_decks <= 1 || deck < 0 || deck >= m_decks)
 		return;
+	// What was brushed on the deck goes with it; what is above comes down.
+	for(int i = strokes.size() - 1; i >= 0; --i)
+	{
+		QList<PlanStamp>& stamps = strokes[i].stamps;
+		for(int j = stamps.size() - 1; j >= 0; --j)
+			if(DeckAt(stamps.at(j).at.z()) == deck)
+				stamps.removeAt(j);
+		if(stamps.isEmpty())
+			strokes.removeAt(i);
+	}
+	{
+		const QVector3D down(0.f, 0.f, float(-deckFeet));
+		TransformStrokes([down](const QVector3D& p) { return p + down; }, [](const QVector3D& v) { return v; },
+						 [this, deck](const PlanStamp& s) { return DeckAt(s.at.z()) > deck; });
+	}
 	m_hull.remove(deck);
 	m_paint.remove(deck);
 	m_room.remove(deck);
@@ -413,6 +452,17 @@ void TriPlan::RemoveDeck(int deck)
 		keptLadders << ladder;
 	}
 	ladders = keptLadders;
+
+	QList<PlanHatch> keptHatches;
+	for(PlanHatch hatch : hatches)
+	{
+		if(hatch.deck == deck || hatch.deck + 1 == deck)
+			continue;
+		if(hatch.deck > deck)
+			--hatch.deck;
+		keptHatches << hatch;
+	}
+	hatches = keptHatches;
 
 	QList<PlanSkylight> keptSkylights;
 	for(PlanSkylight window : skylights)
@@ -510,6 +560,25 @@ void TriPlan::SetPaint(const TriRef& t, int paint)
 	if(!Valid(t))
 		return;
 	m_paint[t.deck][Index(t.cx, t.cy, t.k)] = quint8(qBound(0, paint, 255));
+}
+
+int TriPlan::DeckAt(double z) const
+{
+	return qBound(0, int(std::floor(z / qMax(0.1, deckFeet))), m_decks - 1);
+}
+
+void TriPlan::TransformStrokes(const std::function<QVector3D(const QVector3D&)>& point,
+							   const std::function<QVector3D(const QVector3D&)>& vector,
+							   const std::function<bool(const PlanStamp&)>& which)
+{
+	for(PlanStroke& s : strokes)
+		for(PlanStamp& st : s.stamps)
+			if(!which || which(st))
+			{
+				st.at = point(st.at);
+				st.eye = point(st.eye);
+				st.up = vector(st.up);
+			}
 }
 
 QPointF TriPlan::Corner(int ix, int iy) const
@@ -656,6 +725,27 @@ int TriPlan::NewDoorRow() const
 	for(const PlanDoor& d : doors)
 		most = qMax(most, d.row);
 	return most + 1;
+}
+
+int TriPlan::NewHatchRow() const
+{
+	int most = 0;
+	for(const PlanHatch& h : hatches)
+		most = qMax(most, h.row);
+	return most + 1;
+}
+
+int TriPlan::HatchAt(int deck, int cx, int cy) const
+{
+	for(int i = 0; i < hatches.size(); ++i)
+		if(hatches.at(i).deck == deck && hatches.at(i).cx == cx && hatches.at(i).cy == cy)
+			return i;
+	return -1;
+}
+
+bool TriPlan::HatchFits(int deck, int cx, int cy) const
+{
+	return deck >= 0 && deck + 1 < m_decks && CellRoom(deck, cx, cy) >= 0 && CellRoom(deck + 1, cx, cy) >= 0;
 }
 
 int TriPlan::NewWindowRow() const
@@ -893,7 +983,7 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 		upsideDown = false;
 	if(!foreAft && !portStarboard && !upsideDown)
 		return 0;
-	const int before = ladders.size() + skylights.size() + stairs.size() + parking.size();
+	const int before = ladders.size() + hatches.size() + skylights.size() + stairs.size() + parking.size();
 	// Upside down is a half turn about x: y is mirrored as well as z.
 	const bool my = portStarboard != upsideDown;
 	auto flipped = [&](int d) { return deck < 0 || d == deck; };
@@ -952,6 +1042,16 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 			e.cy = cellY(e.cy);
 			e.k = side(e.k);
 		}
+	{
+		// Plan space is centred on the grid; upside down mirrors the height
+		// of all the decks.
+		const float sx = foreAft ? -1.f : 1.f, sy = my ? -1.f : 1.f, sz = upsideDown ? -1.f : 1.f;
+		const float top = float(m_decks * deckFeet);
+		TransformStrokes([=](const QVector3D& p) {
+				return QVector3D(p.x() * sx, p.y() * sy, upsideDown ? top - p.z() : p.z()); },
+			[=](const QVector3D& v) { return QVector3D(v.x() * sx, v.y() * sy, v.z() * sz); },
+			[&](const PlanStamp& s) { return deck < 0 || DeckAt(s.at.z()) == deck; });
+	}
 	// Placed by hand: points in cells, and the way they face.
 	auto flipYaw = [&](double yaw) {
 		if(foreAft)
@@ -1052,10 +1152,19 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 			ladder.cx = cellX(ladder.cx);
 			ladder.cy = cellY(ladder.cy);
 		}
+		for(PlanHatch& hatch : hatches)
+		{
+			hatch.deck = upsideDown ? m_decks - 2 - hatch.deck : hatch.deck;
+			hatch.cx = cellX(hatch.cx);
+			hatch.cy = cellY(hatch.cy);
+		}
 		if(upsideDown)
 			stairs.clear();		// They would climb down; drawn again by hand.
 		for(PlanStair& stair : stairs)
 		{
+			// One mirror turns left into right: the far lane becomes the first.
+			if(reversed && stair.width > 1)
+				StairCell(stair, 0, stair.cx, stair.cy, stair.width - 1);
 			stair.cx = cellX(stair.cx);
 			stair.cy = cellY(stair.cy);
 			stair.side = side(stair.side);
@@ -1077,7 +1186,7 @@ int TriPlan::Flip(bool foreAft, bool portStarboard, bool upsideDown, int deck)
 		}
 	}
 	Tidy();
-	return before - (ladders.size() + skylights.size() + stairs.size() + parking.size());
+	return before - (ladders.size() + hatches.size() + skylights.size() + stairs.size() + parking.size());
 }
 
 int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
@@ -1123,10 +1232,17 @@ int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
 				*grew = true;
 		}
 	}
-	const int before = ladders.size() + skylights.size() + stairs.size() + parking.size();
+	const int before = ladders.size() + hatches.size() + skylights.size() + stairs.size() + parking.size();
 	const int w = m_width, h = m_depth;
 	const int nw = deck >= 0 ? w : h, nh = deck >= 0 ? h : w;
 	auto turned = [&](int d) { return deck < 0 || d == deck; };
+	{
+		// Clockwise seen from above: (x, y) to (y, -x), about the middle.
+		auto turn = [clockwise](const QVector3D& p) {
+			return clockwise ? QVector3D(p.y(), -p.x(), p.z()) : QVector3D(-p.y(), p.x(), p.z());
+		};
+		TransformStrokes(turn, turn, [&](const PlanStamp& s) { return deck < 0 || DeckAt(s.at.z()) == deck; });
+	}
 	// Cells, and points in cells (corners, eighths over 8).
 	auto cellX = [&](int cx, int cy) { return clockwise ? cy + (nw - h) / 2 : (nw + h) / 2 - 1 - cy; };
 	auto cellY = [&](int cx, int cy) { return clockwise ? (nh + w) / 2 - 1 - cx : cx + (nh - w) / 2; };
@@ -1275,6 +1391,12 @@ int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
 			ladder.cx = cellX(cx, cy);
 			ladder.cy = cellY(cx, cy);
 		}
+		for(PlanHatch& hatch : hatches)
+		{
+			const int cx = hatch.cx, cy = hatch.cy;
+			hatch.cx = cellX(cx, cy);
+			hatch.cy = cellY(cx, cy);
+		}
 		for(PlanStair& stair : stairs)
 		{
 			const int cx = stair.cx, cy = stair.cy;
@@ -1286,7 +1408,7 @@ int TriPlan::Rotate(bool clockwise, int deck, bool* grew)
 			model.quarterTurns = (model.quarterTurns + (clockwise ? 1 : 3)) % 4;
 	}
 	Tidy();
-	return before - (ladders.size() + skylights.size() + stairs.size() + parking.size());
+	return before - (ladders.size() + hatches.size() + skylights.size() + stairs.size() + parking.size());
 }
 
 int TriPlan::RoomAtPoint(int deck, double x, double y) const
@@ -1302,11 +1424,12 @@ QList<QPair<QString, QString> > TriPlan::BuildKinds()
 	return {
 		{ "doors", "Doors" }, { "doorButtons", "Door buttons" }, { "innerWindows", "Windows between rooms" },
 		{ "balconies", "Balconies" }, { "windows", "Windows" }, { "skylights", "Ceiling windows" },
-		{ "liveries", "Livery cuts (liveries are plain paint without)" }, { "ladders", "Ladders" }, { "stairs", "Stairs" },
+		{ "liveries", "Livery cuts (liveries are plain paint without)" }, { "ladders", "Ladders" }, { "hatches", "Doors in floors and ceilings" }, { "stairs", "Stairs and ramps" },
 		{ "ramps", "Ramps and ladders down from hull doors" }, { "parking", "Vehicle parking and landing spots" },
 		{ "contrails", "Contrail emitters" }, { "weapons", "Weapon emitters" }, { "markings", "Empire flags and names" },
 		{ "stations", "Stations" }, { "berths", "Berths" }, { "pads", "Transporter pads" },
-		{ "systems", "System volumes and service panels" }, { "paths", "Walk paths" }, { "decals", "Decals" } };
+		{ "systems", "System volumes and service panels" }, { "paths", "Walk paths" }, { "decals", "Decals" },
+		{ "strokes", "Paint brushed in the 3D view" } };
 }
 
 template<typename T> static void DropSkipped(QList<T>& list)
@@ -1375,11 +1498,36 @@ TriPlan TriPlan::ForBuild() const
 {
 	TriPlan plan = *this;
 	const QStringList& out = buildLeaveOut;
+	// Textured colours: a palette slot each (one for the same texture), from
+	// the top down, past the slotOf a new design uses (0 to 2 and 5; slot 1
+	// is the construction material). Rooms and doors take theirs from the
+	// bottom up, decals from the top down past those in use.
+	{
+		QHash<QString, int> slotOf;
+		int next = 14;		// SCTEXI_Count - 1: the palette has 15 slots, 0 to 14.
+		for(PlanPaint& p : plan.palette)
+		{
+			p.slot = -1;
+			if(!p.HasTexture())
+				continue;
+			const QString key = p.texLib >= 0 ? QString("lib:%1").arg(p.texLib) : "file:" + p.texFile;
+			if(!slotOf.contains(key))
+			{
+				while(next == 5)
+					--next;
+				if(next < 3)
+					continue;		// Out of slots: plain paint (the build says so).
+				slotOf.insert(key, next--);
+			}
+			p.slot = slotOf.value(key);
+		}
+	}
 	if(plan.IsFighter())
 		plan.ftlDrive = "none";		// The FTL drive's least volume is more than a fighter's hull.
 	DropSkipped(plan.doors);
 	DropSkipped(plan.windows);
 	DropSkipped(plan.ladders);
+	DropSkipped(plan.hatches);
 	DropSkipped(plan.skylights);
 	DropSkipped(plan.stairs);
 	DropSkipped(plan.parking);
@@ -1393,6 +1541,8 @@ TriPlan TriPlan::ForBuild() const
 	DropSkipped(plan.decals);
 	if(out.contains("decals"))
 		plan.decals.clear();
+	if(out.contains("strokes"))
+		plan.strokes.clear();
 	for(int k = plan.doors.size() - 1; k >= 0; --k)
 	{
 		const QString& kind = plan.doors.at(k).kind;
@@ -1411,6 +1561,8 @@ TriPlan TriPlan::ForBuild() const
 			p.livery = false;
 	if(out.contains("ladders"))
 		plan.ladders.clear();
+	if(out.contains("hatches"))
+		plan.hatches.clear();
 	if(out.contains("stairs"))
 		plan.stairs.clear();
 	if(out.contains("ramps"))
@@ -1451,15 +1603,40 @@ TriPlan TriPlan::ForBuild() const
 	return plan;
 }
 
-int TriPlan::StairCells() const
+double StairRunPerRise(const QString& kind, const QString& slope)
 {
-	return qMax(2, int(ceil(deckFeet * 1.4 / cellFeet - 1e-6)));
+	if(kind == "ramp")
+		return slope == "steep" ? 1.5 : slope == "gentle" ? 4.0 : 2.5;
+	return slope == "steep" ? 1.1 : slope == "gentle" ? 2.0 : 1.4;
 }
 
-void TriPlan::StairCell(const PlanStair& stair, int i, int& cx, int& cy) const
+int TriPlan::StairCells(const QString& kind, const QString& slope) const
 {
-	cx = stair.cx + (stair.side == TRI_E ? i : stair.side == TRI_W ? -i : 0);
-	cy = stair.cy + (stair.side == TRI_N ? i : stair.side == TRI_S ? -i : 0);
+	auto cells = [this, &kind](const QString& s) {
+		return qMax(2, int(ceil(deckFeet * StairRunPerRise(kind, s) / cellFeet - 1e-6)));
+	};
+	// Steep and gentle are at least a cell shorter and longer than normal
+	// (on a coarse grid they would round to the same length).
+	const int normal = cells(QString());
+	if(slope == "steep")
+		return qMax(2, qMin(cells(slope), normal - 1));
+	if(slope == "gentle")
+		return qMax(cells(slope), normal + 1);
+	return normal;
+}
+
+int TriPlan::StairCells(const PlanStair& stair) const
+{
+	return StairCells(stair.kind, stair.slope);
+}
+
+void TriPlan::StairCell(const PlanStair& stair, int i, int& cx, int& cy, int lane) const
+{
+	// Up and to the left of up.
+	const int ux = stair.side == TRI_E ? 1 : stair.side == TRI_W ? -1 : 0;
+	const int uy = stair.side == TRI_N ? 1 : stair.side == TRI_S ? -1 : 0;
+	cx = stair.cx + ux * i - uy * lane;
+	cy = stair.cy + uy * i + ux * lane;
 }
 
 int TriPlan::StairAt(int deck, int cx, int cy) const
@@ -1468,13 +1645,15 @@ int TriPlan::StairAt(int deck, int cx, int cy) const
 	{
 		if(stairs.at(i).deck != deck)
 			continue;
-		for(int j = 0; j < StairCells(); ++j)
-		{
-			int x, y;
-			StairCell(stairs.at(i), j, x, y);
-			if(x == cx && y == cy)
-				return i;
-		}
+		const PlanStair& st = stairs.at(i);
+		for(int lane = 0; lane < qMax(1, st.width); ++lane)
+			for(int j = 0; j < StairCells(st); ++j)
+			{
+				int x, y;
+				StairCell(st, j, x, y, lane);
+				if(x == cx && y == cy)
+					return i;
+			}
 	}
 	return -1;
 }
@@ -1486,35 +1665,46 @@ bool TriPlan::StairFits(const PlanStair& stair, QString* why) const
 			*why = text;
 		return false;
 	};
-	const int n = StairCells();
+	const int n = StairCells(stair);
+	const int lanes = qMax(1, stair.width);
+	const QString what = stair.IsRamp() ? "ramp" : "stairs";
+	const QString What = stair.IsRamp() ? "The ramp" : "The stairs";
+	if(stair.width < 1 || stair.width > 3)
+		return no(QString("%1 can be 1 to 3 cells wide.").arg(What));
 	if(stair.deck < 0 || stair.deck + 1 >= m_decks)
-		return no("Stairs go up to the deck above; there is none.");
+		return no(QString("%1 goes up to the deck above; there is none.").arg(What));
 	int x, y;
 	StairCell(stair, 0, x, y);
 	const int lower = CellRoom(stair.deck, x, y);
 	StairCell(stair, n, x, y);
 	const int upper = CellRoom(stair.deck + 1, x, y);
-	if(upper < 0)
-		return no(QString("The stairs climb %1 cells and come out on the next cell, on the deck above; that cell "
-				"has to be a whole cell of room.").arg(n));
-	for(int i = 0; i < n; ++i)
+	for(int lane = 0; lane < lanes; ++lane)
 	{
-		StairCell(stair, i, x, y);
-		if(lower < 0 || CellRoom(stair.deck, x, y) != lower)
-			return no(QString("The %1 cells the stairs climb over have to be whole cells of one room.").arg(n));
-		if(CellRoom(stair.deck + 1, x, y) != upper)
-			return no(QString("On the deck above, the %1 cells over the stairs have to be in the room the stairs "
-					"come out in (the opening is cut through its floor).").arg(n));
-		if(LadderAt(stair.deck, x, y) >= 0 || LadderAt(stair.deck + 1, x, y) >= 0)
-			return no("The stairs would run into a ladder.");
-		for(int j = 0; j < stairs.size(); ++j)
+		StairCell(stair, n, x, y, lane);
+		if(upper < 0 || CellRoom(stair.deck + 1, x, y) != upper)
+			return no(QString("%1 climbs %2 cells and comes out on the next %3, on the deck above; %4 to be "
+					"whole cells of one room.").arg(What).arg(n).arg(lanes == 1 ? "cell" : QString("%1 cells").arg(lanes))
+					.arg(lanes == 1 ? "that cell has" : "they have"));
+		for(int i = 0; i < n; ++i)
 		{
-			const PlanStair& other = stairs.at(j);
-			if(other.deck == stair.deck && other.cx == stair.cx && other.cy == stair.cy && other.side == stair.side)
-				continue;
-			for(int d = -1; d <= 1; ++d)
-				if(StairAt(stair.deck + d, x, y) == j)
-					return no("The stairs would run into other stairs.");
+			StairCell(stair, i, x, y, lane);
+			if(lower < 0 || CellRoom(stair.deck, x, y) != lower)
+				return no(QString("The %1 by %2 cells the %3 climbs over have to be whole cells of one room.")
+						.arg(n).arg(lanes).arg(what));
+			if(CellRoom(stair.deck + 1, x, y) != upper)
+				return no(QString("On the deck above, the cells over the %1 have to be in the room it comes out in "
+						"(the opening is cut through its floor).").arg(what));
+			if(LadderAt(stair.deck, x, y) >= 0 || LadderAt(stair.deck + 1, x, y) >= 0)
+				return no(QString("%1 would run into a ladder.").arg(What));
+			for(int j = 0; j < stairs.size(); ++j)
+			{
+				const PlanStair& other = stairs.at(j);
+				if(other.deck == stair.deck && other.cx == stair.cx && other.cy == stair.cy && other.side == stair.side)
+					continue;
+				for(int d = -1; d <= 1; ++d)
+					if(StairAt(stair.deck + d, x, y) == j)
+						return no(QString("%1 would run into other stairs or a ramp.").arg(What));
+			}
 		}
 	}
 	return true;
@@ -1578,6 +1768,18 @@ void TriPlan::Tidy()
 		if(CellRoom(ladder.deck, ladder.cx, ladder.cy) >= 0 && CellRoom(ladder.deck + 1, ladder.cx, ladder.cy) >= 0)
 			keptLadders << ladder;
 	ladders = keptLadders;
+
+	// A hatch needs a room on both sides of the floor, and one per cell.
+	QList<PlanHatch> keptHatches;
+	for(const PlanHatch& hatch : hatches)
+	{
+		bool twice = false;
+		for(const PlanHatch& k : keptHatches)
+			twice = twice || (k.deck == hatch.deck && k.cx == hatch.cx && k.cy == hatch.cy);
+		if(!twice && HatchFits(hatch.deck, hatch.cx, hatch.cy))
+			keptHatches << hatch;
+	}
+	hatches = keptHatches;
 
 	// One at a time, so of two that cover the same triangle the first stays.
 	const QList<PlanSkylight> allSkylights = skylights;
@@ -1755,6 +1957,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 			o["rampRun"] = d.rampRun;
 		if(!d.kind.isEmpty())
 			o["kind"] = d.kind;
+		if(d.open)
+			o["open"] = true;
 		if(!d.buttons.isEmpty())
 		{
 			QJsonArray buttons;
@@ -1801,6 +2005,26 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		ladderArray.append(o);
 	}
 	root["ladders"] = ladderArray;
+
+	QJsonArray hatchArray;
+	for(const PlanHatch& h : hatches)
+	{
+		QJsonObject o;
+		o["deck"] = h.deck;
+		o["x"] = h.cx;
+		o["y"] = h.cy;
+		if(h.row)
+			o["row"] = h.row;
+		if(h.open)
+			o["open"] = true;
+		if(h.tex >= 0)
+			o["texture"] = h.tex;
+		if(h.skip)
+			o["skip"] = true;
+		hatchArray.append(o);
+	}
+	if(!hatchArray.isEmpty())
+		root["hatches"] = hatchArray;
 
 	QJsonArray skylightArray;
 	for(const PlanSkylight& window : skylights)
@@ -1878,6 +2102,12 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["x"] = st.cx;
 		o["y"] = st.cy;
 		o["side"] = st.side;
+		if(st.IsRamp())
+			o["kind"] = st.kind;
+		if(st.width != 1)
+			o["width"] = st.width;
+		if(!st.slope.isEmpty())
+			o["slope"] = st.slope;
 		if(st.skip)
 			o["skip"] = true;
 		stairArray.append(o);
@@ -2001,9 +2231,43 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 			o["glow"] = ColourName(p.glow);
 		if(p.effect != 0)
 			o["effect"] = p.effect;
+		if(p.HasTexture())
+		{
+			if(p.texLib >= 0)
+				o["texture"] = p.texLib;
+			else
+				o["textureFile"] = p.texFile;
+			o["wrap"] = p.wrap;
+			o["textureFeet"] = std::round(p.texFeet * 100) / 100;
+			if(p.texRotate != 0)
+				o["textureRotate"] = std::round(p.texRotate * 10) / 10;
+			if(p.tint > 0.f)
+				o["tint"] = Rounded(p.tint);
+		}
 		paintArray.append(o);
 	}
 	root["palette"] = paintArray;
+	if(!strokes.isEmpty())
+	{
+		// Each stamp: where it met the hull, the eye, up on the screen.
+		auto r2 = [](float v) { return std::round(double(v) * 100.0) / 100.0; };
+		auto r3 = [](float v) { return std::round(double(v) * 1000.0) / 1000.0; };
+		QJsonArray strokeArray;
+		for(const PlanStroke& s : strokes)
+		{
+			QJsonObject o;
+			o["paint"] = s.paint;
+			o["shape"] = s.square ? "square" : "circle";
+			o["size"] = std::round(s.size * 100) / 100;
+			QJsonArray stamps;
+			for(const PlanStamp& st : s.stamps)
+				stamps.append(QJsonArray({ r2(st.at.x()), r2(st.at.y()), r2(st.at.z()), r2(st.eye.x()), r2(st.eye.y()),
+						r2(st.eye.z()), r3(st.up.x()), r3(st.up.y()), r3(st.up.z()) }));
+			o["stamps"] = stamps;
+			strokeArray.append(o);
+		}
+		root["strokes"] = strokeArray;
+	}
 	if(!decals.isEmpty())
 	{
 		QJsonArray decalArray;
@@ -2170,6 +2434,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		d.kind = o["kind"].toString();
 		if(d.kind != "window" && d.kind != "balcony")
 			d.kind.clear();
+		d.open = o["open"].toBool();
 		for(const QJsonValue& b : o["buttons"].toArray())
 			if(b.toArray().size() == 2 && d.buttons.size() < 2)
 				d.buttons << QPointF(b.toArray().at(0).toDouble(), b.toArray().at(1).toDouble());
@@ -2203,6 +2468,20 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		l.cy = o["y"].toInt();
 		l.skip = o["skip"].toBool();
 		plan.ladders << l;
+	}
+	plan.hatches.clear();
+	for(const QJsonValue& v : root["hatches"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanHatch h;
+		h.deck = o["deck"].toInt();
+		h.cx = o["x"].toInt();
+		h.cy = o["y"].toInt();
+		h.row = qMax(0, o["row"].toInt());
+		h.open = o["open"].toBool();
+		h.tex = o["texture"].toInt(-1);
+		h.skip = o["skip"].toBool();
+		plan.hatches << h;
 	}
 	plan.skylights.clear();
 	for(const QJsonValue& v : root["skylights"].toArray())
@@ -2279,6 +2558,11 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		st.cx = o["x"].toInt();
 		st.cy = o["y"].toInt();
 		st.side = qBound(0, o["side"].toInt(), 3);
+		st.kind = o["kind"].toString() == "ramp" ? "ramp" : "";
+		st.width = qBound(1, o["width"].toInt(1), 3);
+		st.slope = o["slope"].toString();
+		if(st.slope != "steep" && st.slope != "gentle")
+			st.slope.clear();
 		st.skip = o["skip"].toBool();
 		plan.stairs << st;
 	}
@@ -2358,6 +2642,28 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	for(const QJsonValue& v : root["buildLeaveOut"].toArray())
 		plan.buildLeaveOut << v.toString();
 
+	plan.strokes.clear();
+	for(const QJsonValue& v : root["strokes"].toArray())
+	{
+		const QJsonObject o = v.toObject();
+		PlanStroke s;
+		s.paint = qMax(-1, o["paint"].toInt(0));
+		s.square = o["shape"].toString() == "square";
+		s.size = qBound(0.1, o["size"].toDouble(4.0), 1000.0);
+		for(const QJsonValue& sv : o["stamps"].toArray())
+		{
+			const QJsonArray a = sv.toArray();
+			if(a.size() < 9)
+				continue;
+			PlanStamp st;
+			st.at = QVector3D(float(a[0].toDouble()), float(a[1].toDouble()), float(a[2].toDouble()));
+			st.eye = QVector3D(float(a[3].toDouble()), float(a[4].toDouble()), float(a[5].toDouble()));
+			st.up = QVector3D(float(a[6].toDouble()), float(a[7].toDouble()), float(a[8].toDouble()));
+			s.stamps << st;
+		}
+		if(!s.stamps.isEmpty())
+			plan.strokes << s;
+	}
 	plan.decals.clear();
 	for(const QJsonValue& v : root["decals"].toArray())
 	{
@@ -2387,6 +2693,14 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 			if(o.contains("glow"))
 				p.glow = QColor(o["glow"].toString());
 			p.effect = qMax(0, o["effect"].toInt(0));		// Checked against the engine when built.
+			p.texLib = o["texture"].toInt(-1);
+			p.texFile = p.texLib >= 0 ? QString() : o["textureFile"].toString();
+			p.wrap = o["wrap"].toString("face");
+			if(!QStringList({ "face", "top", "side", "front", "cylinder", "sphere" }).contains(p.wrap))
+				p.wrap = "face";
+			p.texFeet = qBound(0.25, o["textureFeet"].toDouble(8.0), 1000.0);
+			p.texRotate = o["textureRotate"].toDouble(0.0);
+			p.tint = float(qBound(0.0, o["tint"].toDouble(0.0), 1.0));
 			plan.palette << p;
 		}
 	}

@@ -1561,6 +1561,8 @@ int cmdBuildPlan(const QStringList& args)
 	if(report.canopies)
 		out() << "Canopies     : " << report.canopies << "\n";
 	out() << "Ladders      : " << report.ladders << "\n";
+	if(report.hatches)
+		out() << "Floor doors  : " << report.hatches << "\n";
 	if(report.windowLining)
 		out() << "Window lining: " << report.windowLining << " faces\n";
 	out() << "Zero-G joins : " << report.zeroGJoins;

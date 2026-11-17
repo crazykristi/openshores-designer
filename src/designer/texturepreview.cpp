@@ -95,6 +95,19 @@ QIcon GameTextureIcon(int libTexId)
 	return icon;
 }
 
+QList<QPair<int, QString> > GameLibraryTextures()
+{
+	QList<QPair<int, QString> > list;
+	const int count = AuTextureLibItem::LibraryTextureCount();
+	for(int id = 0; id < count; ++id)
+	{
+		const QString name = AuTextureLibItem::LibraryTextureName(quint16(id));
+		if(!name.isEmpty())
+			list << qMakePair(id, name);
+	}
+	return list;
+}
+
 QString GameTextureLibrary()
 {
 	FindLibrary();

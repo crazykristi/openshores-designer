@@ -173,6 +173,14 @@ void StyleDoor(AuScPart* door, bool hullDoor);
 bool AddInteriorDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMax, int normalAxis,
 		const QString& groupName, quint16& doorId, quint16 roomMeshA = 0, quint16 roomMeshB = 0);
 
+// A door in the floor between two rooms, one above the other (a hatch): the
+// box 'jigMin'..'jigMax' is cut through the lower room's ceiling and the upper
+// room's floor (both lie inside it) the way the game's designer cuts a door,
+// and the cut-away pieces become the door. Its doorway, a void that only
+// exists while the door is open, reaches 'reach' feet into both rooms.
+bool AddHatch(AuDesign& design, const AuPoint& jigMin, const AuPoint& jigMax, double reach,
+		const QString& groupName, quint16& doorId, quint16 lowerMeshId, quint16 upperMeshId);
+
 // A door out through the hull. The slab is at the hull surface; 'outward' is
 // the unit direction out of the ship (along x or y); 'roomWall' is where the
 // room's wall is along that axis and 'surface' where the hull surface is.
@@ -242,7 +250,10 @@ bool SetRoomAccess(AuDesign& design, quint16 voidId, int access);
 bool SetVoidGravity(AuDesign& design, quint16 voidId, GRAVITY gravity);
 
 // A ladder path from 'bottom' up to 'top'; 'facing' is the way a climber faces.
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing);
+// With 'doorId', the path is only there while that door is open (a ladder
+// through a hatch).
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing,
+		quint16 doorId = 0);
 
 // What a ladder between decks looks like, beside its path: the opening is
 // cut through the lower room's ceiling and the upper room's floor with the
@@ -274,8 +285,10 @@ bool AddOutsideLadderClearance(AuDesign& design, const AuPoint& ladderFoot, cons
 // (X or Y), 'width' wide, and steps (a mesh) that show it. The opening
 // above and the void through it are the caller's (CutLadderOpening,
 // AddShaft), as for a ladder.
+// A flight of stairs, or with 'ramp' a smooth slope (a wedge from the floor
+// up) instead of the steps; either way an invisible slope is walked on.
 bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, double width, double run, double rise,
-		const QString& groupName);
+		const QString& groupName, bool ramp = false);
 
 // A rail on a floor from 'from' to 'to' (along X or Y, at the floor's
 // height): an invisible Barrier that nobody walks through, and a rail on

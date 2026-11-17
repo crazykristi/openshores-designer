@@ -41,6 +41,14 @@ public:
 		m_doorExit = exit;
 		m_doorRampRun = rampRun;
 	}
+	// Doors and hatches placed from now on, or right clicked, start open.
+	void	SetDoorOpen(bool open) { m_doorOpen = open; }
+	// Stairs and ramps placed from now on, or right clicked: "" stairs or
+	// "ramp", 1 to 3 cells wide, "" normal, "steep" or "gentle".
+	void	SetStairStyle(const QString& kind, int width, const QString& slope)
+	{ m_stairKind = kind; m_stairWidth = width; m_stairSlope = slope; }
+	// The hatch tool puts doors in the floor of the deck shown (true) or its ceiling.
+	void	SetHatchFloor(bool floor) { m_hatchFloor = floor; }
 	enum Mode { HullMode, RoomMode, DoorMode, LadderMode, PaintMode, WindowMode, GroundParkingMode, SpaceParkingMode, SpacecraftParkingMode, StairMode,
 			ContrailMode, WeaponMode, SkylightMode, MarkingMode,
 			// The Crew step: stations, berths, transporter pads and walk paths placed by hand.
@@ -48,7 +56,9 @@ public:
 			// Building mode: more parking, ground areas and props.
 			RocketParkingMode, WaterParkingMode, AreaMode, PropMode,
 			// A generic vehicle spot for the vehicle SetParkingVehicle picked.
-			VehicleParkingMode };
+			VehicleParkingMode,
+			// Doors in the ceiling or the floor (SetHatchFloor).
+			HatchMode };
 	enum Brush { TriangleBrush, CellBrush, WideBrush };
 
 	explicit PlanView(QWidget* parent = 0);
@@ -213,6 +223,22 @@ private:
 	QString	m_windowStyle;
 	QString	m_doorExit;
 	double	m_doorRampRun = 0;
+	bool	m_doorOpen = false;
+	QString	m_stairKind;
+	int		m_stairWidth = 1;
+	QString	m_stairSlope;
+	// A hatch (door in the floor or ceiling) being dragged into a rectangle of
+	// cells: one row, one door.
+	bool	m_hatchFloor = false;
+	bool	m_hatchDrag = false;
+	bool	m_hatchMoved = false;
+	bool	m_hatchHadOne = false;
+	int		m_hatchDeck = 0;		// The lower deck.
+	int		m_hatchX0 = 0, m_hatchY0 = 0, m_hatchX1 = 0, m_hatchY1 = 0;
+	int		m_hatchRow = 0;
+	int		m_hatchMirrorRow = 0;
+	bool	PlaceHatch(int deck, int cx, int cy, int row);
+	void	DragHatch(int cx, int cy);
 
 	// After a door is placed: its buttons (PlanDoor::buttons), clicked on a
 	// wall near it, until two are placed, Esc, or a click elsewhere.

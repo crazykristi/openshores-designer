@@ -476,6 +476,16 @@ void PlanView::paintEvent(QPaintEvent*)
 				p.setPen(Qt::white);
 				p.drawText(box, Qt::AlignCenter, way);
 			}
+			// A door that starts open: an O beside its middle.
+			if(door.open && door.kind.isEmpty() && cellPixels >= 10)
+			{
+				const QPointF middle = (e0 + e1) / 2.0 + QPointF(cellPixels * .55, -cellPixels * .55);
+				const QRectF box(middle.x() - cellPixels / 2, middle.y() - cellPixels / 2, cellPixels, cellPixels);
+				p.setPen(Qt::black);
+				p.drawText(box.translated(1, 1), Qt::AlignCenter, "O");
+				p.setPen(QColor(255, 176, 40));
+				p.drawText(box, Qt::AlignCenter, "O");
+			}
 			// Its buttons: small green squares on the wall.
 			for(const QPointF& b : door.buttons)
 			{
@@ -556,12 +566,14 @@ void PlanView::paintEvent(QPaintEvent*)
 		{
 			if(stair.deck != m_deck && stair.deck + 1 != m_deck)
 				continue;
-			const int n = m_plan->StairCells();
-			int x0, y0, x1, y1;
-			m_plan->StairCell(stair, 0, x0, y0);
-			m_plan->StairCell(stair, n - 1, x1, y1);
-			const QPointF lo = ToScreen(m_plan->Corner(qMin(x0, x1), qMin(y0, y1)));
-			const QPointF hi = ToScreen(m_plan->Corner(qMax(x0, x1) + 1, qMax(y0, y1) + 1));
+			const int n = m_plan->StairCells(stair);
+			const int lanes = qMax(1, stair.width);
+			int xa, ya, xb, yb;
+			m_plan->StairCell(stair, 0, xa, ya, 0);
+			m_plan->StairCell(stair, n - 1, xb, yb, lanes - 1);
+			const QPointF lo = ToScreen(m_plan->Corner(qMin(xa, xb), qMin(ya, yb)));
+			const QPointF hi = ToScreen(m_plan->Corner(qMax(xa, xb) + 1, qMax(ya, yb) + 1));
+
 			const QRectF r = QRectF(lo, hi).normalized().adjusted(cellPixels * .1, cellPixels * .1, -cellPixels * .1, -cellPixels * .1);
 			const bool alongX = stair.side == TRI_E || stair.side == TRI_W;
 			p.setBrush(Qt::NoBrush);
@@ -569,7 +581,26 @@ void PlanView::paintEvent(QPaintEvent*)
 			{
 				p.setPen(QPen(Qt::white, qMax(1.5, cellPixels / 14)));
 				p.drawRect(r);
-				const int steps = 4 * n;
+				// Steps across the stairs; a ramp has a line down each side
+				// only, with long dashes along it.
+				const int steps = stair.IsRamp() ? 0 : 4 * n;
+				if(stair.IsRamp())
+				{
+					p.setPen(QPen(QColor(255, 255, 255, 170), qMax(1.0, cellPixels / 20), Qt::DashLine));
+					for(int i = 1; i < 2 * lanes; ++i)
+					{
+						if(alongX)
+						{
+							const double y = r.top() + r.height() * i / (2 * lanes);
+							p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+						}
+						else
+						{
+							const double x = r.left() + r.width() * i / (2 * lanes);
+							p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+						}
+					}
+				}
 				for(int i = 1; i < steps; ++i)
 				{
 					if(alongX)
@@ -584,7 +615,13 @@ void PlanView::paintEvent(QPaintEvent*)
 					}
 				}
 				// An arrow up the stairs.
-				const QPointF c0 = ToScreen(m_plan->CellCentre(x0, y0)), c1 = ToScreen(m_plan->CellCentre(x1, y1));
+				int xm0, ym0, xm1, ym1, xn0, yn0, xn1, yn1;
+				m_plan->StairCell(stair, 0, xm0, ym0, 0);
+				m_plan->StairCell(stair, 0, xn0, yn0, lanes - 1);
+				m_plan->StairCell(stair, n - 1, xm1, ym1, 0);
+				m_plan->StairCell(stair, n - 1, xn1, yn1, lanes - 1);
+				const QPointF c0 = (ToScreen(m_plan->CellCentre(xm0, ym0)) + ToScreen(m_plan->CellCentre(xn0, yn0))) / 2;
+				const QPointF c1 = (ToScreen(m_plan->CellCentre(xm1, ym1)) + ToScreen(m_plan->CellCentre(xn1, yn1))) / 2;
 				const QPointF d = (c1 - c0) / qMax(1.0, std::hypot(c1.x() - c0.x(), c1.y() - c0.y()));
 				const QPointF side(-d.y(), d.x());
 				p.setPen(QPen(QColor(255, 220, 120), qMax(2.0, cellPixels / 10)));
@@ -596,7 +633,7 @@ void PlanView::paintEvent(QPaintEvent*)
 			{
 				p.setPen(QPen(QColor(255, 255, 255, 150), qMax(1.5, cellPixels / 14), Qt::DashLine));
 				p.drawRect(r);
-				p.drawText(r, Qt::AlignCenter, "stairs");
+				p.drawText(r, Qt::AlignCenter, stair.IsRamp() ? "ramp" : "stairs");
 			}
 		}
 		for(const PlanLadder& ladder : m_plan->ladders)
@@ -613,6 +650,46 @@ void PlanView::paintEvent(QPaintEvent*)
 			{
 				const double y = r.top() + r.height() * i / 4.0;
 				p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+			}
+		}
+		// Doors in the floor (solid) and the ceiling (dashed), amber; a row's
+		// cells join into one door, so only its outline is drawn, and an O
+		// marks one that starts open.
+		for(const PlanHatch& h : m_plan->hatches)
+		{
+			if(h.deck != m_deck && h.deck + 1 != m_deck)
+				continue;
+			const bool floor = h.deck + 1 == m_deck;
+			auto joined = [&](int cx, int cy) {
+				const int o = m_plan->HatchAt(h.deck, cx, cy);
+				return o >= 0 && h.row && m_plan->hatches.at(o).row == h.row;
+			};
+			const QPointF lo = ToScreen(m_plan->Corner(h.cx, h.cy));
+			const QPointF hi = ToScreen(m_plan->Corner(h.cx + 1, h.cy + 1));
+			const QRectF r = QRectF(lo, hi).normalized();
+			const QColor amber(255, 176, 40);
+			QColor fill = amber;
+			fill.setAlpha(floor ? 90 : 40);
+			p.fillRect(r, fill);
+			p.setPen(QPen(amber, qMax(2.0, cellPixels / 10), floor ? Qt::SolidLine : Qt::DashLine));
+			// Each side of the cell that no cell of the same door is on, found
+			// on the screen, however the view turns the plan.
+			const QPointF mid = r.center();
+			const int nx[4] = { -1, 1, 0, 0 }, ny[4] = { 0, 0, -1, 1 };
+			for(int n = 0; n < 4; ++n)
+			{
+				if(joined(h.cx + nx[n], h.cy + ny[n]))
+					continue;
+				const QPointF d = ToScreen(m_plan->CellCentre(h.cx + nx[n], h.cy + ny[n])) - mid;
+				if(fabs(d.x()) > fabs(d.y()))
+					p.drawLine(d.x() < 0 ? r.topLeft() : r.topRight(), d.x() < 0 ? r.bottomLeft() : r.bottomRight());
+				else
+					p.drawLine(d.y() < 0 ? r.topLeft() : r.bottomLeft(), d.y() < 0 ? r.topRight() : r.bottomRight());
+			}
+			if(h.open && !joined(h.cx - 1, h.cy) && !joined(h.cx, h.cy - 1))	// Once a door.
+			{
+				p.setPen(amber);
+				p.drawText(r, Qt::AlignCenter, "O");
 			}
 		}
 
@@ -901,6 +978,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 				door.tex = m_doorTexture;
 				door.exit = m_doorExit;
 				door.rampRun = m_doorRampRun;
+				door.open = m_doorOpen;
 			}
 			emit PlanChanged(false);
 			update();
@@ -1178,12 +1256,42 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			st.cx = cx;
 			st.cy = cy;
 			st.side = side;
+			st.kind = m_stairKind;
+			st.width = m_stairWidth;
+			st.slope = m_stairSlope;
 			if(!m_plan->StairFits(st, why))
 				return false;
 			m_plan->stairs << st;
 			return true;
 		};
 		QString why;
+		// The right button gives stairs or a ramp the kind, width and slope
+		// picked, where it still fits.
+		if(erase)
+		{
+			const int existing = m_plan->StairAt(t.deck, t.cx, t.cy);
+			if(existing < 0)
+			{
+				Notice(t, "A right click on stairs or a ramp gives it the kind, width and slope picked.");
+				return;
+			}
+			const PlanStair old = m_plan->stairs.at(existing);
+			PlanStair st = old;
+			st.kind = m_stairKind;
+			st.width = m_stairWidth;
+			st.slope = m_stairSlope;
+			m_plan->stairs.removeAt(existing);
+			if(!m_plan->StairFits(st, &why))
+			{
+				m_plan->stairs.insert(existing, old);
+				Notice(t, why);
+				return;
+			}
+			m_plan->stairs.insert(existing, st);
+			emit PlanChanged(false);
+			update();
+			return;
+		}
 		const bool had = m_plan->StairAt(t.deck, t.cx, t.cy) >= 0;
 		if(!toggle(t.deck, t.cx, t.cy, t.k, &why))
 			Notice(t, why);
@@ -1313,6 +1421,47 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 		update();
 		return;
 	}
+	if(m_mode == HatchMode)
+	{
+		const int deck = m_hatchFloor ? t.deck - 1 : t.deck;
+		const int existing = m_plan->HatchAt(deck, t.cx, t.cy);
+		if(erase)
+		{
+			// The right button gives a hatch, and the rest of its row, the
+			// door texture and the open or closed start picked for doors.
+			if(existing < 0)
+				return;
+			emit AboutToChange();
+			const int row = m_plan->hatches.at(existing).row;
+			for(PlanHatch& h : m_plan->hatches)
+				if(h.deck == deck && (row ? h.row == row : (h.cx == t.cx && h.cy == t.cy)))
+				{
+					h.open = m_doorOpen;
+					h.tex = m_doorTexture;
+				}
+			emit PlanChanged(false);
+			update();
+			return;
+		}
+		emit AboutToChange();
+		m_hatchDrag = true;
+		m_hatchMoved = false;
+		m_hatchHadOne = existing >= 0;
+		m_hatchDeck = deck;
+		m_hatchX0 = m_hatchX1 = t.cx;
+		m_hatchY0 = m_hatchY1 = t.cy;
+		m_hatchRow = m_plan->NewHatchRow();
+		m_hatchMirrorRow = m_hatchRow + 1;
+		if(existing < 0 && !PlaceHatch(deck, t.cx, t.cy, m_hatchRow))
+		{
+			m_hatchDrag = false;
+			Notice(t, m_hatchFloor ? "A door in the floor goes in a cell of a room with a room under it, on the deck below."
+					: "A door in the ceiling goes in a cell of a room with a room over it, on the deck above.");
+		}
+		emit PlanChanged(false);
+		update();
+		return;
+	}
 	if(m_mode == LadderMode)
 	{
 		emit AboutToChange();
@@ -1355,6 +1504,70 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	update();
 }
 
+bool PlanView::PlaceHatch(int deck, int cx, int cy, int row)
+{
+	auto place = [this](int deck, int cx, int cy, int row) {
+		const int existing = m_plan->HatchAt(deck, cx, cy);
+		if(existing >= 0)
+		{
+			m_plan->hatches[existing].row = row;
+			return true;
+		}
+		if(!m_plan->HatchFits(deck, cx, cy))
+			return false;
+		PlanHatch h;
+		h.deck = deck;
+		h.cx = cx;
+		h.cy = cy;
+		h.row = row;
+		h.open = m_doorOpen;
+		h.tex = m_doorTexture;
+		m_plan->hatches << h;
+		return true;
+	};
+	if(!place(deck, cx, cy, row))
+		return false;
+	if(m_mirror)
+	{
+		const int my = m_plan->Depth() - 1 - cy;
+		if(my != cy)
+			place(deck, cx, my, row == m_hatchRow ? m_hatchMirrorRow : row);
+	}
+	return true;
+}
+
+// The drag reaches cell (cx, cy): every cell of the rectangle from where it
+// started that can take one gets a hatch of the drag's row, so they are one door.
+void PlanView::DragHatch(int cx, int cy)
+{
+	if(cx == m_hatchX1 && cy == m_hatchY1 && !m_hatchMoved)
+		return;
+	m_hatchX1 = cx;
+	m_hatchY1 = cy;
+	m_hatchMoved = m_hatchMoved || cx != m_hatchX0 || cy != m_hatchY0;
+	if(!m_hatchMoved)
+		return;
+	// Cells of this drag outside the rectangle now (the mouse went back) go.
+	const int x0 = qMin(m_hatchX0, cx), x1 = qMax(m_hatchX0, cx), y0 = qMin(m_hatchY0, cy), y1 = qMax(m_hatchY0, cy);
+	auto inside = [&](int x, int y) {
+		if(x >= x0 && x <= x1 && y >= y0 && y <= y1)
+			return true;
+		const int my = m_plan->Depth() - 1 - y;
+		return m_mirror && x >= x0 && x <= x1 && my >= y0 && my <= y1;
+	};
+	for(int i = m_plan->hatches.size() - 1; i >= 0; --i)
+	{
+		const PlanHatch& h = m_plan->hatches.at(i);
+		if(h.deck == m_hatchDeck && (h.row == m_hatchRow || h.row == m_hatchMirrorRow) && !inside(h.cx, h.cy))
+			m_plan->hatches.removeAt(i);
+	}
+	for(int y = y0; y <= y1; ++y)
+		for(int x = x0; x <= x1; ++x)
+			PlaceHatch(m_hatchDeck, x, y, m_hatchRow);
+	emit PlanChanged(false);
+	update();
+}
+
 bool PlanView::PlaceDoorInRow(int deck, int cx, int cy, int side)
 {
 	auto place = [this](int deck, int cx, int cy, int side, int row) {
@@ -1380,6 +1593,7 @@ bool PlanView::PlaceDoorInRow(int deck, int cx, int cy, int side)
 		d.exit = m_doorExit;
 		d.rampRun = m_doorRampRun;
 		d.kind = m_doorKind;
+		d.open = m_doorOpen && m_doorKind.isEmpty();
 		m_plan->doors << d;
 		return true;
 	};
@@ -1509,6 +1723,13 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 		}
 		return;
 	}
+	if(m_hatchDrag)
+	{
+		TriRef under;
+		if(TriangleAt(event->pos(), under))
+			DragHatch(under.cx, under.cy);
+		return;
+	}
 	if(m_doorDrag)
 	{
 		// Along the wall the door is on, however far the mouse strays from it.
@@ -1583,6 +1804,29 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 void PlanView::mouseReleaseEvent(QMouseEvent*)
 {
 	m_windowDrag = false;
+	if(m_hatchDrag)
+	{
+		m_hatchDrag = false;
+		// A click on a hatch, not a drag from it, takes its whole row away
+		// (the one door it is part of).
+		if(m_hatchHadOne && !m_hatchMoved)
+		{
+			const int at = m_plan->HatchAt(m_hatchDeck, m_hatchX0, m_hatchY0);
+			if(at >= 0)
+			{
+				const PlanHatch was = m_plan->hatches.at(at);
+				for(int i = m_plan->hatches.size() - 1; i >= 0; --i)
+				{
+					const PlanHatch& h = m_plan->hatches.at(i);
+					if(i == at || (was.row && h.deck == was.deck && h.row == was.row))
+						m_plan->hatches.removeAt(i);
+				}
+				emit PlanChanged(false);
+			}
+		}
+		update();
+		return;
+	}
 	if(m_areaDrag)
 	{
 		m_areaDrag = false;

@@ -59,7 +59,7 @@ for f in "$DESIGNS"/*.soh "$DESIGNS"/*.SoH; do
 done
 
 TEMPLATES=(military_frigate cargo_hauler science_lab colony_transport patrol_cutter shuttle)
-BUILDING_TEMPLATES=(office_block residential barracks command_post warehouse factory biodome power_plant farm park street_light sea_platform ground_platform aerial_platform)
+BUILDING_TEMPLATES=(office_block residential barracks command_post weapons_base shield_base warehouse factory biodome power_plant farm park street_light sea_platform ground_platform aerial_platform)
 
 pass=0
 fail=0
@@ -1045,6 +1045,46 @@ PY
 		fail=$((fail+1))
 		echo "  FAIL  building mode"
 		grep -E 'Error|Warning|Note' "$WORK/plan/building.txt" | head -10
+	fi
+	# The military bases: the same drawing as a weapons base, with a weapon
+	# emitter drawn and a shield station placed by hand, and as a shield
+	# base. Each gets its station, the weapons base a fire control station
+	# with the emitter and a weapon bay (and battery), and the engine takes
+	# them for their industry.
+	python3 - "$WORK/plan/building.json" "$WORK/plan" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+for k in p['building']['volumes']:
+    p['building']['volumes'][k] = 0
+w = json.loads(json.dumps(p))
+w['name'] = w['building']['name'] = 'Drawn Weapons Base'
+w['building']['industry'] = 'military weapons base'
+w['emitters'] = [{"deck": 0, "x": p['width'] // 2, "y": p['depth'] // 2, "side": 0, "kind": "weapon"}]
+w['stations'] = [{"deck": 0, "x": p['width'] / 2 + 0.5, "y": p['depth'] / 2 + 0.5, "yaw": 0, "type": "shield"}]
+w['building']['volumes']['shields'] = 300
+json.dump(w, open(sys.argv[2] + '/weapons-base.json', 'w'))
+s = json.loads(json.dumps(p))
+s['name'] = s['building']['name'] = 'Drawn Shield Base'
+s['building']['industry'] = 'military shield base'
+s['building']['volumes']['shields'] = 800
+json.dump(s, open(sys.argv[2] + '/shield-base.json', 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/weapons-base.json" --out "$WORK/plan/weapons-base.SoH" > "$WORK/plan/weapons-base.txt" 2>&1
+	"$SHIPGEN" build-plan "$WORK/plan/shield-base.json" --out "$WORK/plan/shield-base.SoH" > "$WORK/plan/shield-base.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/weapons-base.SoH" > "$WORK/plan/weapons-base-parts.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/shield-base.SoH" > "$WORK/plan/shield-base-parts.txt" 2>&1
+	if grep -q 'Errors (0)' "$WORK/plan/weapons-base.txt" && grep -q 'Errors (0)' "$WORK/plan/shield-base.txt" &&
+			grep -q 'Weapon emit  : 1' "$WORK/plan/weapons-base.txt" &&
+			grep -q '1 weapon bay(s)' "$WORK/plan/weapons-base.txt" &&
+			[ "$(grep -c 'Fire Control Console' "$WORK/plan/weapons-base-parts.txt")" = 1 ] &&
+			[ "$(grep -c 'Shield Console' "$WORK/plan/weapons-base-parts.txt")" = 1 ] &&
+			grep -q 'Shield Console' "$WORK/plan/shield-base-parts.txt"; then
+		pass=$((pass+1))
+		echo "  ok    military weapons and shield bases: weapon bay, emitter, fire control and shield stations"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  military weapons and shield bases"
+		grep -E 'Error|Warning|Weapon emit|weapon bay' "$WORK/plan/weapons-base.txt" "$WORK/plan/shield-base.txt" | head -10
 	fi
 	# A canopy over the cockpit and on over the hull ahead of it: the hull
 	# over it is one window of the cockpit (this test hull has a few large
@@ -2262,6 +2302,120 @@ PYEOF
 	else
 		echo "  skip  turbolifts (needs python3)"
 	fi
+	# Doors in floors and ceilings: one over the example's ladder (the ladder's
+	# path is then tied to it and no shaft is cut), and a 2 by 2 drag in the
+	# crew quarters' ceiling that builds as one door and starts open, as does
+	# the first wall door (both become standard doors, left open).
+	python3 - "$WORK/plan/example.json" "$WORK/plan/hatch.json" <<'PYEOF' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["hatches"] = [{"deck": 0, "x": 21, "y": 7, "row": 1}] + \
+	[{"deck": 0, "x": x, "y": y, "row": 2, "open": True} for x in (18, 19) for y in (3, 4)]
+d["doors"][0]["open"] = True
+json.dump(d, open(sys.argv[2], "w"))
+PYEOF
+	if [ -f "$WORK/plan/hatch.json" ]; then
+		"$SHIPGEN" build-plan "$WORK/plan/hatch.json" --out "$WORK/plan/hatch.SoH" > "$WORK/plan/hatch.txt" 2>&1
+		"$SHIPGEN" parts "$WORK/plan/hatch.SoH" > "$WORK/plan/hatch-parts.txt" 2>&1
+		"$SHIPGEN" inspect "$WORK/plan/hatch.SoH" > "$WORK/plan/hatch-inspect.txt" 2>&1
+		"$SHIPGEN" crew-check "$WORK/plan/hatch.SoH" > "$WORK/plan/hatch-crew.txt" 2>&1
+		if grep -q '^Floor doors  : 2$' "$WORK/plan/hatch.txt" && grep -q 'Errors (0)' "$WORK/plan/hatch.txt" &&
+				qgrep -E 'Ladder Path +tied to [0-9]+ state 10' "$WORK/plan/hatch-parts.txt" &&
+				[ "$(grep -c ' standard  states' "$WORK/plan/hatch-inspect.txt")" = 2 ] &&
+				! qgrep 'only there while a door is open' "$WORK/plan/hatch-inspect.txt" &&
+				qgrep -E 'Crew routes +: ([0-9]+) of \1 ' "$WORK/plan/hatch-crew.txt"; then
+			pass=$((pass+1))
+			echo "  ok    doors in floors and ceilings join per drag, tie a ladder under them, and doors can start open"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  doors in floors and ceilings"
+			grep -E 'Floor doors|Errors|Error:' "$WORK/plan/hatch.txt" | head -4
+			grep -E 'standard|only there' "$WORK/plan/hatch-inspect.txt" | head -4
+			grep 'Crew routes' "$WORK/plan/hatch-crew.txt"
+		fi
+	else
+		echo "  skip  doors in floors and ceilings (needs python3)"
+	fi
+	# Textured paint: the base coat a game texture (wrapped per face), the
+	# stripe an image of one's own (from the side, a little colour over it).
+	# Each gets a palette slot of its own and the faces painted with it are
+	# in that slot; the image is made 256 pixels at most; it reads back.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/texpaint.json" "$WORK/plan/texpaint.png" <<'PYEOF' 2>/dev/null
+import json, sys, zlib, struct
+d = json.load(open(sys.argv[1]))
+# A 300x300 PNG chequer without any library.
+w = h = 300
+raw = b''.join(b'\x00' + bytes((255 if ((x // 30 + y // 30) % 2) else 40) for x in range(w) for _ in range(3)) for y in range(h))
+def chunk(t, data):
+    return struct.pack('>I', len(data)) + t + data + struct.pack('>I', zlib.crc32(t + data) & 0xffffffff)
+open(sys.argv[3], 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) +
+                              chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+d['palette'][0].update({'texture': 60, 'wrap': 'face', 'textureFeet': 10})
+d['palette'][1].update({'textureFile': sys.argv[3], 'wrap': 'side', 'textureFeet': 30, 'tint': 0.2})
+json.dump(d, open(sys.argv[2], 'w'), indent=1)
+PYEOF
+	if [ -f "$WORK/plan/texpaint.json" ]; then
+		"$SHIPGEN" build-plan "$WORK/plan/texpaint.json" --out "$WORK/plan/texpaint.SoH" > "$WORK/plan/texpaint.txt" 2>&1
+		"$SHIPGEN" faces "$WORK/plan/texpaint.SoH" > "$WORK/plan/texpaint-faces.txt" 2>&1
+		"$SHIPGEN" plan-flip "$WORK/plan/texpaint.json" "$WORK/plan/texpaint-back.json" --turn > /dev/null 2>&1
+		if grep -q 'Errors (0)' "$WORK/plan/texpaint.txt" && grep -q 'Textured paint: .* in 2 texture' "$WORK/plan/texpaint.txt" &&
+				grep -q 'made smaller, to 256 by 256' "$WORK/plan/texpaint.txt" &&
+				qgrep -E '^  slot 14: library texture 60$' "$WORK/plan/texpaint-faces.txt" &&
+				qgrep -E '^  slot 13: .*image 256x256 texpaint.png' "$WORK/plan/texpaint-faces.txt" &&
+				qgrep -E '^ +[0-9]+ x  slot 14 .*paint none' "$WORK/plan/texpaint-faces.txt" &&
+				qgrep -E '^ +[0-9]+ x  slot 13 .*paint #33aa2828' "$WORK/plan/texpaint-faces.txt" &&
+				python3 -c "import json,sys; p=json.load(open(sys.argv[1]))['palette']; sys.exit(0 if p[0]['texture']==60 and p[1]['wrap']=='side' and p[1]['tint']==0.2 and p[1]['textureFile'].endswith('texpaint.png') else 1)" "$WORK/plan/texpaint-back.json"; then
+			pass=$((pass+1))
+			echo "  ok    a colour painted with a game texture or an image of one's own, wrapped as chosen"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  textured paint"
+			grep -E 'Textured|smaller|Errors|Error:|Warning' "$WORK/plan/texpaint.txt" | head -5
+			grep -E 'slot 1[34]' "$WORK/plan/texpaint-faces.txt" | head -5
+		fi
+	else
+		echo "  skip  textured paint (needs python3)"
+	fi
+	# Paint brushed in the 3D view: a brush over the whole ship from above in
+	# one colour, then from below in another. Only the first faces in view are
+	# painted, so both colours stay (the top and the bottom) and the sides
+	# keep the base coat; painting through the hull would leave only the
+	# second. A small stroke turned with the plan paints about as many faces.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/brush.json" "$WORK/plan/brush-small.json" <<'PYEOF' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+d['strokes'] = [{"paint": 1, "shape": "square", "size": 400, "stamps": [[0, 0, 20, 0, 0, 300, 1, 0, 0]]},
+                {"paint": 2, "shape": "square", "size": 400, "stamps": [[0, 0, 0, 0, 0, -300, 1, 0, 0]]}]
+json.dump(d, open(sys.argv[2], 'w'))
+d['strokes'] = [{"paint": 2, "shape": "circle", "size": 10, "stamps": [[30, -20, 20, 60, -60, 200, 1, 0, 0],
+                                                                     [20, -20, 20, 50, -60, 200, 1, 0, 0]]}]
+json.dump(d, open(sys.argv[3], 'w'))
+PYEOF
+	if [ -f "$WORK/plan/brush.json" ]; then
+		"$SHIPGEN" build-plan "$WORK/plan/brush.json" --out "$WORK/plan/brush.SoH" > "$WORK/plan/brush.txt" 2>&1
+		"$SHIPGEN" faces "$WORK/plan/brush.SoH" | sed -n '/part 1 Hull/,/^part/p' > "$WORK/plan/brush-faces.txt" 2>&1
+		"$SHIPGEN" plan-flip "$WORK/plan/brush-small.json" "$WORK/plan/brush-turned.json" --turn > /dev/null 2>&1
+		"$SHIPGEN" build-plan "$WORK/plan/brush-small.json" --out "$WORK/plan/brush-small.SoH" > "$WORK/plan/brush-small.txt" 2>&1
+		"$SHIPGEN" build-plan "$WORK/plan/brush-turned.json" --out "$WORK/plan/brush-turned.SoH" > "$WORK/plan/brush-turned.txt" 2>&1
+		count() { sed -n 's/.*Paint brushed in the 3D view: \([0-9]*\) hull.*/\1/p' "$1"; }
+		top=$(sed -n 's/^ *\([0-9]*\) x .*paint #ffaa2828.*/\1/p' "$WORK/plan/brush-faces.txt")
+		bottom=$(sed -n 's/^ *\([0-9]*\) x .*theme 0 .*/\1/p' "$WORK/plan/brush-faces.txt")
+		sides=$(sed -n 's/^ *\([0-9]*\) x .*paint #ff969ba5.*/\1/p' "$WORK/plan/brush-faces.txt")
+		small=$(count "$WORK/plan/brush-small.txt"); turned=$(count "$WORK/plan/brush-turned.txt")
+		if grep -q 'Errors (0)' "$WORK/plan/brush.txt" && [ "${top:-0}" -gt 1000 ] && [ "${bottom:-0}" -gt 500 ] &&
+				[ "${sides:-0}" -gt 1000 ] && [ "${small:-0}" -gt 5 ] && [ "${turned:-0}" -gt $((small * 3 / 4)) ] &&
+				[ "${turned:-0}" -lt $((small * 5 / 4 + 1)) ] &&
+				grep -q '"stamps"' "$WORK/plan/brush-turned.json"; then
+			pass=$((pass+1))
+			echo "  ok    paint brushed in the 3D view lands on the first faces in view only, and turns with the plan"
+		else
+			fail=$((fail+1))
+			echo "  FAIL  paint brushed in the 3D view (top $top, bottom $bottom, sides $sides, small $small, turned $turned)"
+			grep -E 'brushed|Errors|Error:' "$WORK/plan/brush.txt" | head -3
+		fi
+	else
+		echo "  skip  paint brushed in the 3D view (needs python3)"
+	fi
 	# Door buttons: two on the walls either side of the door between the
 	# engine room and the hall; the door's switches go on them and it is no
 	# longer automatic (shipgen parts shows the switches).
@@ -2364,6 +2518,55 @@ PYEOF
 		grep -E 'stairs|z 0\.5\.\.10\.5' "$WORK/plan/stairs-parts.txt" | head -8
 	fi
 	check "the plan with stairs" "$WORK/plan/stairs.SoH"
+	# Stairs and ramps 1 to 3 cells wide, steep, normal and gentle, in one
+	# big room under another: all 18 are built, the three slopes are of
+	# different lengths, and they stay when the plan is mirrored (the far
+	# lane becomes the first) and turned.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/flights.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+W, D = 40, 32
+def rle(vals):
+    out = []; prev = None; n = 0
+    for v in vals:
+        if v == prev: n += 1
+        else:
+            if prev is not None: out.append("%d*%d" % (n, prev))
+            prev = v; n = 1
+    out.append("%d*%d" % (n, prev)); return ",".join(out)
+layers = []
+for d in range(2):
+    inside = [0 < x < W - 1 and 0 < y < D - 1 for y in range(D) for x in range(W) for k in range(4)]
+    layers.append({"hull": rle([1 if i else 0 for i in inside]), "room": rle([d if i else -1 for i in inside]),
+                   "paint": rle([0] * len(inside))})
+p.update(width=W, depth=D, layers=layers, doors=[], windows=[], ladders=[], parking=[], name="Flights")
+p['rooms'] = [{"colour": "#dc8246", "label": "Hall 1", "type": "Hallway"}, {"colour": "#5a8cdc", "label": "Bridge 1", "type": "Bridge"}]
+stairs = []
+for kind, x0 in [('', 2), ('ramp', 20)]:
+    y = 2
+    for slope in ['steep', '', 'gentle']:
+        for w in [1, 2, 3]:
+            stairs.append({"deck": 0, "x": x0, "y": y, "side": 1, "kind": kind, "slope": slope, "width": w})
+            y += w + 1
+p['stairs'] = stairs
+json.dump(p, open(sys.argv[2], 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/flights.json" --out "$WORK/plan/flights.SoH" > "$WORK/plan/flights.txt" 2>&1
+	"$SHIPGEN" plan-flip "$WORK/plan/flights.json" "$WORK/plan/flights-mirror.json" --mirror --turn > /dev/null 2>&1
+	"$SHIPGEN" build-plan "$WORK/plan/flights-mirror.json" --out "$WORK/plan/flights-mirror.SoH" > "$WORK/plan/flights-mirror.txt" 2>&1
+	"$SHIPGEN" parts "$WORK/plan/flights.SoH" > "$WORK/plan/flights-parts.txt" 2>&1
+	lengths=$(awk '/Walk Path/{ for(i=1;i<=NF;i++){ if($i=="y") split($(i+1),b,"\\.\\."); if($i=="z") split($(i+1),z,"\\.\\.") } if(z[2]-z[1] > 8) print b[2]-b[1] }' "$WORK/plan/flights-parts.txt" | sort -un | wc -l)
+	if grep -q '^Stairs       : 18$' "$WORK/plan/flights.txt" && grep -q 'Errors (0)' "$WORK/plan/flights.txt" &&
+			grep -q '^Stairs       : 18$' "$WORK/plan/flights-mirror.txt" &&
+			[ "$(grep -c '(ramp) Hall 1 to Bridge 1' "$WORK/plan/flights-parts.txt")" -gt 0 ] && [ "$lengths" -ge 5 ]; then
+		pass=$((pass+1))
+		echo "  ok    stairs and ramps 1 to 3 cells wide, steep, normal and gentle, also mirrored and turned"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  stairs and ramps of several widths and slopes ($lengths lengths)"
+		grep -E '^Stairs|Errors|left out' "$WORK/plan/flights.txt" "$WORK/plan/flights-mirror.txt" | head -8
+	fi
+	check "the plan with stairs and ramps" "$WORK/plan/flights.SoH"
 	# Joined windows, lower: the four bridge windows on each side are one
 	# long window each; in the bow, windows that line up join too,
 	# from 2 ft above the bridge floor (10.5) to 7 ft.

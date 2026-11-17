@@ -35,6 +35,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QVector3D>
+#include <functional>
 
 #include "building.h"
 #include "decal.h"
@@ -130,6 +132,26 @@ struct PlanDoor
 	// (hullWindowGlass), or one of those ways for this window alone:
 	// "faces", "pane" or "slope" (see hullWindowGlass).
 	QString	style;
+	// Doors only (wall and hull doors): the state the door is in when the
+	// blueprint is built, open or closed (the user, 2026-11-17). A row takes
+	// it from the door in its middle; the designer sets it for a whole row.
+	bool	open = false;
+	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
+};
+
+// A door in the floor between a cell of one deck and the same cell of the
+// deck above (a hatch): a door in the ceiling of the lower room and the floor
+// of the upper one. Both cells have to be in a room. Hatches with the same
+// row (one drag) are one door; a ladder may stand in the same cell, and is
+// then only there while the hatch is open.
+struct PlanHatch
+{
+	int		deck = 0;		// The lower deck.
+	int		cx = 0;
+	int		cy = 0;
+	int		row = 0;
+	bool	open = false;		// Open when the blueprint is built.
+	int		tex = -1;		// A texture from the game's library, or -1 for the plan's door texture.
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
@@ -160,9 +182,10 @@ struct PlanSkylight
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
-// A flight of stairs up from one deck to the deck above. It starts at cell
-// (cx, cy) of the lower deck and climbs towards the cell edge 'side' (a
-// TriSide: TRI_E climbs along +x), over TriPlan::StairCells() cells, onto
+// A flight of stairs (or a ramp) up from one deck to the deck above. It
+// starts at cell (cx, cy) of the lower deck and climbs towards the cell edge
+// 'side' (a TriSide: TRI_E climbs along +x), over TriPlan::StairCells(stair)
+// cells, 'width' cells wide (the further lanes to the left of the way up), onto
 // the landing: the next cell, on the deck above. The run has to be in one
 // room on the lower deck, and the run and the landing in one room on the
 // deck above (the opening is cut through that room's floor, with a rail
@@ -173,8 +196,16 @@ struct PlanStair
 	int		cx = 0;
 	int		cy = 0;
 	int		side = TRI_E;
+	QString	kind;			// "" stairs, "ramp" a smooth slope.
+	int		width = 1;		// Cells across, 1 to 3.
+	QString	slope;			// "" normal, "steep" or "gentle" (StairRunPerRise).
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
+	bool	IsRamp() const { return kind == "ramp"; }
 };
+
+// Feet of run for each foot of rise: stairs steep 1.1, normal 1.4, gentle
+// 2.0; ramps steep 1.5 (as the hull door ramps), normal 2.5, gentle 4.0.
+double	StairRunPerRise(const QString& kind, const QString& slope);
 
 // A vehicle parking spot on the floor of a room, centred on a cell corner
 // (the corner at the cell's low x and y). The game's spots have fixed sizes:
@@ -276,6 +307,28 @@ struct PlanEmitter
 
 // A colour in the paint palette: a plain colour, or one of the owner's
 // empire colours (AuScFace::THEME_ExteriorPrimary and the two after it).
+// Paint brushed on the hull in the 3D view (the user, 2026-11-17). Each
+// stamp of the brush is where it met the hull, where the eye was and which
+// way was up on the screen, in plan space (feet, as the hull is shaped,
+// before the turn to the game's axes). When the hull is painted, rays from
+// the eye through the brush's footprint paint the first hull face each meets,
+// so only what was in view is painted, and a stroke still lands where it was
+// brushed after the hull is reshaped.
+struct PlanStamp
+{
+	QVector3D	at;
+	QVector3D	eye;
+	QVector3D	up;
+};
+
+struct PlanStroke
+{
+	int		paint = 0;			// Palette index; -1 rubs out (back to the plan's own paint).
+	bool	square = false;		// A square brush; round otherwise.
+	double	size = 4.0;			// Across the brush, in feet, where it meets the hull.
+	QList<PlanStamp>	stamps;
+};
+
 struct PlanPaint
 {
 	QColor	colour = QColor(150, 155, 165);
@@ -294,6 +347,25 @@ struct PlanPaint
 	float	reflect = 0.f;		// Specular intensity, 0 to 1.
 	QColor	glow;				// Added light at every corner; invalid or black for none.
 	int		effect = 0;			// SURFACE_EFFECT (aumath/auscface.h); 0 for none.
+	// A texture instead of plain paint (the user, 2026-11-17): one of the
+	// game's library textures (texLib, an id as in TEXTURE_LIBRARY.md) or an
+	// image file of one's own (texFile; the game holds at most 256 pixels a
+	// side, bigger ones are made smaller). How it is wrapped round the hull:
+	// "face" each face laid flat on its own (no stretching), "top", "side"
+	// or "front" projected flat from that way, "cylinder" round the length,
+	// "sphere" round a ball. texFeet: feet per repeat; texRotate: degrees.
+	// 'tint': how much of the colour above is laid over the texture, 0 (the
+	// texture as it is) to 1 (only the colour); the game's shader mixes them so.
+	int		texLib = -1;
+	QString	texFile;
+	QString	wrap = "face";
+	double	texFeet = 8.0;
+	double	texRotate = 0.0;
+	float	tint = 0.f;
+	// The palette slot the build gives the texture (TriPlan::ForBuild); not saved.
+	int		slot = -1;
+
+	bool	HasTexture() const { return texLib >= 0 || !texFile.isEmpty(); }
 
 	bool	HasFinish() const
 	{
@@ -464,6 +536,7 @@ public:
 	QList<PlanDoor>		doors;
 	QList<PlanDoor>		windows;		// On edges between a room and the outside.
 	QList<PlanLadder>	ladders;
+	QList<PlanHatch>	hatches;		// Doors in floors and ceilings.
 	QList<PlanSkylight>	skylights;
 	QList<PlanStair>	stairs;
 	QList<PlanParking>	parking;
@@ -474,6 +547,8 @@ public:
 	// Images laid over the finished hull (decal.h), in the blueprint's feet.
 	// A relative image path is taken from the plan file's folder.
 	QList<DecalOptions>	decals;
+	// Paint brushed in the 3D view, in the order brushed (PlanStroke).
+	QList<PlanStroke>	strokes;
 	// Placed by hand on the Crew page; the build fills in the rest unless
 	// these are off (then only what was placed by hand).
 	QList<PlanStation>	stations;
@@ -594,6 +669,13 @@ public:
 	// Removes rooms, doors and paint that no longer make sense: rooms on
 	// triangles that are not hull, doors whose edge has no room beside it.
 	void	Tidy();
+	// Moves the brushed paint with the plan: 'point' and 'vector' map plan
+	// space, for the stamps 'which' picks (all without it).
+	void	TransformStrokes(const std::function<QVector3D(const QVector3D&)>& point,
+							 const std::function<QVector3D(const QVector3D&)>& vector,
+							 const std::function<bool(const PlanStamp&)>& which = std::function<bool(const PlanStamp&)>());
+	// The deck a point of plan space is on (by its height).
+	int		DeckAt(double z) const;
 
 	int		DoorAt(int deck, int cx, int cy, int side) const;
 	// Whether two doors are next to each other on one wall, between the same
@@ -605,6 +687,9 @@ public:
 	// diagonals, as Across numbers them).
 	void	EdgeEnds(const TriRef& t, int edge, QPointF& a, QPointF& b) const;
 	int		LadderAt(int deck, int cx, int cy) const;			// Index in ladders, -1 if none.
+	int		HatchAt(int deck, int cx, int cy) const;			// Index in hatches (deck: the lower deck), -1 if none.
+	int		NewHatchRow() const;								// A row number no hatch has yet.
+	bool	HatchFits(int deck, int cx, int cy) const;			// A room in the cell on this deck and the one above.
 	int		NewWindowRow() const;								// A row number no window has yet.
 	int		SkylightAt(int deck, int cx, int cy) const;			// Index in skylights, -1 if none.
 	int		SkylightOn(const TriRef& t) const;					// The skylight over a triangle (its own or its cell's), -1 if none.
@@ -624,11 +709,13 @@ public:
 	bool	SkylightIsHull(const PlanSkylight& window) const;		// Its glass follows the hull.
 	int		ParkingAt(int deck, int cx, int cy) const;			// Index in parking, -1 if none.
 	int		EmitterAt(const TriRef& t, bool weapon, int marking = 0) const;		// Index in emitters, -1 if none.
-	// How many cells a flight of stairs runs over, for a slope of about 34
-	// degrees (like the stairs in the user's aircraft factory).
-	int		StairCells() const;
-	// Cell 'i' of a flight: 0 is where it starts, StairCells() the landing.
-	void	StairCell(const PlanStair& stair, int i, int& cx, int& cy) const;
+	// How many cells a flight runs over, from its kind and slope (normal
+	// stairs: about 35 degrees, like the stairs in the user's aircraft factory).
+	int		StairCells(const PlanStair& stair) const;
+	int		StairCells(const QString& kind, const QString& slope) const;
+	// Cell 'i' of a flight's lane 'lane' (0 to width - 1, to the left of the
+	// way up): 0 is where it starts, StairCells(stair) the landing.
+	void	StairCell(const PlanStair& stair, int i, int& cx, int& cy, int lane = 0) const;
 	// The flight whose run (on its lower deck) covers a cell, -1 if none.
 	int		StairAt(int deck, int cx, int cy) const;
 	// Whether a flight can go there; if not, why not.

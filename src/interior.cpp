@@ -834,6 +834,35 @@ bool AddInteriorDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& sl
 	return AddDoorVoid<AuScRoomVoid>(design, mn, mx, groupName, doorId);
 }
 
+bool AddHatch(AuDesign& design, const AuPoint& jigMin, const AuPoint& jigMax, double reach,
+		const QString& groupName, quint16& doorId, quint16 lowerMeshId, quint16 upperMeshId)
+{
+	doorId = 0;
+	if(lowerMeshId && upperMeshId)
+	{
+		AuScFaceList jig = BoxFaces(jigMin, jigMax);
+		OrientAsHull(jig);
+		QList<quint16> added;
+		if(JigCut(design, AuScPart::Part_DoorJig, jig, lowerMeshId, upperMeshId, &added))
+			for(quint16 id : added)
+				if(AuScDoor* door = dynamic_cast<AuScDoor*>(design.Parts().value(id)))
+				{
+					door->SetGroupName("Door");
+					doorId = id;
+				}
+	}
+	if(!doorId)
+	{
+		// No cut: a plate in the floor between the rooms.
+		const double mid = (jigMin.z + jigMax.z) / 2;
+		if(!AddDoorPart(design, AuPoint(jigMin.x, jigMin.y, mid - .2), AuPoint(jigMax.x, jigMax.y, mid + .2), false, doorId))
+			return false;
+	}
+	StyleDoor(design.Parts().value(doorId), false);
+	return AddDoorVoid<AuScRoomVoid>(design, AuPoint(jigMin.x, jigMin.y, jigMin.z - reach),
+			AuPoint(jigMax.x, jigMax.y, jigMax.z + reach), groupName, doorId);
+}
+
 // The point of triangle abc closest to p (Ericson, Real-Time Collision
 // Detection, 5.1.5).
 static AuPoint ClosestOnTriangle(const AuPoint& p, const AuPoint& a, const AuPoint& b, const AuPoint& c)
@@ -1318,7 +1347,7 @@ bool AddOutsideLadderClearance(AuDesign& design, const AuPoint& ladderFoot, cons
 }
 
 bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, double width, double run, double rise,
-		const QString& groupName)
+		const QString& groupName, bool ramp)
 {
 	if(run < 1 || rise < .5 || width < 1)
 		return false;
@@ -1337,6 +1366,25 @@ bool AddStairFlight(AuDesign& design, const AuPoint& foot, const AuPoint& dir, d
 	AuScBarrier barrier;
 	barrier.AddFaces(ProfilePrism(slope, dir, foot, width / 2));
 	barrier.SetGroupName(groupName);
+
+	// A ramp: what is seen is a wedge from the floor up to the slope, a
+	// little inside the opening's sides.
+	if(ramp)
+	{
+		AuPointArray wedge;
+		wedge.append(AuPoint(0, 0, 0));
+		wedge.append(AuPoint(run, 0, 0));
+		wedge.append(AuPoint(run, rise, 0));
+		AuScFaceList faces;
+		faces.AddFaces(ProfilePrism(wedge, dir, foot, width / 2 - .1));
+		OrientAsHull(faces);
+		AuScMesh mesh;
+		mesh.AddFaces(faces);
+		mesh.SetGroupName(groupName);
+		if(!barrier.IsValid() || !mesh.IsValid())
+			return false;
+		return design.Parts().AddPart(barrier) != 0 && design.Parts().AddPart(mesh) != 0;
+	}
 
 	// What is seen: the steps, each a block from the floor up, about 0.65 ft
 	// high, its top half a step above the slope where it starts and half a
@@ -1502,11 +1550,13 @@ bool AddRail(AuDesign& design, const AuPoint& from, const AuPoint& to, const QSt
 	return design.Parts().AddPart(barrier) != 0 && design.Parts().AddPart(mesh) != 0;
 }
 
-bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing)
+bool AddLadderPath(AuDesign& design, const AuPoint& bottom, const AuPoint& top, const AuPoint& facing, quint16 doorId)
 {
 	AuScPathLadder ladder;
 	ladder.MakePath(bottom, top);
 	ladder.SetFacing(facing);
+	if(doorId)
+		ladder.SetAssociatedPart(doorId, AuScDoor::Open);
 	if(!ladder.IsValid())
 		return false;
 	return design.Parts().AddPart(ladder) != 0;

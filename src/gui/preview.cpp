@@ -25,6 +25,10 @@
 #include <QKeyEvent>
 #include <QTimer>
 #include <QVector3D>
+#include <QVector4D>
+#include <QPolygonF>
+#include <QPen>
+#include <QMatrix4x4>
 
 #include "auglsl.h"
 #include "version.h"
@@ -250,6 +254,7 @@ int DesignPreview::TextureForSlot(int slot)
 void DesignPreview::SetDesign(const AuDesign* design, bool frame)
 {
 	m_design = design;
+	m_pickValid = false;
 	// The palette may be different, so any textures that were loaded for the
 	// old design have to go.
 	if(context())
@@ -821,6 +826,14 @@ void DesignPreview::paintGL()
 	QOpenGLFunctions* functions = context()->functions();
 	if(!functions)
 		return;
+	// QPainter (the brush's outline, the free flight help) leaves the depth
+	// test off and blending on: set what the drawing needs every frame.
+	functions->glEnable(GL_DEPTH_TEST);
+	functions->glDepthFunc(GL_LESS);
+	functions->glDepthMask(true);
+	functions->glDisable(GL_BLEND);
+	functions->glDisable(GL_CULL_FACE);
+	functions->glColorMask(true, true, true, true);
 	functions->glClearColor(0.12f, 0.13f, 0.16f, 1.f);
 	functions->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -906,6 +919,46 @@ void DesignPreview::paintGL()
 	m_vao.release();
 	m_program->release();
 
+	if(m_brush && m_brushHover && !m_fly)
+	{
+		// The brush's outline where it meets the hull: square to the view,
+		// as the stamps are.
+		QMatrix4x4 projection, viewM;
+		BuildCameraMatrix(projection, viewM);
+		const QMatrix4x4 mvp = projection * viewM;
+		QVector3D eye, up;
+		EyeAndUp(eye, up);
+		const QVector3D d = (m_brushAt - eye).normalized();
+		const QVector3D u = (up - d * QVector3D::dotProduct(up, d)).normalized();
+		const QVector3D r = QVector3D::crossProduct(d, u);
+		const float radius = float(m_brushFeet / 2);
+		QPolygonF outline;
+		const int corners = m_brushSquare ? 4 : 48;
+		for(int i = 0; i <= corners; ++i)
+		{
+			QVector3D p;
+			if(m_brushSquare)
+			{
+				static const float sa[] = { -1, 1, 1, -1, -1 }, sb[] = { -1, -1, 1, 1, -1 };
+				p = m_brushAt + r * (sa[i] * radius) + u * (sb[i] * radius);
+			}
+			else
+			{
+				const float a = float(2 * M_PI * i / corners);
+				p = m_brushAt + r * (radius * std::cos(a)) + u * (radius * std::sin(a));
+			}
+			const QVector4D c = mvp * QVector4D(p, 1.f);
+			if(c.w() <= 1e-4f)
+				continue;
+			outline << QPointF((c.x() / c.w() + 1.f) * .5f * width(), (1.f - c.y() / c.w()) * .5f * height());
+		}
+		QPainter painter(this);
+		painter.setRenderHint(QPainter::Antialiasing);
+		painter.setPen(QPen(QColor(0, 0, 0, 160), 3));
+		painter.drawPolyline(outline);
+		painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
+		painter.drawPolyline(outline);
+	}
 	if(m_fly)
 	{
 		QPainter painter(this);
@@ -918,9 +971,19 @@ void DesignPreview::paintGL()
 
 void DesignPreview::mousePressEvent(QMouseEvent* event)
 {
-	if(event->button() == Qt::LeftButton)
+	if(m_brush && !m_fly && event->button() == Qt::LeftButton)
+	{
+		m_brushing = true;
+		emit BrushBegan();
+		Stamp(event->pos(), true);
+		return;
+	}
+	// With the brush the right button turns the view; otherwise the left.
+	if(event->button() == (m_brush ? Qt::RightButton : Qt::LeftButton) ||
+			(m_fly && event->button() == Qt::LeftButton))
 	{
 		m_dragging = true;
+		m_dragButton = event->button();
 		m_lastMouse = event->pos();
 		m_pressMouse = event->pos();
 	}
@@ -928,6 +991,17 @@ void DesignPreview::mousePressEvent(QMouseEvent* event)
 
 void DesignPreview::mouseReleaseEvent(QMouseEvent* event)
 {
+	if(m_brushing && event->button() == Qt::LeftButton)
+	{
+		m_brushing = false;
+		emit BrushEnded();
+		return;
+	}
+	if(m_dragging && event->button() == m_dragButton && event->button() != Qt::LeftButton)
+	{
+		m_dragging = false;
+		return;
+	}
 	if(event->button() != Qt::LeftButton)
 		return;
 	m_dragging = false;
@@ -960,17 +1034,26 @@ bool DesignPreview::PickHull(const QPoint& pixel, QVector3D& point, QVector3D& n
 	const QVector3D farP = inverse.map(QVector3D(nx, ny, 1.f));
 	const QVector3D dir = (farP - nearP).normalized();
 
-	double best = 1e30;
-	for(AuScParts::const_iterator it = m_design->Parts().constBegin(); it != m_design->Parts().constEnd(); ++it)
+	if(!m_pickValid)
 	{
-		const AuScPart* part = it.value();
-		if(!part || !part->IsHullMesh() || part->IsOmitted())
-			continue;
-		AuScFaceList faces;
-		part->Faces(faces);
-		AuScTriList tris;
-		faces.Triangles(tris);
-		for(const AuScTri& t : tris)
+		m_pickTris.clear();
+		for(AuScParts::const_iterator it = m_design->Parts().constBegin(); it != m_design->Parts().constEnd(); ++it)
+		{
+			const AuScPart* part = it.value();
+			if(!part || !part->IsHullMesh() || part->IsOmitted())
+				continue;
+			AuScFaceList faces;
+			part->Faces(faces);
+			AuScTriList tris;
+			faces.Triangles(tris);
+			for(const AuScTri& t : tris)
+				m_pickTris.append(t);
+		}
+		m_pickValid = true;
+	}
+	double best = 1e30;
+	{
+		for(const AuScTri& t : m_pickTris)
 		{
 			// Moller-Trumbore, both sides.
 			const QVector3D v0(t.V0().x, t.V0().y, t.V0().z), v1(t.V1().x, t.V1().y, t.V1().z), v2(t.V2().x, t.V2().y, t.V2().z);
@@ -1004,8 +1087,67 @@ bool DesignPreview::PickHull(const QPoint& pixel, QVector3D& point, QVector3D& n
 	return true;
 }
 
+void DesignPreview::SetBrush(bool on, double sizeFeet, bool square)
+{
+	m_brush = on;
+	m_brushFeet = qMax(0.1, sizeFeet);
+	m_brushSquare = square;
+	setMouseTracking(on);
+	setCursor(on ? Qt::CrossCursor : (m_picking ? Qt::CrossCursor : Qt::ArrowCursor));
+	if(!on)
+	{
+		m_brushHover = false;
+		if(m_brushing)
+		{
+			m_brushing = false;
+			emit BrushEnded();
+		}
+	}
+	update();
+}
+
+// The eye, and up on the screen, in the design's feet.
+void DesignPreview::EyeAndUp(QVector3D& eye, QVector3D& up) const
+{
+	QMatrix4x4 projection, view;
+	BuildCameraMatrix(projection, view);
+	const QMatrix4x4 inverse = view.inverted();
+	eye = inverse.map(QVector3D(0, 0, 0));
+	up = inverse.mapVector(QVector3D(0, 1, 0)).normalized();
+}
+
+// The brush over a pixel: the outline goes there, and a stamp is sent.
+void DesignPreview::Stamp(const QPoint& pixel, bool emitIt)
+{
+	QVector3D point, normal, toward;
+	m_brushHover = PickHull(pixel, point, normal, toward);
+	if(m_brushHover)
+	{
+		m_brushAt = point;
+		if(emitIt)
+		{
+			QVector3D eye, up;
+			EyeAndUp(eye, up);
+			emit BrushStamp(point, eye, up);
+		}
+	}
+	update();
+}
+
+void DesignPreview::leaveEvent(QEvent* event)
+{
+	m_brushHover = false;
+	update();
+	QOpenGLWidget::leaveEvent(event);
+}
+
 void DesignPreview::mouseMoveEvent(QMouseEvent* event)
 {
+	if(m_brush && !m_fly && !m_dragging)
+	{
+		Stamp(event->pos(), m_brushing);
+		return;
+	}
 	if(!m_dragging)
 		return;
 	const QPoint delta = event->pos() - m_lastMouse;

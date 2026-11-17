@@ -12,6 +12,7 @@
 
 #include <QJsonObject>
 #include <QList>
+#include <QSet>
 #include <QRectF>
 #include <QString>
 #include <QStringList>
@@ -47,7 +48,8 @@ struct BuildingVolumes
 	int		citizenPosts = 0;
 	int		livestockPosts = 0;
 	int		turrets = 0;
-	int		weaponBays = 0;
+	int		weaponBays = 0;		// Fire control stations, each running a weapon bay of its own.
+	quint32	weaponBayVolume = 0;	// Cubic meters for each weapon bay; 0: 2 % of the hull each.
 	int		surgery = 0;
 	int		transporters = 0;
 	int		parkGround = 0;
@@ -56,6 +58,16 @@ struct BuildingVolumes
 	quint32	arena = 0;			// Cubic meters of arena. The capacity follows from it.
 	quint32	auditorium = 0;		// Cubic meters of auditorium.
 	int		field = 0;
+};
+
+// A station placed by hand (the designer's Crew page), where it stands on
+// the floor and which way it faces (radians from +Y, as a console's icon).
+struct BuildingStation
+{
+	QString	type;			// "sensor", "shield", "firecontrol", "medic", "transporter".
+	double	x = 0, y = 0, z = 0;
+	double	facing = 0;
+	int		module = 0;		// Fire control: the weapon bay it runs; 0 for the building's (weaponModule).
 };
 
 // The brief for a building.
@@ -86,6 +98,10 @@ struct BuildingBrief
 	bool					stackFields = false;	// Lay the fields on top of each other: the game adds up
 												// the area of every field site, so a stack of N one-field
 												// sites counts as N fields on the ground of one.
+	int						weaponModule = 0;	// What the weapon bays are (COMMODITYID); 0: energy weapon bays.
+	// Placed by hand; the generator puts in only the rest. Not saved with
+	// the brief (the plan keeps them as its stations).
+	QList<BuildingStation>	stations;
 };
 
 // The outcome of one candidate building.
@@ -104,6 +120,8 @@ struct BuildingResult
 	QString					industryName;
 	QStringList				warnings;
 	QStringList				errors;		// From the design report.
+	QList<quint16>			weaponBayParts;		// The fire control stations (each a weapon bay).
+	QSet<quint16>			handModuleParts;	// Those whose bay was chosen by hand.
 };
 
 // The building templates.

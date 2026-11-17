@@ -21,6 +21,8 @@ const IndustryEntry kIndustries[] = {
 	{ "capitol",		IID_Capitol },
 	{ "arena",			IID_Arena },
 	{ "military",		IID_BaseHeadquarters },
+	{ "military weapons base",	IID_BaseWeapon },
+	{ "military shield base",	IID_BaseShield },
 	{ "barracks",		IID_BaseBarracks },
 	{ "warehouse",		IID_Warehouse },
 	{ "house",			IID_House },

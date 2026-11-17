@@ -138,5 +138,8 @@ int main(int argc, char* argv[])
 	}
 	else if(parser.isSet(deckOption))
 		window.SetDeck(parser.value(deckOption).toInt() - 1);
+	// Not when run from a script (a picture or an export), nor in the tests.
+	if(!parser.isSet(shotOption) && !parser.isSet(exportOption) && qEnvironmentVariable("QT_QPA_PLATFORM") != "offscreen")
+		QTimer::singleShot(3000, &window, &DesignerWindow::CheckForUpdatesAtStart);
 	return app.exec();
 }

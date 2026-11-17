@@ -82,6 +82,12 @@ public:
 	// stands, and leaving orbits round the point straight ahead.
 	void	SetFreeFly(bool on);
 	bool	FreeFly() const { return m_fly; }
+	// The paint brush: while on, a left drag over the hull paints (BrushStamp
+	// for each point the brush passes, between BrushBegan and BrushEnded),
+	// the right button turns the view, and the brush's outline follows the
+	// mouse on the hull. 'sizeFeet' is across the brush where it meets the hull.
+	void	SetBrush(bool on, double sizeFeet, bool square);
+	bool	Brush() const { return m_brush; }
 
 signals:
 	void	ViewChanged();
@@ -89,6 +95,11 @@ signals:
 	// Where a click met the hull, the hull's face there (turned towards the
 	// viewer), and the way back to the viewer. In the blueprint's feet.
 	void	HullPicked(const QVector3D& point, const QVector3D& normal, const QVector3D& towardViewer);
+	// The brush: where it met the hull, where the eye is and which way is up
+	// on the screen, in the blueprint's feet.
+	void	BrushBegan();
+	void	BrushStamp(const QVector3D& at, const QVector3D& eye, const QVector3D& up);
+	void	BrushEnded();
 
 protected:
 	void	initializeGL() override;
@@ -101,6 +112,7 @@ protected:
 	void	keyPressEvent(QKeyEvent* event) override;
 	void	keyReleaseEvent(QKeyEvent* event) override;
 	void	focusOutEvent(QFocusEvent* event) override;
+	void	leaveEvent(QEvent* event) override;
 
 private:
 	struct Vertex
@@ -174,6 +186,21 @@ private:
 	QPoint	m_lastMouse;
 	QPoint	m_pressMouse;
 	bool	m_picking = false;
+	Qt::MouseButton	m_dragButton = Qt::NoButton;
+
+	// The paint brush.
+	bool		m_brush = false;
+	bool		m_brushSquare = false;
+	double		m_brushFeet = 4.0;
+	bool		m_brushing = false;		// A stroke under way.
+	bool		m_brushHover = false;	// The outline is on the hull at m_brushAt.
+	QVector3D	m_brushAt;
+	void		Stamp(const QPoint& pixel, bool emitIt);
+	void		EyeAndUp(QVector3D& eye, QVector3D& up) const;
+
+	// The hull's triangles for picking, made when first needed.
+	mutable AuScTriList	m_pickTris;
+	mutable bool		m_pickValid = false;
 
 	// Free flight.
 	bool			m_fly = false;

@@ -15,10 +15,16 @@
 #define SHIPGEN_TEXTUREPREVIEW_H
 
 #include <QIcon>
+#include <QList>
+#include <QPair>
 #include <QString>
 
 // A picture of library texture `libTexId`, or a null icon.
 QIcon GameTextureIcon(int libTexId);
+
+// Every texture of the game's library, as id and name (from the engine
+// source; the pictures need the library itself).
+QList<QPair<int, QString> > GameLibraryTextures();
 
 // The texture library found (and loaded), or empty.
 QString GameTextureLibrary();

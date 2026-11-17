@@ -2654,14 +2654,14 @@ static bool HullWindow(AuScDesign& design, quint16 roomMeshId, const QString& gr
 	auto outBox = [&](double a0, double c0, double c1, double z0, double z1, double end) {
 		if(!flat)
 			return skewBox(a0, end, c0, c1, z0, z1);
-		auto far = [&](double c, double z) { return world(planeAt(c, z) - .02, c, z); };
+		auto farSide = [&](double c, double z) { return world(planeAt(c, z) - .02, c, z); };
 		AuScFaceList box;
 		box.AddFace(quad(world(a0, c0, z0), world(a0, c1, z0), world(a0, c1, z1), world(a0, c0, z1)));
-		box.AddFace(quad(far(c0, z0), far(c0, z1), far(c1, z1), far(c1, z0)));
-		box.AddFace(quad(world(a0, c0, z0), world(a0, c0, z1), far(c0, z1), far(c0, z0)));
-		box.AddFace(quad(world(a0, c1, z0), far(c1, z0), far(c1, z1), world(a0, c1, z1)));
-		box.AddFace(quad(world(a0, c0, z0), far(c0, z0), far(c1, z0), world(a0, c1, z0)));
-		box.AddFace(quad(world(a0, c0, z1), world(a0, c1, z1), far(c1, z1), far(c0, z1)));
+		box.AddFace(quad(farSide(c0, z0), farSide(c0, z1), farSide(c1, z1), farSide(c1, z0)));
+		box.AddFace(quad(world(a0, c0, z0), world(a0, c0, z1), farSide(c0, z1), farSide(c0, z0)));
+		box.AddFace(quad(world(a0, c1, z0), farSide(c1, z0), farSide(c1, z1), world(a0, c1, z1)));
+		box.AddFace(quad(world(a0, c0, z0), farSide(c0, z0), farSide(c1, z0), world(a0, c1, z0)));
+		box.AddFace(quad(world(a0, c0, z1), world(a0, c1, z1), farSide(c1, z1), farSide(c0, z1)));
 		return box;
 	};
 	if(flat)
@@ -3102,7 +3102,7 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 		v[i * 3 + 2] = V3(t.V2());
 	}
 	QVector<bool> touched(n, false);
-	QVector<int> near;
+	QVector<int> nearTris;
 	for(const PlanStroke& stroke : plan.strokes)
 	{
 		if(stroke.paint >= plan.palette.size())
@@ -3126,7 +3126,7 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 			const QVector3D right = QVector3D::crossProduct(d, up);
 			// Only the triangles whose corners, seen from the eye, come near
 			// the footprint (or that reach behind the eye).
-			near.clear();
+			nearTris.clear();
 			const float margin = radius + step;
 			for(int i = 0; i < n; ++i)
 			{
@@ -3152,9 +3152,9 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 				if(!inFront)
 					continue;
 				if(behind || (maxA >= -margin && minA <= margin && maxB >= -margin && minB <= margin))
-					near << i;
+					nearTris << i;
 			}
-			if(near.isEmpty())
+			if(nearTris.isEmpty())
 				continue;
 			auto paintIt = [&](int i) {
 				hull.paint[i] = stroke.paint < 0 ? own.at(i) : stroke.paint;
@@ -3163,7 +3163,7 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 			// Every triangle whose middle is inside the footprint and is the
 			// first thing seen there: so a big brush misses none between its
 			// rays.
-			for(int i : near)
+			for(int i : nearTris)
 			{
 				const QVector3D mid = (v.at(i * 3) + v.at(i * 3 + 1) + v.at(i * 3 + 2)) / 3.f;
 				const QVector3D t = mid - st.eye;
@@ -3178,7 +3178,7 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 				if(own <= 0)
 					own = 1.f;
 				bool hidden = false;
-				for(int j : near)
+				for(int j : nearTris)
 				{
 					if(j == i)
 						continue;
@@ -3208,7 +3208,7 @@ int ApplyPaintStrokes(const TriPlan& plan, PlanHull& hull)
 					const QVector3D dir = (st.at + right * a + up * b) - st.eye;
 					int hit = -1;
 					float best = 1e30f;
-					for(int i : near)
+					for(int i : nearTris)
 					{
 						const float t = RayTriangle(st.eye, dir, v.at(i * 3), v.at(i * 3 + 1), v.at(i * 3 + 2));
 						if(t > 1e-4f && t < best)

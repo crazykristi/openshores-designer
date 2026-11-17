@@ -128,12 +128,12 @@ WindowLeaks FindWindowLeaks(const AuDesign& design, int grid, const QStringList&
 		// ray that would go further counts as meeting nothing, a leak either way.
 		const double reach = 30;
 		const AuPoint bmn = wmn.Min(rmn) - AuPoint(reach, reach, reach), bmx = wmx.Max(rmx) + AuPoint(reach, reach, reach);
-		QVector<Tri> near;
+		QVector<Tri> nearTris;
 		for(const Tri& t : tris)
 		{
 			const AuPoint tmn = t.v[0].Min(t.v[1]).Min(t.v[2]), tmx = t.v[0].Max(t.v[1]).Max(t.v[2]);
 			if(tmx.x >= bmn.x && tmn.x <= bmx.x && tmx.y >= bmn.y && tmn.y <= bmx.y && tmx.z >= bmn.z && tmn.z <= bmx.z)
-				near << t;
+				nearTris << t;
 		}
 		// Places to look from: in the room, at eye height, nearest the window.
 		const AuPoint wc = (wmn + wmx) * .5;
@@ -167,8 +167,8 @@ WindowLeaks FindWindowLeaks(const AuDesign& design, int grid, const QStringList&
 						d.Unit();
 						double dist;
 						// Near first; past it (seldom), the whole design.
-						const QVector<Tri>* list = &near;
-						int hit = FirstHit(near, e.second, d, dist);
+						const QVector<Tri>* list = &nearTris;
+						int hit = FirstHit(nearTris, e.second, d, dist);
 						if(hit < 0)
 						{
 							list = &tris;

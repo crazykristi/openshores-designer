@@ -61,7 +61,7 @@ bool OpenGLAvailable()
 	// The preview needs OpenGL 3.3 for its shaders.
 	QOpenGLFunctions* functions = context.functions();
 	const char* versionText = functions ? reinterpret_cast<const char*>(functions->glGetString(GL_VERSION)) : 0;
-	const bool available = versionText && QString(versionText).section(' ', 0, 0).toFloat() >= 3.3;
+	const bool available = OpenGLVersionAtLeast(versionText, 3, 3);
 	context.doneCurrent();
 	return available;
 }

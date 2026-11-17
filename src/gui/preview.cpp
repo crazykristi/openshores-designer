@@ -13,6 +13,7 @@
 #include <QCheckBox>
 #include <QMessageBox>
 #include <QSettings>
+#include <QStringList>
 #include <cstdio>
 #include <QGuiApplication>
 #include <QOffscreenSurface>
@@ -117,9 +118,22 @@ QColor ColourForPart(const AuScPart* part)
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 
+bool OpenGLVersionAtLeast(const char* versionText, int major, int minor)
+{
+	if(!versionText)
+		return false;
+	const QStringList numbers = QString(versionText).section(' ', 0, 0).split('.');
+	bool majorOk = false, minorOk = false;
+	const int givenMajor = numbers.value(0).toInt(&majorOk);
+	const int givenMinor = numbers.value(1).toInt(&minorOk);
+	if(!majorOk || !minorOk)
+		return false;
+	return givenMajor > major || (givenMajor == major && givenMinor >= minor);
+}
+
 QString ChooseOpenGLFormat()
 {
-	struct Probe { float version = 0; QString driver; };
+	struct Probe { bool enough = false; QString driver; };
 	auto probe = [](const QSurfaceFormat& format) -> Probe {
 		Probe result;
 		QOpenGLContext context;
@@ -133,7 +147,7 @@ QString ChooseOpenGLFormat()
 			return result;
 		const char* text = reinterpret_cast<const char*>(context.functions()->glGetString(GL_VERSION));
 		const char* renderer = reinterpret_cast<const char*>(context.functions()->glGetString(GL_RENDERER));
-		result.version = text ? QString(text).section(' ', 0, 0).toFloat() : 0;
+		result.enough = OpenGLVersionAtLeast(text, 3, 3);
 		result.driver = QString("OpenGL %1 (%2)").arg(text ? text : "?", renderer ? renderer : "?");
 		context.doneCurrent();
 		return result;
@@ -141,7 +155,7 @@ QString ChooseOpenGLFormat()
 	if(QGuiApplication::platformName() == "offscreen")
 		return QString();
 	const Probe first = probe(QSurfaceFormat::defaultFormat());
-	if(first.version >= 3.3f)
+	if(first.enough)
 		return QString();
 #if defined(Q_OS_LINUX)
 	QSurfaceFormat core = QSurfaceFormat::defaultFormat();
@@ -150,7 +164,7 @@ QString ChooseOpenGLFormat()
 	core.setProfile(QSurfaceFormat::CoreProfile);
 	core.setDepthBufferSize(24);
 	const Probe second = probe(core);
-	if(second.version >= 3.3f)
+	if(second.enough)
 	{
 		QSurfaceFormat::setDefaultFormat(core);
 		return QString();
@@ -306,8 +320,6 @@ void DesignPreview::initializeGL()
 {
 	// The preview needs OpenGL 3.3 for the shaders. Older drivers still get
 	// the rest of the tool, just without the 3D view.
-	// The version string looks like "4.5 (Core Profile) Mesa 25.0.7", so only
-	// the first number is of interest.
 	QOpenGLFunctions* functions = context() ? context()->functions() : 0;
 	if(!functions)
 	{
@@ -317,9 +329,8 @@ void DesignPreview::initializeGL()
 	}
 	const char* versionText = reinterpret_cast<const char*>(functions->glGetString(GL_VERSION));
 	const char* rendererText = reinterpret_cast<const char*>(functions->glGetString(GL_RENDERER));
-	m_glVersion = versionText ? QString(versionText).section(' ', 0, 0).toFloat() : 0.0;
 	const QString driver = QString("OpenGL %1, %2").arg(versionText ? versionText : "?", rendererText ? rendererText : "?");
-	if(m_glVersion < 3.3)
+	if(!OpenGLVersionAtLeast(versionText, 3, 3))
 	{
 		m_glProblem = tr("The 3D view needs OpenGL 3.3; this driver gives %1.").arg(driver);
 		fprintf(stderr, "3D view: %s\n", qPrintable(m_glProblem));

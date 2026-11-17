@@ -1,13 +1,11 @@
-# Shipgen Designer 0.3.7-beta-rc4
+# Shipgen Designer 0.3.7-beta-rc4-hf1
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
-triangles, paint it, and build a blueprint the game loads. The download
-also holds `shipgen-gui` (the automatic generator's window) and the
-`shipgen` command line.
+triangles, paint it, and build a blueprint the game loads.
 
-0.3.7-beta-rc4 is the fourth **release candidate** of the first beta. Since
-rc3 it adds a building mode (with military weapons and shield bases),
+0.3.7-beta-rc4-hf1 is a hotfix of rc4, the fourth **release candidate** of
+the first beta (see *Hotfix 1* below). Since rc3 it adds a building mode (with military weapons and shield bases),
 decals, textured paint and a paint brush in the 3D view, doors in floors and
 ceilings, stairs and ramps of several widths and slopes, clearer hull
 windows, copying decks, free flight through the 3D view, and a check for new
@@ -15,9 +13,17 @@ versions, with fixes for problems found in the game (maintenance consoles, zero-
 round windows, weapon bays).
 
 **Problems?** If something goes wrong, please either contact the author
-(Kristiana Moretti, `crazykristi` on GitHub) or report an issue at
+(`crazykristi` on GitHub) or report an issue at
 <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
 plan file (`.json`) and what you expected help most.
+
+## Hotfix 1
+
+* **The 3D view stayed empty with NVIDIA drivers on Windows**, with the
+  message "The 3D view needs OpenGL 3.3" even though the driver gives 3.3 or
+  newer. NVIDIA writes its OpenGL version with three numbers ("4.6.0
+  NVIDIA ..."), which the check misread. Only the first two numbers are read
+  now.
 
 ## New since rc3
 
@@ -252,10 +258,10 @@ before relying on them, and tell us how they behave.
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc4-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage
+./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -263,14 +269,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.7-beta-rc4-windows-x86_64.zip` and start
+`shipgen-designer-0.3.7-beta-rc4-hf1-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc4-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc4-hf1-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The

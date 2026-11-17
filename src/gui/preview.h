@@ -31,6 +31,11 @@ class AuDesign;
 // neither gives OpenGL 3.3 (empty when all is well).
 QString ChooseOpenGLFormat();
 
+// Whether a GL_VERSION string says at least major.minor. Drivers write it
+// differently: Mesa gives "4.5 (Core Profile) Mesa 25.0.7", NVIDIA gives
+// "4.6.0 NVIDIA 580.196.07", so only the first two numbers are read.
+bool OpenGLVersionAtLeast(const char* versionText, int major, int minor);
+
 // Shown on start when ChooseOpenGLFormat found a problem: says what is
 // missing, links to the issue tracker, and lets the user go on at their own
 // risk (or quit: false). "Do not warn again" is remembered per problem.
@@ -161,7 +166,6 @@ private:
 	bool				m_hasMesh = false;
 	bool				m_hasOverlay = false;
 
-	float				m_glVersion = 0.0;
 	// Why the view cannot draw (empty when it can), shown in the view.
 	QString				m_glProblem;
 	QOpenGLShaderProgram*	m_program = 0;

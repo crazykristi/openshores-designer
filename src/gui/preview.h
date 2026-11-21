@@ -20,6 +20,7 @@
 #include <QString>
 
 #include "auscface.h"
+#include "effects.h"
 
 class AuDesign;
 
@@ -94,6 +95,14 @@ public:
 	void	SetBrush(bool on, double sizeFeet, bool square);
 	bool	Brush() const { return m_brush; }
 
+	// The game's animated surfaces (surface effects). Each runs as the game
+	// would run it in that situation on this design, and not at all when the
+	// game never would; with 'markNever' those faces are tinted, so they can
+	// be found. Off, no effect is shown.
+	void	SetEffects(bool animate, const EffectSituation& situation, bool markNever);
+	// What the design does with its effects (for the designer's list).
+	const DesignEffects&	Effects() const { return m_effects; }
+
 signals:
 	void	ViewChanged();
 	void	FreeFlyChanged(bool on);
@@ -128,6 +137,9 @@ private:
 		float	a;			// Opacity.
 		float	u, v;		// Texture coordinate.
 		float	tex;		// Texture slot, for the shader.
+		float	eu, ev;		// Effect texture coordinate.
+		float	eint;		// Effect intensity.
+		float	eff;		// The surface effect, or -1.
 	};
 
 	// One run of vertices that share a texture. The parts are drawn in
@@ -205,6 +217,26 @@ private:
 	// The hull's triangles for picking, made when first needed.
 	mutable AuScTriList	m_pickTris;
 	mutable bool		m_pickValid = false;
+
+	// The surface effects: what the design does with them, the situation
+	// shown, the frames (one layer per picture of the engine's effect
+	// library), and the clock that steps them six times a second.
+	DesignEffects		m_effects;
+	EffectSituation		m_situation;
+	bool				m_animate = true;
+	bool				m_markNever = true;
+	QOpenGLTexture*		m_effectFrames = 0;
+	bool				m_effectFramesTried = false;
+	bool				m_effectFramesMissing = false;
+	class QTimer*		m_effectTimer = 0;
+	int					m_effectSeqFrame = 0;
+	int					m_effectRandFrame = 0;
+	class QLabel*		m_effectNote = 0;	// What never runs, over the view's corner.
+	void	UpdateEffectTimer();
+	void	UpdateEffectNote();
+	void	PlaceEffectNote();
+	void	LoadEffectFrames();
+	bool	AnyEffectRuns() const;
 
 	// Free flight.
 	bool			m_fly = false;

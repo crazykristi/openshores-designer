@@ -4,6 +4,7 @@
 // Design units are feet. Volumes reported to the engine are cubic meters.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "effects.h"
 #include "generate.h"
 
 #include <QFileInfo>
@@ -1841,6 +1842,16 @@ void AddTransporterPads(AuDesign& design, const QList<PlacedRoom>& rooms, const 
 			AuScFaceList slab = BoxFaces(AuPoint(c.x - half, c.y - half, room->min.z), AuPoint(c.x + half, c.y + half, c.z));
 			OrientAsHull(slab);
 			slab.SetEffect(SURFACE_EFFECT(EFF_TransporterPad1 + effect));
+			// One copy of the effect's picture across the pad, as on the
+			// game's own pads; without it every point of the pad showed the
+			// same corner pixel of it.
+			{
+				AuMatrix4x4 corner;
+				corner.LoadIdentity();
+				corner.Translate(AuPoint(c.x - half, c.y - half, c.z));
+				for(AuScFace* f : slab)
+					f->EffectProject(f->Effect(), 2 * half, corner);
+			}
 			AuScMesh pad;
 			pad.AddFaces(slab);
 			pad.SetGroupName(room->label);

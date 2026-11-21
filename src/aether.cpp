@@ -2,6 +2,7 @@
 // shipgen - the Aether kit.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "effects.h"
 #include "aether.h"
 
 #include <QDir>
@@ -298,6 +299,7 @@ void ApplyKitLook(AuScFaceList& faces, const KitLook& look)
 		f->SetShine(qMax(1.f, look.shine));
 		f->SetReflectivity(look.reflect);
 		f->SetEffect(SURFACE_EFFECT(look.effect));
+		ProjectEffect(*f);
 		if(look.glow.isValid())
 			for(int v = 0; v < f->VertexCount(); ++v)
 				f->SetVertexGlow(v, look.glow);

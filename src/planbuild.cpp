@@ -2,6 +2,7 @@
 // shipgen - turning a triangle plan into a blueprint.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "effects.h"
 #include "planbuild.h"
 #include "paint.h"
 #include "decal.h"
@@ -1656,6 +1657,9 @@ void ApplyPaint(AuScFace& face, const TriPlan& plan, int paint)
 	face.SetShine(p.reflect > 0.f ? qMax(1.f, p.shine) : p.shine);
 	face.SetReflectivity(p.reflect);
 	face.SetEffect(SURFACE_EFFECT(p.effect < int(EFF_Count) ? p.effect : 0));
+	// Where on the face the effect's picture goes: without it every point
+	// of the face showed the same corner pixel of it.
+	ProjectEffect(face);
 	if(p.HasGlow())
 		for(int v = 0; v < face.VertexCount(); ++v)
 			face.SetVertexGlow(v, p.glow);

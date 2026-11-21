@@ -4,6 +4,7 @@
 
 #include "mesh.h"
 #include "designerwindow.h"
+#include "effects.h"
 #include "texturepreview.h"
 #include "updater.h"
 #include "interior.h"
@@ -518,6 +519,80 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 					"drag to look round, the wheel sets the speed, Esc leaves.");
 	connect(fly, &QAction::toggled, m_preview, &DesignPreview::SetFreeFly);
 	connect(m_preview, &DesignPreview::FreeFlyChanged, fly, &QAction::setChecked);
+	{
+		// The game's animated surfaces in the 3D view: each runs only as the
+		// game would run it, in the situation chosen here.
+		QMenu* effects = view->addMenu("Surface &effects");
+		effects->setToolTipsVisible(true);
+		QSettings settings;
+		auto option = [&](const QString& text, const QString& key, bool on, const QString& tip) {
+			QAction* a = effects->addAction(text);
+			a->setCheckable(true);
+			a->setChecked(settings.value("designer/effects/" + key, on).toBool());
+			a->setToolTip(tip);
+			return a;
+		};
+		QAction* animate = option("&Animate surface effects", "animate", true,
+				"Shows the game's animated surfaces (Paint page, Effect) moving in the 3D view, each only when the "
+				"game would run it in the situation ticked below.");
+		effects->addSeparator();
+		QAction* power = option("Systems &powered up", "power", true,
+				"The power plant, capacitor, life support and sensors work; the drives and transporters stand by. "
+				"Off, nothing runs, as in a ship laid up.");
+		QAction* shields = option("&Shields up", "shields", true, "The shield effect runs while the shields are up.");
+		QAction* underWay = option("&Under way", "underway", false,
+				"The maneuver drive at full power (its bright look); otherwise it holds still (its dim look). "
+				"An aerial platform always runs it dim.");
+		QAction* ftl = option("&FTL drives charged", "ftl", false,
+				"The FTL drives charged: their bright look, and the hull's FTL Hot look (warp or wormhole, by the "
+				"drive). Otherwise they are on: their dim look. Buildings never run them.");
+		QAction* weapons = option("&Weapons firing", "weapons", false,
+				"A weapon's effect runs for two seconds after it fires: this shows them all firing.");
+		QAction* transporting = option("&Transporters sending", "transporting", false,
+				"The transporter pads' bright look; otherwise the transporters are on: their dim look.");
+		effects->addSeparator();
+		QAction* mark = option("&Tint effects that never run", "mark", true,
+				"Faces with an effect the game never runs on this design (no fire control station for that weapon, "
+				"an FTL effect on a building, ...) are tinted pink, and the view says why.");
+		effects->addAction("&Which effects run, and when...", this, [this]() {
+			const DesignEffects& fx = m_preview->Effects();
+			QStringList lines;
+			for(int e = 1; e < EFF_Count; ++e)
+				if(fx.faces[e])
+					lines << QString("%1 (%2 faces): %3").arg(SurfaceEffectName(SURFACE_EFFECT(e))).arg(fx.faces[e])
+							.arg(fx.possible[e] ? fx.need[e] : "never: " + fx.need[e]);
+			QMessageBox::information(this, "Surface effects", lines.isEmpty()
+					? QString("No face of the design in the 3D view has an effect. Effects are set on the Paint page "
+							  "(Effect), and show once the 3D view is redrawn.")
+					: lines.join("\n"));
+		});
+		QList<QAction*> all;
+		all << animate << power << shields << underWay << ftl << weapons << transporting << mark;
+		auto apply = [this, animate, power, shields, underWay, ftl, weapons, transporting, mark]() {
+			EffectSituation situation;
+			situation.power = power->isChecked();
+			situation.shieldsUp = shields->isChecked();
+			situation.underWay = underWay->isChecked();
+			situation.ftlCharged = ftl->isChecked();
+			situation.weaponsFiring = weapons->isChecked();
+			situation.transporting = transporting->isChecked();
+			for(QAction* a : { power, shields, underWay, ftl, weapons, transporting, mark })
+				a->setEnabled(animate->isChecked());
+			m_preview->SetEffects(animate->isChecked(), situation, mark->isChecked());
+			QSettings settings;
+			settings.setValue("designer/effects/animate", animate->isChecked());
+			settings.setValue("designer/effects/power", power->isChecked());
+			settings.setValue("designer/effects/shields", shields->isChecked());
+			settings.setValue("designer/effects/underway", underWay->isChecked());
+			settings.setValue("designer/effects/ftl", ftl->isChecked());
+			settings.setValue("designer/effects/weapons", weapons->isChecked());
+			settings.setValue("designer/effects/transporting", transporting->isChecked());
+			settings.setValue("designer/effects/mark", mark->isChecked());
+		};
+		for(QAction* a : all)
+			connect(a, &QAction::toggled, this, apply);
+		apply();
+	}
 	view->addAction("The game's &texture pictures...", this, [this]() {
 		const QString now = GameTextureLibrary();
 		if(!now.isEmpty())

@@ -6,6 +6,7 @@
 // complete internal layout.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "effects.h"
 #include "auscroute.h"
 #include "auquad.h"
 #include <QCommandLineParser>
@@ -427,6 +428,39 @@ int cmdProbe(const QStringList& args)
 		else if(!part->IsRoomVoid() && !part->IsHullVoid() && part->IsPathBlocked(p, p, hit, normal))
 			out() << QString("  blocked by %1 %2 [%3]\n").arg(it.key()).arg(part->PartName(), part->GroupName());
 	}
+	delete design;
+	return 0;
+}
+
+// The game's animated surfaces on a design: which it uses, and when the game
+// runs them (src/effects.h).
+int cmdEffects(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		out() << "usage: shipgen effects <design.SoH> [--all]\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	if(!design)
+	{
+		err() << "could not load: " << args[0] << "\n";
+		return 1;
+	}
+	const bool all = args.contains("--all");
+	const DesignEffects fx = AnalyseEffects(*design, all);
+	out() << (fx.building ? "Building" : "Spacecraft") << (fx.warp ? ", warp drive" : "") << "\n";
+	int used = 0;
+	for(int e = 1; e < EFF_Count; ++e)
+	{
+		if(!fx.faces[e] && !all)
+			continue;
+		used += fx.faces[e] ? 1 : 0;
+		out() << QString("  %1  %2 faces  %3: %4\n").arg(SurfaceEffectName(SURFACE_EFFECT(e)), -20)
+				.arg(fx.faces[e], 5).arg(fx.possible[e] ? "runs" : "never").arg(fx.need[e]);
+	}
+	if(!used && !all)
+		out() << "  (no faces with an effect)\n";
 	delete design;
 	return 0;
 }
@@ -1059,6 +1093,7 @@ int cmdFaces(const QStringList& given)
 			continue;
 		QMap<QString, int> looks;
 		QMap<QString, QPair<AuPoint, AuPoint> > boxes;
+		QMap<QString, QPair<AuPoint, AuPoint> > effectRanges;	// Effect coordinates (x, y) and intensity (z).
 		for(const AuScFace* f : faces)
 		{
 			QString glow;
@@ -1084,6 +1119,18 @@ int cmdFaces(const QStringList& given)
 					box.value().first = box.value().first.Min(q);
 					box.value().second = box.value().second.Max(q);
 				}
+				if(f->Effect() != EFF_None)
+				{
+					auto er = effectRanges.find(look);
+					if(er == effectRanges.end())
+						er = effectRanges.insert(look, qMakePair(AuPoint(1e30, 1e30, 1e30), AuPoint(-1e30, -1e30, -1e30)));
+					for(int v = 0; v < f->VertexCount(); ++v)
+					{
+						const AuPoint q(f->Vertex(v).EffectTx(), f->Vertex(v).EffectTy(), f->Vertex(v).EffectIntensity());
+						er.value().first = er.value().first.Min(q);
+						er.value().second = er.value().second.Max(q);
+					}
+				}
 			}
 		}
 		out() << "part " << it.key() << " " << p->TypeName()
@@ -1101,6 +1148,13 @@ int cmdFaces(const QStringList& given)
 				const QPair<AuPoint, AuPoint> b = boxes.value(sorted[i].second);
 				out() << QString("  within x %1..%2 y %3..%4 z %5..%6").arg(b.first.x, 0, 'f', 2).arg(b.second.x, 0, 'f', 2)
 						.arg(b.first.y, 0, 'f', 2).arg(b.second.y, 0, 'f', 2).arg(b.first.z, 0, 'f', 2).arg(b.second.z, 0, 'f', 2);
+				if(effectRanges.contains(sorted[i].second))
+				{
+					const QPair<AuPoint, AuPoint> e = effectRanges.value(sorted[i].second);
+					out() << QString("  effect at s %1..%2 t %3..%4 intensity %5..%6").arg(e.first.x, 0, 'f', 2)
+							.arg(e.second.x, 0, 'f', 2).arg(e.first.y, 0, 'f', 2).arg(e.second.y, 0, 'f', 2)
+							.arg(e.first.z, 0, 'f', 2).arg(e.second.z, 0, 'f', 2);
+				}
 			}
 			out() << "\n";
 		}
@@ -2801,6 +2855,7 @@ void usage()
 			 "                     effect (--where: and the box the faces of each look take up)\n";
 	out() << "  shipgen walk      <design.SoH> x0 y0 z0 x1 y1 z1 [--closed]  where a straight walk is stopped, as the game moves people\n";
 	out() << "  shipgen probe     <design.SoH> x y z  what stops someone standing there, part by part\n";
+	out() << "  shipgen effects   <design.SoH> [--all]  its animated surfaces, and when the game runs them\n";
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
 	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
@@ -3176,6 +3231,7 @@ int main(int argc, char* argv[])
 	if(command == "sight")				return cmdSight(rest);
 	if(command == "walk")				return cmdWalk(rest);
 	if(command == "probe")				return cmdProbe(rest);
+	if(command == "effects")			return cmdEffects(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
 	if(command == "window-check")		return cmdWindowCheck(rest);
 	if(command == "view-check")			return cmdViewCheck(rest);

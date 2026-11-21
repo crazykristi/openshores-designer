@@ -830,8 +830,8 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 	clearWith=$("$SHIPGEN" probe "$WORK/plan/example.SoH" -4.5 92.5 -2.3 2>&1)
 	clearWithout=$("$SHIPGEN" probe "$WORK/plan/noclear.SoH" -4.5 92.5 -2.3 2>&1)
 	if grep -q 'Walking room round the hull: [1-9]' "$WORK/plan/build.txt" &&
-			"$SHIPGEN" parts "$WORK/plan/example.SoH" | grep -q 'Hull Void  \[Hull Clearance\]' &&
-			! "$SHIPGEN" parts "$WORK/plan/noclear.SoH" | grep -q 'Hull Clearance' &&
+			"$SHIPGEN" parts "$WORK/plan/example.SoH" | qgrep 'Hull Void  \[Hull Clearance\]' &&
+			! "$SHIPGEN" parts "$WORK/plan/noclear.SoH" | qgrep 'Hull Clearance' &&
 			echo "$clearWith" | grep -q "the ship's test: free" && echo "$clearWith" | grep -q 'in void .*\[Hull Clearance\]' &&
 			echo "$clearWithout" | grep -q "the ship's test: blocked"; then
 		pass=$((pass+1))
@@ -1453,6 +1453,40 @@ PY
 		fail=$((fail+1))
 		echo "  FAIL  room uses, the medic or the transporter pads ($padsOk)"
 		grep -E 'hold access|Medic|Transporter Console' "$WORK/plan/uses.parts" | head -6
+	fi
+	# The game's animated surfaces: a paint's effect, and the pads' own, get
+	# effect texture coordinates (the game showed one corner pixel of the
+	# picture without them), and `shipgen effects` says which the game runs
+	# on the design: the power plant's, but not a weapon's that no fire
+	# control station picks.
+	python3 - "$WORK/plan/example.json" "$WORK/plan/fx.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d['palette'][0]['effect'] = 7     # Power Plant
+d['palette'][1]['effect'] = 22    # Weapon 3
+json.dump(d, open(sys.argv[2], 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/fx.json" --out "$WORK/plan/fx.SoH" > "$WORK/plan/fx.txt" 2>&1
+	fxList=$("$SHIPGEN" effects "$WORK/plan/fx.SoH" 2>&1)
+	fxFaces=$("$SHIPGEN" faces "$WORK/plan/fx.SoH" --where 2>&1)
+	padList=$("$SHIPGEN" effects "$WORK/plan/uses.SoH" 2>&1)
+	padFaces=$("$SHIPGEN" faces "$WORK/plan/uses.SoH" --where 2>&1)
+	if grep -q '^Errors (0):' "$WORK/plan/fx.txt" &&
+			echo "$fxList" | grep -qE 'Power Plant +[0-9]+ faces  runs' &&
+			echo "$fxList" | grep -qE 'Weapon 3 +[0-9]+ faces  never: no fire control station picks effect 3' &&
+			echo "$fxFaces" | grep 'effect Power Plant' | grep -q 'effect at s -' &&
+			! echo "$fxFaces" | grep 'effect Power Plant' | grep -q 'effect at s 0.00..0.00 t 0.00..0.00' &&
+			echo "$padList" | grep -qE 'Transporter Pad 1 +[0-9]+ faces  runs' &&
+			echo "$padFaces" | grep 'effect Transporter Pad 1' | grep -q 'effect at s 0.00..1.00 t 0.00..1.00'; then
+		pass=$((pass+1))
+		echo "  ok    surface effects get their picture laid on the faces, and the game's conditions for running them are known"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  surface effects"
+		echo "$fxList"
+		echo "$padList"
+		echo "$fxFaces" | grep 'effect at' | head -4
+		echo "$padFaces" | grep 'effect at' | head -2
 	fi
 	# A weapon bay per weapon emitter: its own fire control station running
 	# its own module, the emitter on it; kept through the designer.

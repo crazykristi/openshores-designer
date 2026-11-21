@@ -25,6 +25,9 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QTimer>
+#include <QLabel>
+#include <QDateTime>
+#include <QRandomGenerator>
 #include <QVector3D>
 #include <QVector4D>
 #include <QPolygonF>
@@ -48,14 +51,19 @@ const char* kVertexShader =
 	"layout(location=3) in float inAlpha;\n"
 	"layout(location=4) in vec2 inUv;\n"
 	"layout(location=5) in float inTexture;\n"
+	"layout(location=6) in vec4 inEffect;\n"
 	"uniform mat4 uMvp;\n"
 	"out vec3 vNormal;\n"
 	"out vec3 vColour;\n"
 	"out float vAlpha;\n"
 	"out vec2 vUv;\n"
 	"out float vTexture;\n"
+	"out vec3 vEffect;\n"
+	"flat out int vEffectKind;\n"
 	"void main()\n"
 	"{\n"
+	"    vEffect = inEffect.xyz;\n"
+	"    vEffectKind = int(floor(inEffect.w + 0.5));\n"
 	"    vNormal = inNormal;\n"
 	"    vColour = inColour;\n"
 	"    vAlpha = inAlpha;\n"
@@ -71,8 +79,14 @@ const char* kFragmentShader =
 	"in float vAlpha;\n"
 	"in vec2 vUv;\n"
 	"in float vTexture;\n"
+	"in vec3 vEffect;\n"
+	"flat in int vEffectKind;\n"
 	"uniform vec3 uLight;\n"
 	"uniform sampler2D uTexture;\n"
+	// The effect frames, one layer per picture; for each surface effect the
+	// layer it shows now (0: off, -1: never runs on this design, tinted).
+	"uniform sampler2DArray uEffects;\n"
+	"uniform int uEffectLayer[32];\n"
 	"out vec4 fragColour;\n"
 	"void main()\n"
 	"{\n"
@@ -80,7 +94,24 @@ const char* kFragmentShader =
 	"    float d = abs(dot(n, normalize(uLight)));\n"
 	"    float a = 0.30 + 0.70 * d;\n"
 	"    vec4 tex = vTexture >= 0.0 ? texture(uTexture, vUv) : vec4(1.0);\n"
-	"    fragColour = vec4(vColour * tex.rgb * a, vAlpha * tex.a);\n"
+	"    vec3 colour = vColour * tex.rgb * a;\n"
+	"    float alpha = vAlpha * tex.a;\n"
+	"    if(vEffectKind > 0 && vEffectKind < 32)\n"
+	"    {\n"
+	"        int layer = uEffectLayer[vEffectKind];\n"
+	"        if(layer > 0)\n"
+	"        {\n"
+	// As the game's ship shader (Sc.f.glsl): the frame glows over the lit
+	// surface, scaled by the vertex's effect intensity, and brings the
+	// alpha up so that it shows on see-through surfaces too.
+	"            vec4 glow = texture(uEffects, vec3(vEffect.xy, float(layer))) * vEffect.z;\n"
+	"            colour = mix(colour, glow.rgb, glow.a);\n"
+	"            alpha = max(glow.a, alpha);\n"
+	"        }\n"
+	"        else if(layer < 0)\n"
+	"            colour = mix(colour, vec3(0.95, 0.25, 0.65), 0.45);\n"
+	"    }\n"
+	"    fragColour = vec4(colour, alpha);\n"
 	"}\n";
 
 // The colour a part is drawn in.
@@ -217,9 +248,154 @@ DesignPreview::~DesignPreview()
 {
 	makeCurrent();
 	ReleaseTextures();
+	delete m_effectFrames;
+	m_effectFrames = 0;
 	doneCurrent();
 	if(m_program)
 		delete m_program;
+}
+
+void DesignPreview::SetEffects(bool animate, const EffectSituation& situation, bool markNever)
+{
+	m_animate = animate;
+	m_situation = situation;
+	m_markNever = markNever;
+	UpdateEffectTimer();
+	UpdateEffectNote();
+	update();
+}
+
+void DesignPreview::UpdateEffectNote()
+{
+	// The effects the game never runs on this design (tinted in the view),
+	// and why; a hull draft; or frames that could not be had.
+	QStringList lines;
+	bool anyUsed = false;
+	for(int e = 1; e < EFF_Count; ++e)
+		anyUsed = anyUsed || m_effects.faces[e] > 0;
+	if(m_animate && m_design && anyUsed)
+	{
+		if(m_effectFramesMissing)
+			lines << tr("Surface effects cannot be shown: the game's texture library is not loaded "
+					"(View > The game's texture pictures).");
+		if(m_effects.draft)
+			lines << tr("A hull draft: its surface effects run as if it had every system. Build it to see which "
+					"the game really runs.");
+		const QStringList never = m_effects.Unused();
+		if(!never.isEmpty())
+			lines << (m_markNever ? tr("Never runs on this design (tinted pink):") : tr("Never runs on this design:"))
+					<< never;
+	}
+	if(lines.isEmpty())
+	{
+		if(m_effectNote)
+			m_effectNote->hide();
+		return;
+	}
+	if(!m_effectNote)
+	{
+		m_effectNote = new QLabel(this);
+		m_effectNote->setWordWrap(true);
+		m_effectNote->setAttribute(Qt::WA_TransparentForMouseEvents);
+		m_effectNote->setStyleSheet("QLabel { background: rgba(0, 0, 0, 150); color: #f0c8e1; padding: 4px 6px; "
+				"border-radius: 3px; }");
+	}
+	m_effectNote->setText(lines.join("\n"));
+	PlaceEffectNote();
+	m_effectNote->show();
+}
+
+void DesignPreview::PlaceEffectNote()
+{
+	if(!m_effectNote)
+		return;
+	const int w = qMax(120, width() - 20);
+	m_effectNote->setFixedWidth(qMin(w, 460));
+	m_effectNote->adjustSize();
+	m_effectNote->move(10, height() - m_effectNote->height() - 10);
+}
+
+bool DesignPreview::AnyEffectRuns() const
+{
+	if(!m_animate || !m_design)
+		return false;
+	for(int e = 1; e < EFF_Count; ++e)
+		if(m_effects.faces[e] && EffectLevelFor(m_effects, m_situation, e) != EffectOff)
+			return true;
+	return false;
+}
+
+void DesignPreview::UpdateEffectTimer()
+{
+	if(!AnyEffectRuns())
+	{
+		if(m_effectTimer)
+			m_effectTimer->stop();
+		return;
+	}
+	if(!m_effectTimer)
+	{
+		m_effectTimer = new QTimer(this);
+		// The game steps its effects six times a second: in order for some,
+		// at random for others, never the same random frame twice running.
+		m_effectTimer->setInterval(1000 / 12);
+		connect(m_effectTimer, &QTimer::timeout, this, [this]() {
+			if(!isVisible())
+				return;
+			const int seq = int((QDateTime::currentMSecsSinceEpoch() % 1000) * 6 / 1000);
+			if(seq == m_effectSeqFrame)
+				return;
+			m_effectSeqFrame = seq;
+			int r = m_effectRandFrame;
+			while(r == m_effectRandFrame)
+				r = int(QRandomGenerator::global()->bounded(6));
+			m_effectRandFrame = r;
+			update();
+		});
+	}
+	if(!m_effectTimer->isActive())
+		m_effectTimer->start();
+}
+
+void DesignPreview::LoadEffectFrames()
+{
+	// Every picture of the engine's effect library, one layer each, from the
+	// game's texture library (loaded by the designer for its texture lists).
+	m_effectFramesTried = true;
+	const int count = EffectFrameCount();
+	QVector<QImage> images(count);
+	int found = 0;
+	for(int i = 1; i < count; ++i)
+	{
+		QImage image(EffectIndexFile(i));
+		if(image.isNull())
+			continue;
+		// The game uploads images bottom row first, as for the palette.
+		images[i] = image.convertToFormat(QImage::Format_RGBA8888).scaled(32, 32, Qt::IgnoreAspectRatio,
+				Qt::SmoothTransformation).mirrored();
+		++found;
+	}
+	if(!found)
+	{
+		m_effectFramesMissing = true;
+		QTimer::singleShot(0, this, [this]() { UpdateEffectNote(); });
+		return;
+	}
+	m_effectFrames = new QOpenGLTexture(QOpenGLTexture::Target2DArray);
+	m_effectFrames->setSize(32, 32);
+	m_effectFrames->setLayers(count);
+	m_effectFrames->setFormat(QOpenGLTexture::RGBA8_UNorm);
+	m_effectFrames->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+	QImage clear(32, 32, QImage::Format_RGBA8888);
+	clear.fill(Qt::transparent);
+	for(int i = 0; i < count; ++i)
+	{
+		const QImage& image = images.at(i).isNull() ? clear : images.at(i);
+		m_effectFrames->setData(0, i, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, image.constBits());
+	}
+	m_effectFrames->setWrapMode(QOpenGLTexture::Repeat);
+	m_effectFrames->setMinificationFilter(QOpenGLTexture::Linear);
+	m_effectFrames->setMagnificationFilter(QOpenGLTexture::Linear);
 }
 
 void DesignPreview::ReleaseTextures()
@@ -269,6 +445,9 @@ void DesignPreview::SetDesign(const AuDesign* design, bool frame)
 {
 	m_design = design;
 	m_pickValid = false;
+	m_effects = design ? AnalyseEffects(*design) : DesignEffects();
+	UpdateEffectTimer();
+	UpdateEffectNote();
 	// The palette may be different, so any textures that were loaded for the
 	// old design have to go.
 	if(context())
@@ -363,6 +542,7 @@ void DesignPreview::resizeGL(int w, int h)
 {
 	Q_UNUSED(w);
 	Q_UNUSED(h);
+	PlaceEffectNote();
 }
 
 // A ball at 'at' and an arrow from it along 'dir'.
@@ -423,7 +603,7 @@ void DesignPreview::RebuildGeometry()
 	QMap<int, QVector<Vertex> > seeThroughHull;		// Blended, nearest layer only.
 
 	auto addVertex = [](QVector<Vertex>& list, const AuScPoint& p, const QColor& colour,
-			float alpha, int slot)
+			float alpha, int slot, int effect = -1)
 	{
 		Vertex vert;
 		vert.x = float(p.x);
@@ -439,6 +619,10 @@ void DesignPreview::RebuildGeometry()
 		vert.u = p.m_Tx;
 		vert.v = p.m_Ty;
 		vert.tex = slot < 0 ? -1.f : float(slot);
+		vert.eu = p.EffectTx();
+		vert.ev = p.EffectTy();
+		vert.eint = p.EffectIntensity();
+		vert.eff = effect > EFF_None && effect < EFF_Count ? float(effect) : -1.f;
 		list << vert;
 	};
 
@@ -528,7 +712,7 @@ void DesignPreview::RebuildGeometry()
 				const QColor faceColour = t.Paint().alpha() > 0 ? t.Paint() : colour;
 				for(int i = 0; i < 3; ++i)
 					addVertex(seeThrough ? seeThroughHull[slot] : opaque[slot], *v[i], faceColour,
-							seeThrough ? m_hullOpacity : 1.f, slot);
+							seeThrough ? m_hullOpacity : 1.f, slot, int(t.Effect()));
 			}
 			// Transparent parts of the model, such as windows, have their own
 			// sorts of blending but are drawn the same way here.
@@ -537,7 +721,7 @@ void DesignPreview::RebuildGeometry()
 				const int slot = textureSlot(t);
 				const AuScPoint* v[3] = { &t.V0(), &t.V1(), &t.V2() };
 				for(int i = 0; i < 3; ++i)
-					addVertex(blend[slot], *v[i], colour, decal ? t.Opacity() : 0.5f, slot);
+					addVertex(blend[slot], *v[i], colour, decal ? t.Opacity() : 0.5f, slot, int(t.Effect()));
 			}
 		}
 
@@ -879,12 +1063,43 @@ void DesignPreview::paintGL()
 	m_program->setAttributeBuffer(3, GL_FLOAT, int(sizeof(float) * 9), 1, stride);
 	m_program->setAttributeBuffer(4, GL_FLOAT, int(sizeof(float) * 10), 2, stride);
 	m_program->setAttributeBuffer(5, GL_FLOAT, int(sizeof(float) * 12), 1, stride);
+	m_program->setAttributeBuffer(6, GL_FLOAT, int(sizeof(float) * 13), 4, stride);
 	m_program->enableAttributeArray(0);
 	m_program->enableAttributeArray(1);
 	m_program->enableAttributeArray(2);
 	m_program->enableAttributeArray(3);
 	m_program->enableAttributeArray(4);
 	m_program->enableAttributeArray(5);
+	m_program->enableAttributeArray(6);
+
+	// The surface effects: which frame each shows now.
+	GLint layers[32];
+	for(int e = 0; e < 32; ++e)
+		layers[e] = 0;
+	if(m_animate && m_design)
+	{
+		if(!m_effectFramesTried)
+			LoadEffectFrames();
+		for(int e = 1; e < EFF_Count && e < 32; ++e)
+		{
+			if(!m_effects.faces[e])
+				continue;
+			if(!m_effects.possible[e])
+			{
+				layers[e] = m_markNever ? -1 : 0;
+				continue;
+			}
+			if(!m_effectFrames)
+				continue;
+			const EffectLevel level = EffectLevelFor(m_effects, m_situation, e);
+			const int frame = EffectFramesAtRandom(e) ? m_effectRandFrame : m_effectSeqFrame;
+			layers[e] = EffectFrameIndex(m_effects, e, level, frame);
+		}
+	}
+	m_program->setUniformValueArray("uEffectLayer", layers, 32);
+	m_program->setUniformValue("uEffects", 1);
+	if(m_effectFrames)
+		m_effectFrames->bind(1);
 
 	// Each run of vertices shares one texture. The solid parts come first
 	// and then the see-through ones, which is the order they are in.
@@ -926,6 +1141,8 @@ void DesignPreview::paintGL()
 			texture->release();
 	}
 	functions->glDepthFunc(GL_LESS);
+	if(m_effectFrames)
+		m_effectFrames->release(1);
 	m_vbo.release();
 	m_vao.release();
 	m_program->release();

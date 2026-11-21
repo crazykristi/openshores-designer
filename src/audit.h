@@ -93,6 +93,10 @@ public:
 	// Counts how many triangles the mesh has.
 	int		TriangleCount() const { return m_triangles.size(); }
 
+	// True when any triangle passes through the box (the mesh need not be
+	// closed for this).
+	bool	BoxHitsSurface(const AuPoint& mn, const AuPoint& mx) const;
+
 private:
 	struct Triangle
 	{
@@ -115,7 +119,6 @@ private:
 	int		BuildNode(int start, int count);
 	void	CollectTriangles(int node, const AuPoint& mn, const AuPoint& mx, QVector<int>& out) const;
 	int		CountCrossings(const AuPoint& origin, const AuPoint& direction, bool& surface) const;
-	bool	BoxHitsSurface(const AuPoint& mn, const AuPoint& mx) const;
 
 	QVector<Triangle>	m_triangles;
 	QVector<Node>		m_nodes;

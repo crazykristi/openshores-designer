@@ -200,6 +200,23 @@ bool AddHullDoor(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 		double roomWall, double surface, const QString& groupName, quint16& doorId,
 		quint16 roomMeshId = 0, double clearBelowZ = 1e30);
 
+// Clear walking space round the outside of the hull. The game does not stop
+// walkers at the hull's real shape but at its outlines seen from the top,
+// the side and the front, each grown by 2 ft (AuScSilhouette3d), and stops
+// them dead: beside a curved or tapering hull, under a wing, between two
+// nacelles, people get stuck in thin air. Only voids override it. This fills
+// the space at ground level (the bottom of the hull, up to 'height' above
+// it) that the game blocks although it is outside and at least 'gap' away
+// from every part, with constant hull voids ("Hull Clearance"). The space
+// is found by a flood from outside, so nothing inside the hull is opened.
+// Returns how many boxes were added; 'blockedCells' and 'clearedCells' (in
+// square feet) say how much of the blocked ground there was and how much
+// of it was cleared.
+// The game's outlines have to be built afresh first
+// (AuScParts::RefreshObstructionsCache), with every part in place.
+int AddHullClearance(AuDesign& design, double gap = 1.0, double height = 7.0,
+		int* blockedCells = 0, int* clearedCells = 0);
+
 // A fixed ramp from a hull door's floor down to 'groundZ': an invisible
 // Barrier that is walked on (a level landing over the threshold, then the
 // slope), a hull part in the "Frame" group that shows it (a hull part so

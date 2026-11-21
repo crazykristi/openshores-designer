@@ -83,6 +83,7 @@ struct PlanBuildOptions
 	bool	furnish = true;			// Stations, berths and system volumes from the template.
 	bool	walkPaths = true;
 	bool	ramps = true;			// A ramp down from each hull door that is low enough, else a ladder.
+	bool	hullClearance = true;	// Hull voids round the outside where the game would stop walkers short of the hull.
 };
 
 struct PlanBuildReport

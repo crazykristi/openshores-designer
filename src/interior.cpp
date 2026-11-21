@@ -5,6 +5,7 @@
 #include "interior.h"
 #include "austation.h"
 #include "names.h"
+#include "audit.h"
 
 #include <QMap>
 #include <QSet>
@@ -1221,6 +1222,234 @@ bool AddDoorRamp(AuDesign& design, const AuPoint& slabMin, const AuPoint& slabMa
 	clear.AddFaces(BoxFaces(vmn, vmx));
 	clear.SetGroupName("Hull Door");
 	return clear.IsValid() && design.Parts().AddPart(clear) != 0;
+}
+
+int AddHullClearance(AuDesign& design, double gap, double height, int* blockedCells, int* clearedCells)
+{
+	if(blockedCells)
+		*blockedCells = 0;
+	if(clearedCells)
+		*clearedCells = 0;
+	AuScParts& parts = design.Parts();
+	AuPoint hmn, hmx;
+	parts.HullExtents(hmn, hmx);
+	if(!(hmx.x > hmn.x && hmx.y > hmn.y && hmx.z > hmn.z))
+		return 0;
+	// The game's outlines of each part are cached; the caller builds them
+	// afresh first, when every part is in place.
+
+	// Everything that is there to bump into: every part but the voids, the
+	// walk paths and the decals.
+	AuScFaceList solidFaces;
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* p = it.value();
+		if(!p || p->IsOmitted() || p->IsRoomVoid() || p->IsHullVoid() || p->IsEnvironmentVoid() || p->IsPath()
+				|| p->IsDecal())
+			continue;
+		AuScFaceList faces;
+		p->Faces(faces);
+		solidFaces.AddFaces(faces);
+	}
+	AuScTriList triangles;
+	solidFaces.Triangles(triangles);
+	const SolidMesh solid(triangles);
+	if(!solid.IsValid())
+		return 0;
+
+	// The ground is the bottom of the hull: the game sets a landed ship down
+	// on its lowest hull part.
+	const double ground = hmn.z, zLo = ground - 1.0, zHi = ground + height;
+	// A grid of columns over the hull and the 2 ft round it, and a column
+	// more, which is always clear, to start the flood from.
+	const double reach = SHIPGEN_OBSTRUCT_MARGIN + 2.0;
+	double cell = 1.0;
+	const double x0 = floor(hmn.x - reach), y0 = floor(hmn.y - reach);
+	int nx = int(ceil((hmx.x + reach - x0) / cell)), ny = int(ceil((hmx.y + reach - y0) / cell));
+	while(double(nx) * ny > 4e6)
+	{
+		cell *= 2;
+		nx = int(ceil((hmx.x + reach - x0) / cell));
+		ny = int(ceil((hmx.y + reach - y0) / cell));
+	}
+	if(nx < 3 || ny < 3)
+		return 0;
+	auto at = [&](int i, int j) { return j * nx + i; };
+
+	// Open: no part within 'gap' of the column, from below the ground to
+	// above head height.
+	QVector<char> open(nx * ny, 0);
+	for(int j = 0; j < ny; ++j)
+		for(int i = 0; i < nx; ++i)
+		{
+			const double cx = x0 + i * cell, cy = y0 + j * cell;
+			open[at(i, j)] = !solid.BoxHitsSurface(AuPoint(cx - gap, cy - gap, zLo), AuPoint(cx + cell + gap, cy + cell + gap, zHi + gap));
+		}
+
+	// Outside: open and reached from the edge of the grid.
+	QVector<char> outside(nx * ny, 0);
+	QVector<int> queue;
+	queue.reserve(nx * ny / 4);
+	auto seed = [&](int i, int j) {
+		const int k = at(i, j);
+		if(open.at(k) && !outside.at(k))
+		{
+			outside[k] = 1;
+			queue << k;
+		}
+	};
+	for(int i = 0; i < nx; ++i)
+	{
+		seed(i, 0);
+		seed(i, ny - 1);
+	}
+	for(int j = 0; j < ny; ++j)
+	{
+		seed(0, j);
+		seed(nx - 1, j);
+	}
+	for(int q = 0; q < queue.size(); ++q)
+	{
+		const int k = queue.at(q), i = k % nx, j = k / nx;
+		if(i > 0)
+			seed(i - 1, j);
+		if(i < nx - 1)
+			seed(i + 1, j);
+		if(j > 0)
+			seed(i, j - 1);
+		if(j < ny - 1)
+			seed(i, j + 1);
+	}
+
+	// Of that, what the game would block, at the feet, the middle or the
+	// head. Only the solids count: out here a void could only clear what is
+	// already clear, and a barrier stops people even in a void. Each solid
+	// blocks no further out than its box and the margin round it, so most
+	// are skipped at once; the hull goes first, as the likeliest.
+	struct Solid
+	{
+		const AuScPart*	part;
+		AuPoint			mn, mx;
+	};
+	QVector<Solid> solids;
+	for(int pass = 0; pass < 2; ++pass)
+		for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+		{
+			const AuScPart* p = it.value();
+			if(!p || p->IsOmitted() || p->IsRoomVoid() || p->IsHullVoid() || p->IsEnvironmentVoid() || p->IsPath()
+					|| p->IsDecal() || p->IsBarrier() || p->IsHullMesh() != (pass == 0))
+				continue;
+			Solid sd;
+			sd.part = p;
+			if(!p->ModelExtents(sd.mn, sd.mx))
+				continue;
+			const double m = SHIPGEN_OBSTRUCT_MARGIN + 1.0;	// And a silhouette pixel.
+			sd.mn -= AuPoint(m, m, m);
+			sd.mx += AuPoint(m, m, m);
+			if(sd.mn.z > ground + 5.0 || sd.mx.z < ground)
+				continue;
+			solids << sd;
+		}
+	auto blockedAt = [&](const AuPoint& p) {
+		for(const Solid& sd : solids)
+			if(p.x >= sd.mn.x && p.x <= sd.mx.x && p.y >= sd.mn.y && p.y <= sd.mx.y && p.z >= sd.mn.z && p.z <= sd.mx.z)
+			{
+				AuPoint hit, normal;
+				if(sd.part->IsPathBlocked(p, p, hit, normal))
+					return true;
+			}
+		return false;
+	};
+	QVector<char> need(nx * ny, 0);
+	int blocked = 0, needed = 0;
+	for(int j = 0; j < ny; ++j)
+		for(int i = 0; i < nx; ++i)
+		{
+			const int k = at(i, j);
+			if(!outside.at(k))
+			{
+				// Next to the hull or under it: only the rim, the ground a
+				// walker could reach, is counted (for the report).
+				bool rim = false;
+				for(int dj = -1; dj <= 1 && !rim; ++dj)
+					for(int di = -1; di <= 1 && !rim; ++di)
+					{
+						const int ii = i + di, jj = j + dj;
+						if(ii >= 0 && jj >= 0 && ii < nx && jj < ny && outside.at(at(ii, jj)))
+							rim = true;
+					}
+				if(!rim)
+					continue;
+			}
+			const double cx = x0 + (i + .5) * cell, cy = y0 + (j + .5) * cell;
+			bool isBlocked = false;
+			for(double h : { .05, 2.5, 5.0 })
+				if(blockedAt(AuPoint(cx, cy, ground + h)))
+				{
+					isBlocked = true;
+					break;
+				}
+			if(!isBlocked)
+				continue;
+			++blocked;
+			if(outside.at(k))
+			{
+				need[k] = 1;
+				++needed;
+			}
+		}
+	const double cellArea = cell * cell;
+	if(blockedCells)
+		*blockedCells = int(blocked * cellArea);
+	if(clearedCells)
+		*clearedCells = int(needed * cellArea);
+	if(!needed)
+		return 0;
+
+	// The cells as few boxes as will do: each grows along x, then along y
+	// while the whole row is still wanted.
+	QList<QPair<AuPoint, AuPoint> > boxes;
+	for(int j = 0; j < ny; ++j)
+		for(int i = 0; i < nx; ++i)
+		{
+			if(!need.at(at(i, j)))
+				continue;
+			int w = 1;
+			while(i + w < nx && need.at(at(i + w, j)))
+				++w;
+			int h = 1;
+			for(;;)
+			{
+				if(j + h >= ny)
+					break;
+				bool full = true;
+				for(int ii = i; ii < i + w && full; ++ii)
+					full = need.at(at(ii, j + h));
+				if(!full)
+					break;
+				++h;
+			}
+			for(int jj = j; jj < j + h; ++jj)
+				for(int ii = i; ii < i + w; ++ii)
+					need[at(ii, jj)] = 0;
+			boxes << qMakePair(AuPoint(x0 + i * cell, y0 + j * cell, zLo),
+					AuPoint(x0 + (i + w) * cell, y0 + (j + h) * cell, zHi));
+		}
+
+	// A few dozen boxes to a part: the game tests a point against a void's
+	// faces one by one once it is inside the void's bounds.
+	const int perPart = 48;
+	int added = 0;
+	for(int b = 0; b < boxes.size(); b += perPart)
+	{
+		AuScHullVoid clear;
+		for(int k = b; k < qMin(boxes.size(), b + perPart); ++k)
+			clear.AddFaces(BoxFaces(boxes.at(k).first, boxes.at(k).second));
+		clear.SetGroupName("Hull Clearance");
+		if(clear.IsValid() && design.Parts().AddPart(clear))
+			added += qMin(boxes.size(), b + perPart) - b;
+	}
+	return added;
 }
 
 const char* LadderGroupPrefix()

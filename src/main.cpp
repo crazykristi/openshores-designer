@@ -396,6 +396,41 @@ int cmdWalk(const QStringList& args)
 
 // What is seen along a line of sight, as the game draws it: the first face
 // looking back at the eye (a face seen from behind is not drawn).
+// What stops someone standing at a point, part by part, as the game asks
+// each one (the design's own state: doors as saved).
+int cmdProbe(const QStringList& args)
+{
+	if(args.size() < 4)
+	{
+		out() << "usage: shipgen probe <design.SoH> x y z\n";
+		return 2;
+	}
+	AuDesign* design = LoadDesign(args[0]);
+	AuScDesign* ship = dynamic_cast<AuScDesign*>(design);
+	if(!ship)
+	{
+		out() << "not a ship\n";
+		delete design;
+		return 1;
+	}
+	AuScParts& parts = ship->Parts();
+	const AuPoint p(args[1].toDouble(), args[2].toDouble(), args[3].toDouble());
+	AuPoint hit, normal;
+	out() << QString("the ship's test: %1\n").arg(parts.IsPathBlocked(p, p, hit, normal) ? "blocked" : "free");
+	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted())
+			continue;
+		if(part->IsInsideVoid(p))
+			out() << QString("  in void   %1 %2 [%3]\n").arg(it.key()).arg(part->PartName(), part->GroupName());
+		else if(!part->IsRoomVoid() && !part->IsHullVoid() && part->IsPathBlocked(p, p, hit, normal))
+			out() << QString("  blocked by %1 %2 [%3]\n").arg(it.key()).arg(part->PartName(), part->GroupName());
+	}
+	delete design;
+	return 0;
+}
+
 int cmdSight(const QStringList& args)
 {
 	if(args.size() < 7)
@@ -1512,6 +1547,7 @@ int cmdBuildPlan(const QStringList& args)
 		else if(a == "--no-furnish")			options.furnish = false;
 		else if(a == "--no-paths")				options.walkPaths = false;
 		else if(a == "--no-ramps")				options.ramps = false;
+		else if(a == "--no-hull-clearance")		options.hullClearance = false;
 		else if(a == "--panels" && i + 1 < args.size())	panels = args.at(++i).toInt();
 		else if(a == "--grid-hull")				gridHull = 1;
 		else if(a == "--model-hull")			gridHull = 0;
@@ -1525,7 +1561,7 @@ int cmdBuildPlan(const QStringList& args)
 	}
 	if(planFile.isEmpty())
 	{
-		err() << "usage: shipgen build-plan <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n"
+		err() << "usage: shipgen build-plan <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps] [--no-hull-clearance]\n"
 				 "         [--panels <n>] [--faces <budget>] [--grid-hull|--model-hull]\n";
 		return 2;
 	}
@@ -2764,6 +2800,7 @@ void usage()
 	out() << "  shipgen faces     <design.SoH> [<part>] [--where]  how the faces look: texture slot, paint, opacity, glow,\n"
 			 "                     effect (--where: and the box the faces of each look take up)\n";
 	out() << "  shipgen walk      <design.SoH> x0 y0 z0 x1 y1 z1 [--closed]  where a straight walk is stopped, as the game moves people\n";
+	out() << "  shipgen probe     <design.SoH> x y z  what stops someone standing there, part by part\n";
 	out() << "  shipgen sight     <design.SoH> x y z dx dy dz  what is seen along a line of sight, as the game draws it\n";
 	out() << "  shipgen door-check <design.SoH>  what ladders and ramps at hull doors do with the doors closed and open\n";
 	out() << "  shipgen crew-check <design.SoH>  can the crew follow their routes; doorway gravity; mirrored screens\n";
@@ -2785,7 +2822,7 @@ void usage()
 	out() << "                     a triangle plan with its hull filled in from a 3D model\n";
 	out() << "  shipgen plan-from-blueprint <design.SoH> <plan.json> [--cell <ft>] [--deck <ft>]\n";
 	out() << "                     a triangle plan from a blueprint: its hull, rooms, doors, ladders and lifts\n";
-	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps]\n";
+	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps] [--no-hull-clearance]\n";
 	out() << "                     turn a triangle plan (from shipgen-designer) into a blueprint\n";
 	out() << "  shipgen validate  <design.SoH>\n";
 	out() << "  shipgen templates\n";
@@ -3138,6 +3175,7 @@ int main(int argc, char* argv[])
 	if(command == "faces")				return cmdFaces(rest);
 	if(command == "sight")				return cmdSight(rest);
 	if(command == "walk")				return cmdWalk(rest);
+	if(command == "probe")				return cmdProbe(rest);
 	if(command == "crew-check")			return cmdCrewCheck(rest);
 	if(command == "window-check")		return cmdWindowCheck(rest);
 	if(command == "view-check")			return cmdViewCheck(rest);

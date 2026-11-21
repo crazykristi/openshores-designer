@@ -8724,6 +8724,22 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	ApplyPlanTexturePaint(*design, plan, report);
 	ApplyPlanDecals(*design, plan, report);
 
+	// The game's outlines of each part (what stops people walking, the hull's
+	// 2 ft bigger than it) are saved in the blueprint, and the game keeps the
+	// saved ones, building only those that are missing. They are built afresh
+	// here, when every part is in place and turned to the game's axes, so
+	// that none is left from partway through the build.
+	design->Parts().RefreshObstructionsCache();
+	// Then walking room round the hull, where those outlines would stop
+	// people short of it (Experimental).
+	if(options.hullClearance)
+	{
+		int blocked = 0, cleared = 0;
+		if(const int boxes = AddHullClearance(*design, 1.0, 7.0, &blocked, &cleared))
+			report.notes << QString("Walking room round the hull: %1 sq ft of the %2 sq ft the game would block at ground level "
+					"was opened up (%3 hull void boxes).").arg(cleared).arg(blocked).arg(boxes);
+	}
+
 	// A fighter's pilot has to see out: what the helm (and a captain's
 	// chair) sees from the seat (`shipgen view-check` for the whole of it).
 	if(plan.IsFighter())

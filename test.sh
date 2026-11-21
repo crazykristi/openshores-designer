@@ -821,6 +821,28 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 		echo "  FAIL  the example plan lost doors or the ladder"
 		sed -n 1,12p "$WORK/plan/build.txt"
 	fi
+	# Walking room round the hull: where the game's outlines of the hull
+	# (each 2 ft bigger than its view from the top, the side and the front)
+	# would stop people short of it, hull voids open the ground up, never
+	# reaching within a foot of a part. Beside the example's tapering bow the
+	# ground is blocked without them and free with them.
+	"$SHIPGEN" build-plan "$WORK/plan/example.json" --out "$WORK/plan/noclear.SoH" --no-hull-clearance > /dev/null 2>&1
+	clearWith=$("$SHIPGEN" probe "$WORK/plan/example.SoH" -4.5 92.5 -2.3 2>&1)
+	clearWithout=$("$SHIPGEN" probe "$WORK/plan/noclear.SoH" -4.5 92.5 -2.3 2>&1)
+	if grep -q 'Walking room round the hull: [1-9]' "$WORK/plan/build.txt" &&
+			"$SHIPGEN" parts "$WORK/plan/example.SoH" | grep -q 'Hull Void  \[Hull Clearance\]' &&
+			! "$SHIPGEN" parts "$WORK/plan/noclear.SoH" | grep -q 'Hull Clearance' &&
+			echo "$clearWith" | grep -q "the ship's test: free" && echo "$clearWith" | grep -q 'in void .*\[Hull Clearance\]' &&
+			echo "$clearWithout" | grep -q "the ship's test: blocked"; then
+		pass=$((pass+1))
+		echo "  ok    hull voids give walking room where the game's outlines of the hull would stop people"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  walking room round the hull"
+		grep 'Walking room' "$WORK/plan/build.txt"
+		echo "  with: $clearWith"
+		echo "  without: $clearWithout"
+	fi
 	# Decals kept in the plan, with the image next to it, go on at the end of
 	# the build.
 	cp "$WORK/decal.png" "$WORK/plan/decal.png"

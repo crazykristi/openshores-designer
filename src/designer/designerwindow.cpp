@@ -73,12 +73,20 @@
 // hold access (SetRoomUse); the name is a label (2026-11-07).
 static void FillShipRoomTypes(QComboBox* box, bool building = false)
 {
+	// The list is longer than a screen (a building's above all): a popup that
+	// scrolls with the wheel and a scroll bar, not one that shows every item.
+	box->setStyleSheet("QComboBox { combobox-popup: 0; }");
+	box->setMaxVisibleItems(20);
+	// The engine's room table has no turbolift (audef.h, RoomTypeNameInSpacecraft):
+	// the designer offers it itself, or it can never be picked.
+	QStringList roomTypes = SpacecraftRoomTypes();
+	roomTypes << "Turbo Lift";
 	if(building)
 	{
 		// A building's rooms: the names the game's own buildings use, and
 		// the types that get a shape (turbolifts, open rooms).
 		QStringList shapes;
-		for(const QString& type : SpacecraftRoomTypes())
+		for(const QString& type : roomTypes + QStringList("Public Lift"))
 			if(IsOpenToDeckBelowType(type) || IsZeroGRoomType(type) || IsLiftRoomType(type))
 				shapes << type;
 		box->addItem("Building rooms");
@@ -98,7 +106,7 @@ static void FillShipRoomTypes(QComboBox* box, bool building = false)
 		return;
 	}
 	QStringList uses, stations, names;
-	for(const QString& type : SpacecraftRoomTypes())
+	for(const QString& type : roomTypes)
 	{
 		const QString t = type.toLower();
 		if(ShipRoomHoldAccess(type) != HOLD_Inaccessible)
@@ -727,11 +735,12 @@ QWidget* DesignerWindow::MakeShipPage()
 	QGroupBox* grid = new QGroupBox("Grid");
 	QFormLayout* gridForm = new QFormLayout(grid);
 	m_width = new QSpinBox;
-	m_width->setRange(4, 400);
-	m_width->setToolTip("Cells from aft to fore.");
+	m_width->setRange(4, TriPlan::kMaxCells);
+	m_width->setToolTip("Cells from aft to fore. At most 400 cells each way (610 m at 5 ft cells); for a longer "
+						"ship make the cells bigger.");
 	gridForm->addRow("Length (cells)", m_width);
 	m_depth = new QSpinBox;
-	m_depth->setRange(4, 400);
+	m_depth->setRange(4, TriPlan::kMaxCells);
 	m_depth->setToolTip("Cells from starboard to port.");
 	gridForm->addRow("Beam (cells)", m_depth);
 	QPushButton* resizeButton = new QPushButton("Change the grid size");
@@ -2795,6 +2804,53 @@ void DesignerWindow::OnNew()
 {
 	TriPlan plan;
 	plan.name = "New ship";
+	// The grid's size: a cell size and cells each way, with what that comes
+	// to shown beside them (at most kMaxCells each way).
+	QDialog dialog(this);
+	dialog.setWindowTitle("New ship");
+	QFormLayout* form = new QFormLayout(&dialog);
+	form->addRow(Help(QString("How big the grid is. It can be changed later (Ship step), and the hull is drawn "
+							  "on it. At most %1 cells each way; bigger cells make a bigger ship fit.")
+			.arg(int(TriPlan::kMaxCells))));
+	QDoubleSpinBox* cellSize = new QDoubleSpinBox;
+	cellSize->setRange(Shown(2), Shown(20));
+	cellSize->setSingleStep(Shown(0.5));
+	cellSize->setDecimals(m_metric ? 2 : 1);
+	cellSize->setSuffix(m_metric ? " m" : " ft");
+	cellSize->setValue(Shown(plan.cellFeet));
+	cellSize->setToolTip("The side of one cell. A door is as wide as a cell, so 5 feet or more is best.");
+	form->addRow("Cell size", cellSize);
+	QSpinBox* length = new QSpinBox;
+	length->setRange(4, TriPlan::kMaxCells);
+	length->setValue(plan.Width());
+	length->setToolTip("Cells from aft to fore.");
+	form->addRow("Length (cells)", length);
+	QSpinBox* beam = new QSpinBox;
+	beam->setRange(4, TriPlan::kMaxCells);
+	beam->setValue(plan.Depth());
+	beam->setToolTip("Cells from starboard to port.");
+	form->addRow("Beam (cells)", beam);
+	QLabel* size = new QLabel;
+	form->addRow("Grid", size);
+	auto showSize = [this, cellSize, length, beam, size]() {
+		const double cell = Feet(cellSize->value());
+		auto one = [this](double feet) {
+			return m_metric ? QString("%1 m").arg(feet * 0.3048, 0, 'f', 0) : QString("%1 ft").arg(qRound(feet));
+		};
+		size->setText(QString("%1 long, %2 across").arg(one(length->value() * cell), one(beam->value() * cell)));
+	};
+	connect(cellSize, QOverload<double>::of(&QDoubleSpinBox::valueChanged), size, showSize);
+	connect(length, QOverload<int>::of(&QSpinBox::valueChanged), size, showSize);
+	connect(beam, QOverload<int>::of(&QSpinBox::valueChanged), size, showSize);
+	showSize();
+	QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	form->addRow(buttons);
+	if(dialog.exec() != QDialog::Accepted)
+		return;
+	plan.cellFeet = Feet(cellSize->value());
+	plan.Resize(length->value(), beam->value());
 	SetPlan(plan);
 	m_planFile.clear();
 	m_dirty = false;
@@ -2839,7 +2895,7 @@ void DesignerWindow::OnNewBuilding()
 	plan.name = t ? t->label : QString("New building");
 	// The template's footprint and floors, and a cell of room round it.
 	const double fx = t ? t->footprintX : 140, fy = t ? t->footprintY : 100;
-	plan.Resize(qBound(8, int(ceil(fx / plan.cellFeet)) + 2, 400), qBound(8, int(ceil(fy / plan.cellFeet)) + 2, 400));
+	plan.Resize(qBound(8, int(ceil(fx / plan.cellFeet)) + 2, int(TriPlan::kMaxCells)), qBound(8, int(ceil(fy / plan.cellFeet)) + 2, int(TriPlan::kMaxCells)));
 	while(plan.Decks() < qBound(1, t ? t->floors : 1, 20))
 		plan.AddDeck();
 	SetPlan(plan);
@@ -3157,11 +3213,60 @@ void DesignerWindow::NewFromModel(bool fighter)
 							  "in where the model is. Parts thinner than about half a cell are lost, and slopes come out "
 							  "in steps of a deck, which the shaping smooths. Touch the grid up by hand afterwards."));
 	PlanFromModelOptions options;
+	// The cell size, the length and the cells along it go together: a length
+	// gives its cells, cells give their length, and a new cell size keeps the
+	// length and changes the cells.
+	QDoubleSpinBox* cellSize = new QDoubleSpinBox;
+	cellSize->setRange(Shown(2), Shown(20));
+	cellSize->setSingleStep(Shown(0.5));
+	cellSize->setDecimals(m_metric ? 2 : 1);
+	cellSize->setSuffix(m_metric ? " m" : " ft");
+	cellSize->setValue(Shown(m_plan.cellFeet));
+	cellSize->setToolTip("The side of one cell in the new plan. A door is as wide as a cell, so 5 feet or more is "
+						 "best; bigger cells make a longer ship fit the grid.");
+	if(!fighter)
+		form->addRow("Cell size", cellSize);
 	QDoubleSpinBox* length = new QDoubleSpinBox;
-	length->setRange(Shown(fighter ? 5 : 10), Shown(2000));
+	length->setRange(Shown(fighter ? 5 : 10), Shown(TriPlan::kMaxCells * 20.0));
 	length->setSuffix(m_metric ? " m" : " ft");
 	length->setValue(Shown(fighter ? 50.0 : options.lengthFeet));
 	form->addRow("Length", length);
+	QSpinBox* cells = new QSpinBox;
+	cells->setRange(4, TriPlan::kMaxCells);
+	cells->setToolTip(QString("Cells from aft to fore, two of them a margin round the model. At most %1.")
+			.arg(int(TriPlan::kMaxCells)));
+	form->addRow("Length (cells)", cells);
+	// Past the grid's most cells the ends of the model are cut off.
+	QLabel* tooLong = new QLabel;
+	tooLong->setWordWrap(true);
+	tooLong->setStyleSheet("QLabel { color: #8a4b00; }");
+	form->addRow(tooLong);
+	auto cellFeet = [this, cellSize, fighter]() {
+		return fighter ? TriPlan::kFighterCellFeet : (m_metric ? cellSize->value() / 0.3048 : cellSize->value());
+	};
+	auto syncing = std::make_shared<bool>(false);
+	auto checkLength = [this, length, cells, tooLong, cellFeet, syncing]() {
+		const double feet = m_metric ? length->value() / 0.3048 : length->value();
+		const double cell = cellFeet();
+		const int need = int(ceil(feet / cell)) + 2;
+		*syncing = true;
+		cells->setValue(qMin(need, int(TriPlan::kMaxCells)));
+		*syncing = false;
+		cells->setEnabled(length->isEnabled());
+		const double most = (TriPlan::kMaxCells - 2) * cell;
+		tooLong->setVisible(length->isEnabled() && need > TriPlan::kMaxCells);
+		tooLong->setText(QString("Longer than the grid holds: at most %1 cells, %2 at %3 cells. The ends will be cut "
+								 "off; make the cells bigger.").arg(int(TriPlan::kMaxCells))
+				.arg(m_metric ? QString("%1 m").arg(qRound(most * 0.3048)) : QString("%1 ft").arg(qRound(most)))
+				.arg(m_metric ? QString("%1 m").arg(cell * 0.3048, 0, 'f', 2) : QString("%1 ft").arg(cell)));
+	};
+	connect(length, QOverload<double>::of(&QDoubleSpinBox::valueChanged), tooLong, checkLength);
+	connect(cellSize, QOverload<double>::of(&QDoubleSpinBox::valueChanged), tooLong, checkLength);
+	connect(cells, QOverload<int>::of(&QSpinBox::valueChanged), length, [this, length, cellFeet, syncing](int n) {
+		if(!*syncing)
+			length->setValue(Shown((n - 2) * cellFeet()));
+	});
+	checkLength();
 	QSpinBox* decks = new QSpinBox;
 	decks->setRange(0, 60);
 	decks->setSpecialValueText("From the length");
@@ -3169,7 +3274,10 @@ void DesignerWindow::NewFromModel(bool fighter)
 					  "make a longer ship, which keeps more of a detailed model. The import recommends a length "
 					  "when much of the model is lost.");
 	form->addRow("Decks", decks);
-	connect(decks, QOverload<int>::of(&QSpinBox::valueChanged), length, [length](int n) { length->setEnabled(n == 0); });
+	connect(decks, QOverload<int>::of(&QSpinBox::valueChanged), length, [length, checkLength](int n) {
+		length->setEnabled(n == 0);
+		checkLength();
+	});
 	QSpinBox* perDeck = new QSpinBox;
 	perDeck->setRange(0, 9);
 	perDeck->setSpecialValueText(QString("Recommended (%1)").arg(RecommendedSlicesPerDeck(m_plan.deckFeet)));
@@ -3200,6 +3308,7 @@ void DesignerWindow::NewFromModel(bool fighter)
 	if(dialog.exec() != QDialog::Accepted)
 		return;
 	options.lengthFeet = Feet(length->value());
+	options.cellFeet = fighter ? TriPlan::kFighterCellFeet : Feet(cellSize->value());
 	options.decks = decks->value();
 	options.slicesPerDeck = perDeck->value();
 	options.method = method->currentIndex() == 0 ? ModelInside::Slices : ModelInside::Solid;
@@ -3211,7 +3320,11 @@ void DesignerWindow::NewFromModel(bool fighter)
 
 bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell, bool fighter)
 {
-	options.cellFeet = fighter ? TriPlan::kFighterCellFeet : m_plan.cellFeet;
+	// 0 for the cell size of the plan open now (the dialog gives its own).
+	if(fighter)
+		options.cellFeet = TriPlan::kFighterCellFeet;
+	else if(options.cellFeet <= 0)
+		options.cellFeet = m_plan.cellFeet;
 	options.deckFeet = fighter ? TriPlan::kFighterDeckFeet : m_plan.deckFeet;
 	if(fighter)
 		options.decks = 0;		// A fighter keeps its real length.
@@ -3354,7 +3467,9 @@ void DesignerWindow::OnOpenBlueprint()
 void DesignerWindow::OpenBlueprint(const QString& fileName)
 {
 	m_importBuilding.clear();
-	ImportModel(fileName, PlanFromModelOptions(), true, false);
+	PlanFromModelOptions blueprintOptions;
+	blueprintOptions.cellFeet = 0;		// The open plan's.
+	ImportModel(fileName, blueprintOptions, true, false);
 }
 
 void DesignerWindow::OnSave()

@@ -2247,6 +2247,57 @@ PYEOF
 			grep -E 'Lifts|Errors|Warning|lift' "$WORK/plan/lift.txt" "$WORK/plan/lift14.txt" | head -8
 			grep -E 'Turbo' "$WORK/plan/lift-parts.txt" | head -4; grep 'Crew routes' "$WORK/plan/lift-crew.txt"
 		fi
+		# Tall doors (decksUp): "Open to Deck Below" rooms on deck 2 over the
+		# hall's hull door and over both sides of the engine room door make
+		# them two decks high; the third door has nothing open above it, so
+		# asking it for a deck more is a warning and it stays one deck.
+		python3 - "$WORK/plan/example.json" "$WORK/plan/tall.json" <<'PYEOF' 2>/dev/null
+import json, sys
+def dec(sv):
+    out = []
+    for tok in sv.split(','):
+        n, v = tok.split('*'); out += [int(v)] * int(n)
+    return out
+def enc(a):
+    out = []; i = 0
+    while i < len(a):
+        j = i
+        while j < len(a) and a[j] == a[i]: j += 1
+        out.append('%d*%d' % (j - i, a[i])); i = j
+    return ','.join(out)
+d = json.load(open(sys.argv[1])); W = d['width']
+for label in ("Shaft 1", "Open A", "Open B"):
+    d['rooms'].append({"type": "Open to Deck Below", "label": label, "colour": "#a0a0a0"})
+s1, oa, ob = len(d['rooms']) - 3, len(d['rooms']) - 2, len(d['rooms']) - 1
+r1 = dec(d['layers'][1]['room']); h1 = dec(d['layers'][1]['hull'])
+for cx in (10, 11):
+    for cy in (13, 14, 15):
+        for k in range(4): r1[(cy * W + cx) * 4 + k] = s1; h1[(cy * W + cx) * 4 + k] = 1
+for cy in (6, 7, 8):
+    for k in range(4): r1[(cy * W + 7) * 4 + k] = oa; r1[(cy * W + 8) * 4 + k] = ob
+d['layers'][1]['room'] = enc(r1); d['layers'][1]['hull'] = enc(h1)
+for door in d['doors']: door['decksUp'] = 1
+d['doors'].append({"deck": 0, "side": 2, "x": 11, "y": 15, "decksUp": 1})
+json.dump(d, open(sys.argv[2], 'w'), indent=1)
+PYEOF
+		if [ -f "$WORK/plan/tall.json" ]; then
+			"$SHIPGEN" build-plan "$WORK/plan/tall.json" --out "$WORK/plan/tall.SoH" > "$WORK/plan/tall.txt" 2>&1
+			"$SHIPGEN" parts "$WORK/plan/tall.SoH" > "$WORK/plan/tall-parts.txt" 2>&1
+			"$SHIPGEN" crew-check "$WORK/plan/tall.SoH" > "$WORK/plan/tall-crew.txt" 2>&1
+			if grep -q 'Errors (0)' "$WORK/plan/tall.txt" &&
+					[ "$(grep -c 'reaches up 0 decks, not 1' "$WORK/plan/tall.txt")" = 1 ] &&
+					qgrep -E 'Hull Void +\[Hull Door\] +tied to .* z 0\.5\.\.20\.5' "$WORK/plan/tall-parts.txt" &&
+					qgrep -E 'Room Void +\[Engine Room 1\] +tied to .* z 0\.5\.\.19\.0' "$WORK/plan/tall-parts.txt" &&
+					qgrep -E 'Crew routes +: ([0-9]+) of \1 ' "$WORK/plan/tall-crew.txt"; then
+				pass=$((pass+1))
+				echo "  ok    tall doors reach up through decks open to the deck below, and only those"
+			else
+				fail=$((fail+1))
+				echo "  FAIL  the tall doors are wrong"
+				grep -E 'Errors|reaches up|Doors' "$WORK/plan/tall.txt" | head -5
+				grep -E 'Door\]|Engine Room 1\] +tied' "$WORK/plan/tall-parts.txt" | head -6
+			fi
+		fi
 		# A turbolift only works on one vertical axis: its stop on deck 2 moved
 		# one cell over is a warning that says so.
 		python3 - "$WORK/plan/lift.json" "$WORK/plan/lift-off.json" <<'PYEOF' 2>/dev/null

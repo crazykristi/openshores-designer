@@ -1271,7 +1271,8 @@ bool CutLadderOpening(AuDesign& design, const AuPoint& mn, const AuPoint& mx, qu
 
 bool CutOpening(AuDesign& design, const AuScFaceList& jigFaces, quint16 lowerRoomId, quint16 upperRoomId)
 {
-	if(!lowerRoomId || !upperRoomId)
+	// One of them may be 0: one wall cut (a tall hull door's upper decks).
+	if(!lowerRoomId && !upperRoomId)
 		return false;
 	AuScFaceList jig = jigFaces;
 	OrientAsHull(jig);

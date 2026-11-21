@@ -136,6 +136,12 @@ struct PlanDoor
 	// blueprint is built, open or closed (the user, 2026-11-17). A row takes
 	// it from the door in its middle; the designer sets it for a whole row.
 	bool	open = false;
+	// Doors only (wall and hull doors): how many decks above its own the door
+	// reaches up through, 0 for one deck (the user, 2026-11-21). Each of those
+	// decks needs an "Open to Deck Below" room on the door's room sides, and
+	// the outside on a hull door's outer side (TriPlan::DoorDecksUpMost). A row
+	// takes it from the door in its middle; the designer sets it for a row.
+	int		decksUp = 0;
 	bool	skip = false;		// Kept in the plan but left out of the build (Build page).
 };
 
@@ -575,6 +581,10 @@ public:
 	// on 8 November 2026), for a plan with nothing drawn yet.
 	void	MakeFighter(bool sizes);
 	static const double kFighterCellFeet, kFighterDeckFeet;
+	// The most cells a grid has each way (Resize): 2000 ft (610 m) at 5 ft
+	// cells. It keeps the plan's memory and the drawing in bounds; bigger
+	// cells make a longer ship.
+	enum { kMaxCells = 400 };
 	// Building mode: the plan is a building, not a ship. Deck 1 stands on
 	// the ground; the build makes a building blueprint (AuBdDesign) and
 	// furnishes it from 'building' (industry, structure, volumes, parking)
@@ -681,6 +691,11 @@ public:
 	// Whether two doors are next to each other on one wall, between the same
 	// rooms, in one row, however each happens to be named.
 	bool	DoorsJoin(const PlanDoor& a, const PlanDoor& b) const;
+	// How many decks above its own a door can reach up through (PlanDoor::decksUp):
+	// the decks in a row over it where each side that is a room on the door's
+	// deck is an "Open to Deck Below" room, and each side that is outside stays
+	// outside. 0 for windows and balconies between rooms, and lift doors.
+	int		DoorDecksUpMost(const PlanDoor& door) const;
 	int		NewDoorRow() const;	// Index in doors, -1 if none.
 	int		WindowAt(int deck, int cx, int cy, int side, int edge = 0) const;	// Index in windows, -1 if none.
 	// The two ends of edge 'edge' of a triangle (0 the cell edge, 1 and 2 the

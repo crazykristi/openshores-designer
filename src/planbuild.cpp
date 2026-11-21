@@ -6451,6 +6451,25 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		double doorTop = bay ? z1 - 0.5 : z0 + qMin(8.0, z1 - z0 - 0.5);
 		if(lift && plan.rooms.at(lift->room).carFeet > 0)
 			doorTop = qMin(doorTop, z0 + plan.rooms.at(lift->room).carFeet - 0.5);
+		// A door that reaches up through the decks above (PlanDoor::decksUp),
+		// where "Open to Deck Below" rooms make one tall space on its sides:
+		// up to the ceiling of its top deck, through the walls of every deck.
+		const int decksUp = lift ? 0 : qMin(door.decksUp, plan.DoorDecksUpMost(door));
+		if(door.decksUp > decksUp)
+			report.warnings << QString("A door on deck %1 reaches up %2 deck%3, not %4: only as far as both its sides are "
+									   "open to the deck below%5.").arg(door.deck + 1).arg(decksUp).arg(decksUp == 1 ? "" : "s")
+					.arg(door.decksUp).arg(ra && rb ? "" : " (and outside for a hull door)");
+		if(decksUp > 0)
+		{
+			double uz0, uz1;
+			RoomHeights(plan, door.deck + decksUp, uz0, uz1);
+			doorTop = uz1 - 0.5;
+		}
+		// The rooms on the door's sides on each deck above it.
+		auto upperRooms = [&](int i, const DeckRoom*& ua, const DeckRoom*& ub) {
+			ua = ra ? roomOrLiftOf(TriRef(door.deck + i, a.cx, a.cy, a.k)) : 0;
+			ub = rb && plan.Valid(b) ? roomOrLiftOf(TriRef(door.deck + i, b.cx, b.cy, b.k)) : 0;
+		};
 		const double width = bay ? run.count * s - 1.0 : qMin(10.0, s - 0.5);
 		const QPointF mid = run.mid;
 		const bool xWall = (door.side == TRI_E || door.side == TRI_W);		// The wall is at a constant x.
@@ -6469,12 +6488,39 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 				mx = AuPoint(mid.x() + width/2, mid.y() + .5, doorTop);
 			}
 			quint16 doorId = 0;
-			if(!AddInteriorDoor(*design, mn, mx, xWall ? 0 : 1, (ra->lift ? rb : ra)->group, doorId, ra->meshId, rb->meshId))
+			// A tall door: the walls of every deck cut open, and one door slab
+			// over the whole height (pieces cut from the lowest walls alone
+			// would leave the opening above them always open).
+			bool cutTall = decksUp > 0;
+			for(int i = 0; i <= decksUp && cutTall; ++i)
+			{
+				const DeckRoom* ua = ra;
+				const DeckRoom* ub = rb;
+				if(i > 0)
+					upperRooms(i, ua, ub);
+				AuPoint cmn = mn, cmx = mx;
+				cmn.z += .01;
+				cutTall = ua && ub && CutOpening(*design, BoxFaces(cmn, cmx), ua->meshId, ub->meshId);
+			}
+			if(decksUp > 0 && !cutTall)
+				report.warnings << QString("The walls beside the tall door between '%1' and '%2' could not all be cut.")
+						.arg(ra->group, rb->group);
+			if(!AddInteriorDoor(*design, mn, mx, xWall ? 0 : 1, (ra->lift ? rb : ra)->group, doorId,
+					decksUp > 0 ? 0 : ra->meshId, decksUp > 0 ? 0 : rb->meshId))
 			{
 				report.warnings << QString("The engine did not accept the door between '%1' and '%2'.").arg(ra->group, rb->group);
 				continue;
 			}
 			++report.doors;
+			// Worked from 4 ft up on each side: left unset the game takes the
+			// middle of the closed door, out of reach on a tall one.
+			if(decksUp > 0)
+				if(AuScDoor* tall = dynamic_cast<AuScDoor*>(design->Parts().value(doorId)))
+				{
+					const AuPoint along = xWall ? AuPoint(1, 0, 0) : AuPoint(0, 1, 0);
+					const AuPoint foot(mid.x(), mid.y(), z0 + 4.0);
+					tall->SetDoorOpLocs(foot - along, foot + along);
+				}
 			addButtons(run, doorId, ra, rb, z0, (mn + mx) * .5);
 			if(lift)
 				liftDoors.insert(doorId, qMakePair(lift, plan.rooms.at((lift == ra ? rb : ra)->room).label));
@@ -6611,6 +6657,30 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			continue;
 		}
 		++report.doors;
+		// A tall hull door: the room's outer wall on each deck above is cut
+		// open too (the hull and the lowest wall make the door itself).
+		for(int i = 1; i <= decksUp; ++i)
+		{
+			const DeckRoom* ua = 0;
+			const DeckRoom* ub = 0;
+			upperRooms(i, ua, ub);
+			const DeckRoom* upper = ra ? ua : ub;
+			AuPoint cmn = mn, cmx = mx;
+			cmn.z += .01;
+			if(xWall)
+			{
+				cmn.x = qMin(roomWall - sgn * .05, surface + sgn * 3.0);
+				cmx.x = qMax(roomWall - sgn * .05, surface + sgn * 3.0);
+			}
+			else
+			{
+				cmn.y = qMin(roomWall - sgn * .05, surface + sgn * 3.0);
+				cmx.y = qMax(roomWall - sgn * .05, surface + sgn * 3.0);
+			}
+			if(!upper || !CutOpening(*design, BoxFaces(cmn, cmx), upper->meshId, 0))
+				report.warnings << QString("The wall of '%1' on deck %2, over its tall hull door, could not be cut.")
+						.arg(room->group).arg(door.deck + i + 1);
+		}
 		if(door.open)
 			openDoors << doorId;
 		HullSide hullSide;
@@ -8992,6 +9062,17 @@ bool PlanFromModel(const QString& modelFile, const PlanFromModelOptions& options
 	const int width = int(ceil((mx.x - mn.x) / options.cellFeet)) + 2;
 	int depth = int(ceil(qMax(fabs(mn.y), fabs(mx.y)) * 2 / options.cellFeet)) + 2;
 	depth += depth % 2;		// Even, so that the mirror line is a cell edge.
+	if(width > TriPlan::kMaxCells || depth > TriPlan::kMaxCells)
+	{
+		// The grid stops at kMaxCells: the ends of the model fall off it.
+		const double need = qMax(mx.x - mn.x, qMax(fabs(mn.y), fabs(mx.y)) * 2);
+		const double cell = ceil(need / (TriPlan::kMaxCells - 2) * 2) / 2;
+		notes << QString("Too big for the grid: it is at most %1 cells each way (%2 ft, %3 m at %4 ft cells), and "
+						 "this needs %5 by %6, so the ends are cut off. Make the cells %7 ft or more, or the ship "
+						 "shorter.").arg(int(TriPlan::kMaxCells)).arg(qRound(TriPlan::kMaxCells * options.cellFeet))
+				.arg(qRound(TriPlan::kMaxCells * options.cellFeet * 0.3048)).arg(options.cellFeet)
+				.arg(width).arg(depth).arg(cell);
+	}
 	plan.Resize(width, depth);
 	const int decks = qMax(1, int(ceil(mx.z / options.deckFeet - .2)));
 	while(plan.Decks() < decks)

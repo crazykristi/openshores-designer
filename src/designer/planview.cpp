@@ -6,6 +6,7 @@
 #include "names.h"
 
 #include <QHash>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLineF>
 #include <QMouseEvent>
@@ -27,6 +28,8 @@ const QColor kInteriorDoor(250, 220, 60);
 const QColor kHullDoor(255, 140, 40);
 const QColor kWindow(140, 220, 255);
 const QColor kNotRoomable(220, 50, 50);
+const QColor kRoomWall(12, 12, 16);		// The bold line between rooms,
+const QColor kRoomWallCore(235, 235, 240);	// and its light middle.
 
 const char* kSideNames[4] = { "starboard", "fore", "port", "aft" };
 
@@ -138,6 +141,45 @@ int PlanView::SpacecraftSpotUnder(const QPointF& world) const
 			return i;
 	}
 	return -1;
+}
+
+bool PlanView::OfferDecksUp(int door)
+{
+	if(!m_plan || door < 0 || door >= m_plan->doors.size() || !m_plan->doors.at(door).kind.isEmpty())
+		return false;
+	QList<int> row = ButtonRow(door);
+	int most = 1 << 20;
+	for(int i : row)
+		most = qMin(most, m_plan->DoorDecksUpMost(m_plan->doors.at(i)));
+	if(most <= 0)
+	{
+		// Nothing above to reach into (any more): one deck.
+		for(int i : row)
+			m_plan->doors[i].decksUp = 0;
+		return false;
+	}
+	const PlanDoor& d = m_plan->doors.at(door);
+	bool ok = false;
+	const int n = QInputDialog::getInt(this, "Door through the decks above",
+			QString("Above this door, deck%1 %2 open to the deck below on both its sides, so the door can reach up "
+					"through them as one tall door (a hangar door, for example).\n\nHow many decks above deck %3 "
+					"should it reach? 0 keeps it on its own deck.")
+				.arg(most == 1 ? "" : "s").arg(most == 1 ? QString("%1 is").arg(d.deck + 2)
+						: QString("%1 to %2 are").arg(d.deck + 2).arg(d.deck + 1 + most)).arg(d.deck + 1),
+			qMin(d.decksUp, most), 0, most, 1, &ok);
+	if(!ok)
+		return true;
+	for(int i : row)
+		m_plan->doors[i].decksUp = n;
+	if(m_mirror)
+	{
+		const TriRef m = m_plan->Mirror(TriRef(d.deck, d.cx, d.cy, d.side));
+		const int other = m_plan->DoorAt(m.deck, m.cx, m.cy, m.k);
+		if(other >= 0 && !row.contains(other))
+			for(int i : ButtonRow(other))
+				m_plan->doors[i].decksUp = qMin(n, m_plan->DoorDecksUpMost(m_plan->doors.at(i)));
+	}
+	return true;
 }
 
 QList<int> PlanView::ButtonRow(int door) const
@@ -379,6 +421,49 @@ void PlanView::paintEvent(QPaintEvent*)
 			}
 	}
 
+	// The walls of the rooms: a bold line wherever a room meets another room
+	// or no room, on cell edges and diagonals, so that two rooms of the same
+	// colour stay apart. Each edge is drawn once, from the higher room number.
+	if(m_mode != HullMode && m_mode != PaintMode)
+	{
+		QVector<QLineF> walls;
+		for(int cy = 0; cy < D; ++cy)
+			for(int cx = 0; cx < W; ++cx)
+			{
+				const QPointF corner = ToScreen(m_plan->Corner(cx, cy + 1));
+				if(corner.x() > width() || corner.y() > height() || corner.x() + cellPixels < 0 || corner.y() + cellPixels < 0)
+					continue;
+				for(int k = 0; k < 4; ++k)
+				{
+					const TriRef t(m_deck, cx, cy, k);
+					const int room = m_plan->Room(t);
+					if(room < 0)
+						continue;
+					for(int e = 0; e < 3; ++e)
+					{
+						const TriRef o = m_plan->Across(t, e);
+						const int other = m_plan->Valid(o) ? m_plan->Room(o) : -1;
+						// Inside one cell both triangles see the diagonal; across a
+						// cell edge too, so the higher room number draws it.
+						if(other == room || (other >= 0 && other > room))
+							continue;
+						QPointF a, b;
+						m_plan->EdgeEnds(t, e, a, b);
+						walls << QLineF(ToScreen(a), ToScreen(b));
+					}
+				}
+			}
+		// Wide and dark with a light core, so it shows on any room colour
+		// and stands apart from the grid lines.
+		const double wide = qBound(4.5, cellPixels / 3.5, 9.0);
+		p.setRenderHint(QPainter::Antialiasing, true);
+		p.setPen(QPen(kRoomWall, wide, Qt::SolidLine, Qt::RoundCap));
+		p.drawLines(walls);
+		p.setPen(QPen(kRoomWallCore, qMax(1.5, wide / 3), Qt::SolidLine, Qt::FlatCap));
+		p.drawLines(walls);
+		p.setRenderHint(QPainter::Antialiasing, false);
+	}
+
 	// Turbolifts run on one vertical axis: on the decks of a shaft, and the
 	// decks just above and below it, the shaft's cells (those of its lowest
 	// deck) are hatched in the room's colour where this deck lacks them, and
@@ -439,6 +524,19 @@ void PlanView::paintEvent(QPaintEvent*)
 	{
 		for(const PlanDoor& door : m_plan->doors)
 		{
+			// A tall door passes through the decks above its own: dashed there.
+			// As far as it will be built: the rooms above may have changed.
+			const int decksUp = door.decksUp > 0 ? qMin(door.decksUp, m_plan->DoorDecksUpMost(door)) : 0;
+			if(door.deck < m_deck && m_deck <= door.deck + decksUp)
+			{
+				QPointF c[3];
+				m_plan->TriCorners(TriRef(m_deck, door.cx, door.cy, door.side), c);
+				const TriRef b = m_plan->AcrossCellEdge(door.deck, door.cx, door.cy, door.side);
+				const bool hullDoor = m_plan->Room(TriRef(door.deck, door.cx, door.cy, door.side)) < 0 || m_plan->Room(b) < 0;
+				p.setPen(QPen(hullDoor ? kHullDoor : kInteriorDoor, qMax(2.0, cellPixels / 7), Qt::DashLine, Qt::FlatCap));
+				p.drawLine(ToScreen(c[0]), ToScreen(c[1]));
+				continue;
+			}
 			if(door.deck != m_deck)
 				continue;
 			const TriRef a(door.deck, door.cx, door.cy, door.side);
@@ -475,6 +573,22 @@ void PlanView::paintEvent(QPaintEvent*)
 				p.drawText(box.translated(1, 1), Qt::AlignCenter, way);
 				p.setPen(Qt::white);
 				p.drawText(box, Qt::AlignCenter, way);
+			}
+			// A door that reaches up through decks above: an arrow and how many.
+			// Once for a row: on its first door.
+			bool firstOfRow = true;
+			for(const PlanDoor& other : m_plan->doors)
+				if(m_plan->DoorsJoin(door, other) && other.cx + other.cy < door.cx + door.cy)
+					firstOfRow = false;
+			if(decksUp > 0 && firstOfRow && door.kind.isEmpty() && cellPixels >= 10)
+			{
+				const QPointF middle = (e0 + e1) / 2.0 + QPointF(-cellPixels * .55, -cellPixels * .55);
+				const QRectF box(middle.x() - cellPixels, middle.y() - cellPixels / 2, cellPixels * 2, cellPixels);
+				const QString up = QString::fromUtf8("\u2191%1").arg(decksUp);
+				p.setPen(Qt::black);
+				p.drawText(box.translated(1, 1), Qt::AlignCenter, up);
+				p.setPen(QColor(120, 230, 255));
+				p.drawText(box, Qt::AlignCenter, up);
 			}
 			// A door that starts open: an O beside its middle.
 			if(door.open && door.kind.isEmpty() && cellPixels >= 10)
@@ -980,6 +1094,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 				door.rampRun = m_doorRampRun;
 				door.open = m_doorOpen;
 			}
+			OfferDecksUp(existing);
 			emit PlanChanged(false);
 			update();
 			return;
@@ -1881,7 +1996,11 @@ void PlanView::mouseReleaseEvent(QMouseEvent*)
 		{
 			const int placed = m_plan->DoorAt(m_doorStart.deck, m_doorStart.cx, m_doorStart.cy, m_doorStart.k);
 			if(placed >= 0 && m_plan->doors.at(placed).kind.isEmpty())
+			{
+				if(OfferDecksUp(placed))
+					emit PlanChanged(false);
 				StartButtons(placed);
+			}
 		}
 		// A click on a door, not a drag from it, takes it away; with another
 		// of the three tools (door, window between rooms, balcony) it becomes

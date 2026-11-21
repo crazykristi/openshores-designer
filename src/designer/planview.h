@@ -249,6 +249,10 @@ private:
 	QList<int> ButtonRow(int door) const;	// The doors of that door's row.
 	bool	ButtonSpot(const QPointF& world, QPointF& eighths, QPointF& wallA, QPointF& wallB, QString* why) const;
 	void	StartButtons(int door);
+	// Where the door's row can reach up through the decks above (open to
+	// the deck below on its sides), asks how many decks it should, and sets
+	// that for the row and its mirror. Returns false when nothing was asked.
+	bool	OfferDecksUp(int door);
 	void	StopButtons();
 };
 

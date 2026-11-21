@@ -73,8 +73,8 @@ TriPlan::TriPlan()
 
 void TriPlan::Resize(int width, int depth)
 {
-	width = qBound(2, width, 400);
-	depth = qBound(2, depth, 400);
+	width = qBound(2, width, int(kMaxCells));
+	depth = qBound(2, depth, int(kMaxCells));
 	const int ox = (width - m_width) / 2;
 	const int oy = (depth - m_depth) / 2;
 	const bool empty = m_hull.isEmpty();
@@ -696,6 +696,38 @@ TriRef TriPlan::Mirror(const TriRef& t) const
 	else if(k == TRI_N)
 		k = TRI_S;
 	return TriRef(t.deck, t.cx, m_depth - 1 - t.cy, k);
+}
+
+int TriPlan::DoorDecksUpMost(const PlanDoor& door) const
+{
+	if(!door.kind.isEmpty())
+		return 0;
+	const TriRef a(door.deck, door.cx, door.cy, door.side);
+	const TriRef b = AcrossCellEdge(door.deck, door.cx, door.cy, door.side);
+	const int ra = Room(a), rb = Valid(b) ? Room(b) : -1;
+	if(ra < 0 && rb < 0)
+		return 0;
+	for(int r : { ra, rb })
+		if(r >= 0 && IsLiftRoomType(rooms.at(r).type))
+			return 0;
+	int n = 0;
+	for(int d = door.deck + 1; d < Decks(); ++d)
+	{
+		const TriRef ua(d, a.cx, a.cy, a.k), ub(d, b.cx, b.cy, b.k);
+		auto fits = [&](int below, const TriRef& up) {
+			const int r = Valid(up) ? Room(up) : -1;
+			if(below < 0)
+				return r < 0;		// The outside stays outside.
+			return r >= 0 && IsOpenToDeckBelowType(rooms.at(r).type);
+		};
+		if(!fits(ra, ua) || !fits(rb, ub))
+			break;
+		// One open room over both sides has no wall there to reach up through.
+		if(ra >= 0 && rb >= 0 && Room(ua) == Room(ub))
+			break;
+		++n;
+	}
+	return n;
 }
 
 bool TriPlan::DoorsJoin(const PlanDoor& a, const PlanDoor& b) const
@@ -1959,6 +1991,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 			o["kind"] = d.kind;
 		if(d.open)
 			o["open"] = true;
+		if(d.decksUp > 0)
+			o["decksUp"] = d.decksUp;
 		if(!d.buttons.isEmpty())
 		{
 			QJsonArray buttons;
@@ -2384,8 +2418,8 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	if(plan.hullStyle != "angular" && plan.hullStyle != "classic")
 		plan.hullStyle = "smooth";
 	plan.slopedDecks = root["slopedDecks"].toBool(plan.slopedDecks);
-	plan.m_width = qBound(2, root["width"].toInt(), 400);
-	plan.m_depth = qBound(2, root["depth"].toInt(), 400);
+	plan.m_width = qBound(2, root["width"].toInt(), int(kMaxCells));
+	plan.m_depth = qBound(2, root["depth"].toInt(), int(kMaxCells));
 	plan.m_decks = qBound(1, root["decks"].toInt(), 64);
 
 	plan.rooms.clear();
@@ -2435,6 +2469,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		if(d.kind != "window" && d.kind != "balcony")
 			d.kind.clear();
 		d.open = o["open"].toBool();
+		d.decksUp = qBound(0, o["decksUp"].toInt(), 60);
 		for(const QJsonValue& b : o["buttons"].toArray())
 			if(b.toArray().size() == 2 && d.buttons.size() < 2)
 				d.buttons << QPointF(b.toArray().at(0).toDouble(), b.toArray().at(1).toDouble());

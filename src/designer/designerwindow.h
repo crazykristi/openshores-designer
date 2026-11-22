@@ -260,6 +260,8 @@ private:
 	QLineEdit*		m_name = 0;
 	QComboBox*		m_template = 0;
 	QComboBox*		m_ftl = 0;
+	class QSplitter*	m_split = 0;			// The plan view and the 3D view.
+	QWidget*		m_side = 0;				// The side panel: the drawing tools and the steps.
 	QComboBox*		m_maneuver = 0;			// TriPlan::maneuverDrive.
 	// Lengths are kept in feet; with 'm_metric' they are shown in meters.
 	bool			m_metric = false;

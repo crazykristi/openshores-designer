@@ -22,6 +22,7 @@
 #include "names.h"
 #include "shipgen.h"
 #include "triplan.h"
+#include "augleffects.h"
 
 QColor RoomColour(int index)
 {
@@ -66,6 +67,8 @@ QStringList HandBerthWarnings(const TriPlan& plan)
 
 namespace
 {
+
+QString PaintSummary(const PlanPaint& p);
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // The schemas.
@@ -140,7 +143,7 @@ QJsonArray PlanToolDefinitions()
 	{
 		QJsonObject p;
 		p["what"] = Choice({ "room_types", "station_types", "berth_kinds", "ship_templates", "building_templates",
-							 "ftl_drives", "maneuver_drives", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
+							 "ftl_drives", "maneuver_drives", "fire_control", "textures", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
 		tools << Tool("list_choices", "The names the other tools take: room types, station types, berth kinds, ship and "
 					  "building templates, FTL drives, hull styles and the ship systems whose volumes can be set.", p);
 	}
@@ -265,6 +268,9 @@ QJsonArray PlanToolDefinitions()
 						   "opening above a low parapet. A door if left out.");
 		p["open"] = Prop("boolean", "The door is open when the blueprint is built.");
 		p["exit"] = Choice({ "auto", "ladder", "ramp", "none" }, "Hull doors: the way down to the ground (none: a docking door).");
+		p["decksUp"] = Prop("integer", "How many decks above its own the door reaches up through (0 for one deck): a tall "
+							"door, such as a vehicle bay's. Each of those decks needs an \"Open to Deck Below\" room over "
+							"the door's room, and the outside over a hull door's outer side.");
 		tools << Tool("add_door", "Puts a door in the wall between two rooms that touch on the same deck, or between a room "
 					  "and the outside. It picks the middle of the longest stretch of wall they share.", p, { "from", "to" });
 	}
@@ -279,6 +285,8 @@ QJsonArray PlanToolDefinitions()
 	{
 		QJsonObject p;
 		p["lower"] = Prop("string", "The room on the lower deck.");
+		p["deck"] = DeckProp("The lower deck, when the rooms meet on more than one pair of decks (one room drawn on several "
+							 "decks joined to itself, say). The lowest pair that fits if left out.");
 		p["upper"] = Prop("string", "The room on the deck above it.");
 		p["kind"] = Choice({ "ladder", "hatch_ladder", "hatch", "stairs", "ramp" }, "A ladder (the default), a ladder "
 						   "through a hatch that opens and closes, a hatch alone, stairs or a ramp (they need a run of "
@@ -310,7 +318,75 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["what"] = Choice({ "doors", "windows", "ladders", "hatches", "stairs", "stations", "berths", "pads" }, "What to take away.");
+		p["kind"] = Choice({ "spacecraft", "space_vehicle", "ground_vehicle" }, "spacecraft: a landing spot for a whole "
+						   "spaceship (238 ft square), on a deck or on top of the hull; space_vehicle: a space fighter or "
+						   "shuttle (12 by 17 m); ground_vehicle: a ground vehicle (6 by 12 m).");
+		p["deck"] = DeckProp("The deck. For a landing spot on top of the ship, add an empty deck on top (add_deck) "
+							 "and use it: the spot lies on the hull of the deck below.");
+		p["room"] = Prop("string", "Vehicles: the room it goes in (a Vehicle Bay, with a wide door to the outside).");
+		p["x"] = Prop("integer", "The cell corner its middle is on, if it matters (along x).");
+		p["y"] = Prop("integer", "The cell corner its middle is on, if it matters (along y).");
+		p["across"] = Prop("boolean", "Vehicles: the long side across the ship (port to starboard) instead of fore and aft.");
+		tools << Tool("add_parking", "Puts in a parking spot: a landing spot for a spaceship, or a spot for a space or "
+					  "ground vehicle in a room. A vehicle bay needs a door to the outside wide enough for it (add_door "
+					  "with width).", p, { "kind", "deck" });
+	}
+	{
+		QJsonObject p;
+		p["side"] = Choice({ "top", "port", "starboard", "fore", "aft", "bottom" }, "Where on the hull it fires from (top if left out).");
+		p["deck"] = DeckProp("The deck (the highest deck with hull there for top, the lowest for bottom, if left out).");
+		p["x"] = Prop("integer", "Along x, the cell column (the middle of the hull if left out).");
+		p["module"] = Prop("integer", "The bay (a fire control module id, list_choices fire_control); the plan's own if left out.");
+		tools << Tool("add_weapon", "Puts a weapon emitter on the hull: where a weapon bay fires from. Each one is a weapon "
+					  "bay of its own and needs a fire control station of its own (add_station firecontrol; the first "
+					  "emitter goes to the first station, and so on).", p);
+	}
+	{
+		QJsonObject p;
+		p["index"] = Prop("integer", "The palette entry to change; a new one is added if left out. 0 is the base coat, "
+						  "the colour of everything not painted otherwise.");
+		p["name"] = Prop("string", "A name for it (\"Hull grey\", \"Deck wood\"); paint_hull can use it.");
+		p["colour"] = Prop("string", "A plain colour as #rrggbb.");
+		p["empire"] = Choice({ "none", "primary", "secondary", "tertiary" }, "One of the owner's empire colours instead "
+							 "of a plain colour (the game fills it in for whoever builds it).");
+		p["texture"] = Prop("string", "One of the game's library textures, by name or number (list_choices textures), or "
+							"\"none\" for plain paint.");
+		p["wrap"] = Choice({ "face", "top", "side", "front", "cylinder", "sphere" }, "How the texture is laid on: face (each "
+						   "face flat, no stretching, the usual), or projected from the top, side or front, or round the "
+						   "length (cylinder) or a ball (sphere).");
+		p["textureFeet"] = Prop("number", "Feet per repeat of the texture (8 if left out).");
+		p["textureRotate"] = Prop("number", "Degrees to turn the texture.");
+		p["tint"] = Prop("number", "How much of the colour is laid over the texture: 0 the texture as it is, 1 only the colour.");
+		p["shine"] = Prop("number", "Specular exponent, 0 (matt) and up; the game suggests up to 1000.");
+		p["reflect"] = Prop("number", "Specular intensity, 0 to 1.");
+		p["selfLit"] = Prop("number", "0 lit by the world, 1 lit by itself (shows in the dark).");
+		p["glow"] = Prop("string", "A glow colour as #rrggbb, or none.");
+		p["livery"] = Prop("boolean", "Keep this colour's edges sharp where they are drawn (a painted pattern, a stripe); "
+						   "costs hull faces.");
+		tools << Tool("set_paint", "Adds or changes a paint in the plan's palette: a colour, an empire colour or a library "
+					  "texture, with its finish. Then paint_hull puts it on the hull.", p);
+	}
+	{
+		QJsonObject p;
+		p["paint"] = Prop("string", "The palette entry: its number or its name (set_paint).");
+		p["deck"] = DeckProp("The lowest deck to paint (all of them if left out).");
+		p["toDeck"] = DeckProp("The highest deck to paint (only 'deck' if left out; all from 'deck' up if deck is given "
+							   "and toDeck is \"top\").");
+		p["x"] = Prop("integer", "The aft end of the box, a cell (the whole length if left out).");
+		p["sizeX"] = Prop("integer", "Cells long.");
+		p["y"] = Prop("integer", "The starboard side of the box, a cell (the whole beam if left out).");
+		p["sizeY"] = Prop("integer", "Cells across.");
+		p["awayFromEdge"] = Prop("integer", "Paint only cells at least this many cells in from the edge of the deck's "
+								 "hull: the deck's top, not its sides (teak on the main deck, the sides grey). 0 if left out.");
+		tools << Tool("paint_hull", "Paints the hull with one palette entry over a box of cells on a range of decks. The "
+					  "outside of the hull takes the paint of the deck and cells it is beside, so a deck range makes a "
+					  "band (a waterline, the deck tops), and a box makes a stripe or a turret's colour. Later calls "
+					  "paint over earlier ones.", p, { "paint" });
+	}
+	{
+		QJsonObject p;
+		p["what"] = Choice({ "doors", "windows", "ladders", "hatches", "stairs", "stations", "berths", "pads", "parking",
+						   "weapons" }, "What to take away.");
 		p["room"] = Prop("string", "Only those in or on the walls of this room.");
 		p["deck"] = DeckProp("Only those on this deck.");
 		tools << Tool("remove_items", "Takes doors, windows, ladders, stairs, stations or berths away.", p, { "what" });
@@ -354,6 +430,12 @@ QString PlanToolsGuide()
 		"save_plan and save_blueprint. Look with show_deck often, and with picture.\n"
 		"A ship needs a Bridge for the helm, an Engine Room for the engineer, and cabins for the berths; list_choices "
 		"gives the names. Every change can be undone in the designer (and with undo).\n"
+		"A deck room needs a way up and down: one room drawn in separate pieces on a deck is joined only where it has "
+		"doors, ladders or stairs of its own (connect_decks with deck). The game's crew never ride turbo lifts, so every "
+		"deck needs ladders or stairs to the rest of the ship as well as a lift stop.\n"
+		"Paint: set_paint adds colours, empire colours and library textures (list_choices textures) to the palette, with "
+		"entry 0 the base coat; paint_hull puts one on a box of cells over a range of decks (a waterline band, deck "
+		"tops, a stripe); picture view 3d shows it.\n"
 		"The expected stats are only a guide worked out with the game's own code; the game can change, so the player must "
 		"always check the design in the game before building it.";
 }
@@ -729,9 +811,32 @@ QString PlanSummary(const TriPlan& plan)
 	for(const PlanDoor& d : plan.doors)
 		if(plan.Room(TriRef(d.deck, d.cx, d.cy, d.side)) < 0 || plan.Room(plan.AcrossCellEdge(d.deck, d.cx, d.cy, d.side)) < 0)
 			++hullDoors;
-	out << QString("Doors: %1 (to the outside: %2)   Windows: %3   Ladders: %4   Hatches: %5   Stairs: %6   Parking: %7")
-			.arg(plan.doors.size()).arg(hullDoors).arg(plan.windows.size()).arg(plan.ladders.size()).arg(plan.hatches.size())
-			.arg(plan.stairs.size()).arg(plan.parking.size());
+	int weapons = 0;
+	for(const PlanEmitter& e : plan.emitters)
+		if(e.weapon && !e.marking)
+			++weapons;
+	out << QString("Doors: %1 (to the outside: %2)   Windows: %3   Ladders: %4   Hatches: %5   Stairs: %6   Parking: %7   "
+				   "Weapon emitters: %8").arg(plan.doors.size()).arg(hullDoors).arg(plan.windows.size()).arg(plan.ladders.size())
+			.arg(plan.hatches.size()).arg(plan.stairs.size()).arg(plan.parking.size()).arg(weapons);
+	{
+		// The palette, and how much of the hull each paint has.
+		QVector<int> used(plan.palette.size(), 0);
+		for(int d = 0; d < plan.Decks(); ++d)
+			for(int cy = 0; cy < plan.Depth(); ++cy)
+				for(int cx = 0; cx < plan.Width(); ++cx)
+					for(int k = 0; k < 4; ++k)
+					{
+						const TriRef t(d, cx, cy, k);
+						const int i = plan.Hull(t) ? plan.Paint(t) : -1;
+						if(i >= 0 && i < used.size())
+							++used[i];
+					}
+		out << "Palette (set_paint, paint_hull):";
+		for(int i = 0; i < plan.palette.size(); ++i)
+			out << QString("  %1%2: %3; on %4 hull triangles").arg(i)
+					.arg(plan.palette.at(i).name.isEmpty() ? QString() : " \"" + plan.palette.at(i).name + "\"")
+					.arg(PaintSummary(plan.palette.at(i))).arg(used.at(i));
+	}
 	QMap<QString, int> st, be;
 	for(const PlanStation& s : plan.stations)
 		st[s.type]++;
@@ -838,18 +943,38 @@ QString DeckMap(const TriPlan& plan, int deck, bool full)
 				.arg(plan.rooms.at(r).type).arg(e.cells).arg(e.x0).arg(e.x1).arg(e.y0).arg(e.y1);
 	}
 	QStringList items;
+	// Doors and windows, one line for each run of neighbouring cells on one
+	// wall: "the fore edge of cells 239,22 to 239,33".
+	struct Edge { QString what; int cx, cy; };
+	QList<Edge> edges;
 	for(const PlanDoor& d : plan.doors)
 		if(d.deck == deck)
 		{
 			const int a = plan.Room(TriRef(d.deck, d.cx, d.cy, d.side));
 			const int b = plan.Room(plan.AcrossCellEdge(d.deck, d.cx, d.cy, d.side));
-			items << QString("door%1: %2 - %3, the %4 edge of cell %5,%6%7").arg(d.kind.isEmpty() ? QString() : " (" + d.kind + ")")
-					.arg(RoomName(plan, a), RoomName(plan, b)).arg(SideName(d.side)).arg(d.cx).arg(d.cy).arg(d.skip ? " (left out)" : "");
+			edges << Edge{ QString("door%1%2: %3 - %4, the %5 edge of cell").arg(d.kind.isEmpty() ? QString() : " (" + d.kind + ")")
+					.arg(d.skip ? " (left out)" : "").arg(RoomName(plan, a), RoomName(plan, b)).arg(SideName(d.side))
+					+ QString("|%1").arg(d.row), d.cx, d.cy };
 		}
 	for(const PlanDoor& w : plan.windows)
 		if(w.deck == deck)
-			items << QString("window: %1, the %2 of cell %3,%4").arg(RoomName(plan, plan.Room(TriRef(w.deck, w.cx, w.cy, w.side))))
-					.arg(w.edge == 0 ? QString("%1 edge").arg(SideName(w.side)) : QString("diagonal")).arg(w.cx).arg(w.cy);
+			edges << Edge{ QString("window: %1, the %2 of cell").arg(RoomName(plan, plan.Room(TriRef(w.deck, w.cx, w.cy, w.side))))
+					.arg(w.edge == 0 ? QString("%1 edge").arg(SideName(w.side)) : QString("diagonal")), w.cx, w.cy };
+	for(int i = 0; i < edges.size(); )
+	{
+		int j = i + 1;
+		while(j < edges.size() && edges.at(j).what == edges.at(i).what
+			  && qAbs(edges.at(j).cx - edges.at(j - 1).cx) + qAbs(edges.at(j).cy - edges.at(j - 1).cy) == 1)
+			++j;
+		QString what = edges.at(i).what;
+		what = what.left(what.lastIndexOf('|') < 0 ? what.size() : what.lastIndexOf('|'));
+		if(j - i == 1)
+			items << QString("%1 %2,%3").arg(what).arg(edges.at(i).cx).arg(edges.at(i).cy);
+		else
+			items << QString("%1s %2,%3 to %4,%5 (%6 cells)").arg(what).arg(edges.at(i).cx).arg(edges.at(i).cy)
+					.arg(edges.at(j - 1).cx).arg(edges.at(j - 1).cy).arg(j - i);
+		i = j;
+	}
 	for(const PlanLadder& l : plan.ladders)
 	{
 		if(l.deck == deck)
@@ -890,6 +1015,9 @@ QString DeckMap(const TriPlan& plan, int deck, bool full)
 		if(p.deck == deck)
 			items << QString("parking (%1): corner of cell %2,%3").arg(p.spacecraft ? "spacecraft" : p.space ? "space vehicle"
 					: p.vehicle.isEmpty() ? "ground vehicle" : p.vehicle).arg(p.cx).arg(p.cy);
+	for(const PlanEmitter& e : plan.emitters)
+		if(e.deck == deck && e.weapon && !e.marking)
+			items << QString("weapon emitter: cell %1,%2 (%3 triangle)").arg(e.cx).arg(e.cy).arg(SideName(e.k));
 	if(!items.isEmpty())
 	{
 		out << "";
@@ -926,6 +1054,25 @@ QString Choices(const TriPlan& plan, const QString& what)
 		for(const QPair<QString, QString>& c : FtlDriveChoices())
 			d << QString("%1 (%2)").arg(c.first, c.second);
 		out << "FTL drives: " + d.join(", ");
+	}
+	if(all || what == "fire_control")
+	{
+		QStringList f;
+		for(const QPair<int, QString>& c : FireControlModules())
+			f << QString("%1 (%2)").arg(c.first).arg(c.second);
+		out << "Fire control modules (weapon bays): " + f.join(", ");
+	}
+	if(all || what == "textures")
+	{
+		QStringList t;
+		const int count = AuTextureLibItem::LibraryTextureCount();
+		for(int id = 0; id < count; ++id)
+		{
+			const QString name = AuTextureLibItem::LibraryTextureName(quint16(id));
+			if(!name.isEmpty())
+				t << QString("%1 %2").arg(id).arg(name);
+		}
+		out << "Library textures (set_paint texture): " + t.join(", ");
 	}
 	if(all || what == "maneuver_drives")
 		out << "Maneuver drives: gravity (runs on power), rocket (burns fuel, no power)";
@@ -1074,6 +1221,7 @@ PlanToolResult AddDoor(TriPlan& plan, const QJsonObject& args)
 	const int n = qMin(width, run.size());
 	const int start = (run.size() - n) / 2;
 	const int row = plan.NewDoorRow();
+	const int decksUp = qMax(0, IntArg(args, "decksUp", 0));
 	for(int i = start; i < start + n; ++i)
 	{
 		const Edge& e = run.at(i);
@@ -1089,6 +1237,20 @@ PlanToolResult AddDoor(TriPlan& plan, const QJsonObject& args)
 			door.exit = exit;
 		plan.doors << door;
 	}
+	QString tall;
+	if(decksUp > 0)
+	{
+		// As high as it can reach, at most what was asked.
+		const PlanDoor& middle = plan.doors.at(plan.doors.size() - 1 - (n - 1) / 2);
+		const int most = plan.DoorDecksUpMost(middle);
+		const int up = qMin(decksUp, most);
+		for(int i = plan.doors.size() - n; i < plan.doors.size(); ++i)
+			plan.doors[i].decksUp = up;
+		tall = up == decksUp ? QString(" It reaches up through %1 deck%2 above.").arg(up).arg(up == 1 ? "" : "s")
+				: QString(" It can only reach up through %1 deck%2 above: each deck it goes through needs an \"Open to Deck "
+						  "Below\" room over the door's room%3.").arg(up).arg(up == 1 ? "" : "s")
+						.arg(outside ? ", and the outside over its outer side" : "");
+	}
 	const Edge& first = run.at(start);
 	PlanToolResult res;
 	res.changed = true;
@@ -1101,6 +1263,7 @@ PlanToolResult AddDoor(TriPlan& plan, const QJsonObject& args)
 					: QString("%1,%2 to %3,%4").arg(first.cx).arg(first.cy).arg(run.at(start + n - 1).cx).arg(run.at(start + n - 1).cy));
 	if(width > n)
 		res.text += QString(" The wall they share is only %1 cells long there.").arg(run.size());
+	res.text += tall;
 	return res;
 }
 
@@ -1198,6 +1361,11 @@ PlanToolResult ConnectDecks(TriPlan& plan, const QJsonObject& args)
 	const QString kind = StrArg(args, "kind", "ladder");
 	if(kind != "ladder" && kind != "hatch_ladder" && kind != "hatch" && kind != "stairs" && kind != "ramp")
 		throw Fail{ "kind is ladder, hatch_ladder, hatch, stairs or ramp." };
+	// The lower deck, if given: needed when the rooms meet on more than one
+	// pair of decks (one room drawn on several decks, joined to itself).
+	const int onlyDeck = Has(args, "deck") ? DeckArg(plan, args) : -1;
+	if(onlyDeck >= 0 && onlyDeck + 1 >= plan.Decks())
+		throw Fail{ "deck is the lower deck; there is no deck above it." };
 	PlanToolResult res;
 	res.changed = true;
 
@@ -1208,6 +1376,8 @@ PlanToolResult ConnectDecks(TriPlan& plan, const QJsonObject& args)
 		bool tried = false;
 		for(int d = 0; d + 1 < plan.Decks(); ++d)
 		{
+			if(onlyDeck >= 0 && d != onlyDeck)
+				continue;
 			// Starts against a wall of the lower room first, so the flight runs along it.
 			struct Try { PlanStair st; int score; };
 			QList<Try> tries;
@@ -1273,6 +1443,8 @@ PlanToolResult ConnectDecks(TriPlan& plan, const QJsonObject& args)
 		for(int cy = 0; cy < plan.Depth(); ++cy)
 			for(int cx = 0; cx < plan.Width(); ++cx)
 			{
+				if(onlyDeck >= 0 && d != onlyDeck)
+					continue;
 				if(given && (cx != gx || cy != gy))
 					continue;
 				if(plan.CellRoom(d, cx, cy) != lower || plan.CellRoom(d + 1, cx, cy) != upper)
@@ -1590,6 +1762,454 @@ PlanToolResult AddBerths(TriPlan& plan, const QJsonObject& args)
 	return res;
 }
 
+// A colour from "#rrggbb" (or a name Qt knows).
+QColor ColourArg(const QJsonObject& args, const char* key)
+{
+	const QColor c(StrArg(args, key));
+	if(!c.isValid())
+		throw Fail{ QString("%1 is a colour as #rrggbb.").arg(key) };
+	return c;
+}
+
+// A palette entry by number or name.
+int PaintArg(const TriPlan& plan, const QJsonObject& args)
+{
+	const QJsonValue v = args.value("paint");
+	if(v.isDouble())
+	{
+		const int i = v.toInt();
+		if(i < 0 || i >= plan.palette.size())
+			throw Fail{ QString("There is no paint %1; the palette has %2 (0 to %3).").arg(i).arg(plan.palette.size()).arg(plan.palette.size() - 1) };
+		return i;
+	}
+	const QString name = v.toString().trimmed();
+	bool number = false;
+	const int i = name.toInt(&number);
+	if(number && i >= 0 && i < plan.palette.size())
+		return i;
+	for(int k = 0; k < plan.palette.size(); ++k)
+		if(plan.palette.at(k).name.compare(name, Qt::CaseInsensitive) == 0)
+			return k;
+	QStringList names;
+	for(int k = 0; k < plan.palette.size(); ++k)
+		names << QString("%1 %2").arg(k).arg(plan.palette.at(k).name.isEmpty() ? plan.palette.at(k).colour.name() : plan.palette.at(k).name);
+	throw Fail{ QString("There is no paint \"%1\". The palette: %2.").arg(name, names.join(", ")) };
+}
+
+QString PaintSummary(const PlanPaint& p)
+{
+	QStringList what;
+	what << (p.theme >= 0 ? QString("empire colour %1").arg(p.theme == 0 ? "primary" : p.theme == 1 ? "secondary" : "tertiary")
+						  : p.colour.name());
+	if(p.texLib >= 0)
+		what << QString("texture %1 %2 (%3, %4 ft, tint %5)").arg(p.texLib).arg(AuTextureLibItem::LibraryTextureName(quint16(p.texLib)))
+				.arg(p.wrap).arg(p.texFeet).arg(p.tint);
+	else if(!p.texFile.isEmpty())
+		what << "texture file " + p.texFile;
+	if(p.shine > 0 || p.reflect > 0)
+		what << QString("shine %1, reflect %2").arg(p.shine).arg(p.reflect);
+	if(p.selfLit > 0)
+		what << QString("self-lit %1").arg(p.selfLit);
+	if(p.HasGlow())
+		what << "glow " + p.glow.name();
+	if(p.livery)
+		what << "livery";
+	return what.join(", ");
+}
+
+PlanToolResult SetPaint(TriPlan& plan, const QJsonObject& args)
+{
+	int index = Has(args, "index") ? IntArg(args, "index", 0) : -1;
+	if(index >= plan.palette.size() || index < -1)
+		throw Fail{ QString("There is no paint %1; leave index out to add one.").arg(index) };
+	if(index < 0 && plan.palette.size() >= 255)
+		throw Fail{ "The palette is full (255 paints)." };
+	PlanPaint p = index >= 0 ? plan.palette.at(index) : PlanPaint();
+	if(Has(args, "name"))
+		p.name = StrArg(args, "name");
+	if(Has(args, "colour"))
+	{
+		p.colour = ColourArg(args, "colour");
+		p.theme = -1;
+	}
+	if(Has(args, "empire"))
+	{
+		const QString e = StrArg(args, "empire");
+		p.theme = e == "primary" ? 0 : e == "secondary" ? 1 : e == "tertiary" ? 2 : -1;
+		if(p.theme < 0 && e != "none")
+			throw Fail{ "empire is none, primary, secondary or tertiary." };
+	}
+	if(Has(args, "texture"))
+	{
+		const QString t = StrArg(args, "texture").trimmed();
+		if(t.compare("none", Qt::CaseInsensitive) == 0 || t.isEmpty())
+		{
+			p.texLib = -1;
+			p.texFile.clear();
+		}
+		else
+		{
+			const int count = AuTextureLibItem::LibraryTextureCount();
+			bool number = false;
+			int id = t.toInt(&number);
+			if(!number)
+			{
+				id = -1;
+				for(int k = 0; k < count && id < 0; ++k)
+					if(AuTextureLibItem::LibraryTextureName(quint16(k)).compare(t, Qt::CaseInsensitive) == 0)
+						id = k;
+				QStringList near;
+				for(int k = 0; k < count && id < 0; ++k)
+					if(AuTextureLibItem::LibraryTextureName(quint16(k)).contains(t, Qt::CaseInsensitive))
+						near << QString("%1 %2").arg(k).arg(AuTextureLibItem::LibraryTextureName(quint16(k)));
+				if(id < 0 && near.size() == 1)
+					id = near.first().section(' ', 0, 0).toInt();
+				else if(id < 0)
+					throw Fail{ near.isEmpty() ? QString("There is no library texture \"%1\" (list_choices textures).").arg(t)
+							: QString("\"%1\" could be: %2.").arg(t, near.join(", ")) };
+			}
+			if(id < 0 || id >= count || AuTextureLibItem::LibraryTextureName(quint16(id)).isEmpty())
+				throw Fail{ QString("There is no library texture %1 (list_choices textures).").arg(t) };
+			p.texLib = id;
+			p.texFile.clear();
+		}
+	}
+	if(Has(args, "wrap"))
+	{
+		const QString w = StrArg(args, "wrap");
+		if(!QStringList({ "face", "top", "side", "front", "cylinder", "sphere" }).contains(w))
+			throw Fail{ "wrap is face, top, side, front, cylinder or sphere." };
+		p.wrap = w;
+	}
+	if(Has(args, "textureFeet"))
+		p.texFeet = qBound(0.1, NumArg(args, "textureFeet", 8), 1000.0);
+	if(Has(args, "textureRotate"))
+		p.texRotate = NumArg(args, "textureRotate", 0);
+	if(Has(args, "tint"))
+		p.tint = float(qBound(0.0, NumArg(args, "tint", 0), 1.0));
+	if(Has(args, "shine"))
+		p.shine = float(qBound(0.0, NumArg(args, "shine", 0), 1000.0));
+	if(Has(args, "reflect"))
+		p.reflect = float(qBound(0.0, NumArg(args, "reflect", 0), 1.0));
+	if(Has(args, "selfLit"))
+		p.selfLit = float(qBound(0.0, NumArg(args, "selfLit", 0), 1.0));
+	if(Has(args, "glow"))
+		p.glow = StrArg(args, "glow") == "none" ? QColor() : ColourArg(args, "glow");
+	if(Has(args, "livery"))
+		p.livery = BoolArg(args, "livery", false);
+	if(index < 0)
+	{
+		plan.palette << p;
+		index = plan.palette.size() - 1;
+	}
+	else
+		plan.palette[index] = p;
+	PlanToolResult res;
+	res.changed = true;
+	res.hullChanged = true;
+	res.text = QString("Paint %1%2: %3.").arg(index).arg(p.name.isEmpty() ? QString() : " \"" + p.name + "\"").arg(PaintSummary(p));
+	if(index == 0)
+		res.text += " This is the base coat: everything not painted otherwise.";
+	else
+		res.text += QString(" Put it on with paint_hull (paint %1).").arg(index);
+	return res;
+}
+
+PlanToolResult PaintHull(TriPlan& plan, const QJsonObject& args)
+{
+	const int paint = PaintArg(plan, args);
+	int d0 = 0, d1 = plan.Decks() - 1;
+	if(Has(args, "deck"))
+	{
+		d0 = DeckArg(plan, args);
+		if(StrArg(args, "toDeck") == "top")
+			d1 = plan.Decks() - 1;
+		else if(Has(args, "toDeck"))
+		{
+			QJsonObject a;
+			a["deck"] = args.value("toDeck");
+			d1 = DeckArg(plan, a);
+		}
+		else
+			d1 = d0;
+	}
+	if(d1 < d0)
+		std::swap(d0, d1);
+	const int x0 = qMax(0, IntArg(args, "x", 0)), y0 = qMax(0, IntArg(args, "y", 0));
+	const int x1 = qMin(plan.Width() - 1, Has(args, "sizeX") ? x0 + IntArg(args, "sizeX", 1) - 1 : plan.Width() - 1);
+	const int y1 = qMin(plan.Depth() - 1, Has(args, "sizeY") ? y0 + IntArg(args, "sizeY", 1) - 1 : plan.Depth() - 1);
+	const int away = qMax(0, IntArg(args, "awayFromEdge", 0));
+	// A cell all hull, with only such cells within 'away' of it.
+	auto wholeHull = [&plan](int d, int cx, int cy) {
+		if(cx < 0 || cy < 0 || cx >= plan.Width() || cy >= plan.Depth())
+			return false;
+		for(int k = 0; k < 4; ++k)
+			if(!plan.Hull(TriRef(d, cx, cy, k)))
+				return false;
+		return true;
+	};
+	auto inFromEdge = [&](int d, int cx, int cy) {
+		for(int dy = -away; dy <= away; ++dy)
+			for(int dx = -away; dx <= away; ++dx)
+				if(!wholeHull(d, cx + dx, cy + dy))
+					return false;
+		return true;
+	};
+	int painted = 0;
+	for(int d = d0; d <= d1; ++d)
+		for(int cy = y0; cy <= y1; ++cy)
+			for(int cx = x0; cx <= x1; ++cx)
+			{
+				if(away > 0 && !inFromEdge(d, cx, cy))
+					continue;
+				for(int k = 0; k < 4; ++k)
+				{
+					const TriRef t(d, cx, cy, k);
+					if(!plan.Hull(t) || plan.Paint(t) == paint)
+						continue;
+					plan.SetPaint(t, paint);
+					++painted;
+				}
+			}
+	if(!painted)
+		throw Fail{ QString("There is no hull there to paint, or it is that paint already (decks %1-%2, x %3-%4, y %5-%6).")
+				.arg(d0 + 1).arg(d1 + 1).arg(x0).arg(x1).arg(y0).arg(y1) };
+	PlanToolResult res;
+	res.changed = true;
+	res.hullChanged = true;
+	res.deck = d0;
+	res.text = QString("Painted %1 hull triangles with paint %2 (%3) on decks %4-%5, x %6-%7, y %8-%9. The paint shows "
+					   "on the shaped hull (picture view 3d).").arg(painted).arg(paint).arg(PaintSummary(plan.palette.at(paint)))
+			.arg(d0 + 1).arg(d1 + 1).arg(x0).arg(x1).arg(y0).arg(y1);
+	return res;
+}
+
+PlanToolResult AddParking(TriPlan& plan, const QJsonObject& args)
+{
+	const QString kind = StrArg(args, "kind");
+	if(kind != "spacecraft" && kind != "space_vehicle" && kind != "ground_vehicle")
+		throw Fail{ "kind is spacecraft, space_vehicle or ground_vehicle." };
+	const int deck = DeckArg(plan, args);
+	PlanParking spot;
+	spot.deck = deck;
+	spot.spacecraft = kind == "spacecraft";
+	spot.space = kind == "space_vehicle";
+	spot.across = BoolArg(args, "across", false);
+	const bool given = Has(args, "x") && Has(args, "y");
+	int room = -1;
+	if(!spot.spacecraft)
+		room = RoomArg(plan, args, "room");
+	// The corners to try, nearest the middle of what it should be on first.
+	QPointF aim;
+	if(spot.spacecraft)
+	{
+		// Over the hull of this deck and the one below.
+		double sx = 0, sy = 0;
+		int n = 0;
+		for(int d = qMax(0, deck - 1); d <= deck; ++d)
+			for(int cy = 0; cy < plan.Depth(); ++cy)
+				for(int cx = 0; cx < plan.Width(); ++cx)
+					if(plan.Hull(TriRef(d, cx, cy, 0)))
+					{
+						sx += cx + .5;
+						sy += cy + .5;
+						++n;
+					}
+		if(!n)
+			throw Fail{ QString("There is no hull on deck %1 or under it for a landing spot to lie on.").arg(deck + 1) };
+		aim = QPointF(sx / n, sy / n);
+	}
+	else
+	{
+		const RoomExtent e = Extent(plan, room, deck);
+		if(!e.Any())
+			throw Fail{ QString("%1 is not on deck %2.").arg(RoomName(plan, room)).arg(deck + 1) };
+		aim = QPointF((e.x0 + e.x1 + 1) / 2.0, (e.y0 + e.y1 + 1) / 2.0);
+	}
+	struct Corner { int cx, cy; double d; };
+	QList<Corner> corners;
+	for(int cy = 0; cy <= plan.Depth(); ++cy)
+		for(int cx = 0; cx <= plan.Width(); ++cx)
+		{
+			if(given && (cx != IntArg(args, "x", -1) || cy != IntArg(args, "y", -1)))
+				continue;
+			const double dx = cx - aim.x(), dy = cy - aim.y();
+			corners << Corner{ cx, cy, dx * dx + dy * dy };
+		}
+	std::sort(corners.begin(), corners.end(), [](const Corner& a, const Corner& b) { return a.d < b.d; });
+	for(const Corner& c : corners)
+	{
+		spot.cx = c.cx;
+		spot.cy = c.cy;
+		if(!plan.ParkingFits(spot) || plan.ParkingAt(deck, c.cx, c.cy) >= 0)
+			continue;
+		if(!spot.spacecraft && plan.RoomAtPoint(deck, c.cx, c.cy) != room)
+			continue;
+		plan.parking << spot;
+		PlanToolResult res;
+		res.changed = true;
+		res.deck = deck;
+		const QPointF size = plan.ParkingSize(spot);
+		res.text = QString("Put a %1 spot (%2 x %3 ft) on deck %4, its middle on the corner of cell %5,%6%7.")
+				.arg(spot.spacecraft ? "spaceship landing" : spot.space ? "space vehicle" : "ground vehicle")
+				.arg(qRound(size.x())).arg(qRound(size.y())).arg(deck + 1).arg(c.cx).arg(c.cy)
+				.arg(room >= 0 ? " in " + RoomName(plan, room) : QString());
+		if(!spot.spacecraft)
+		{
+			// The widest door from the room straight to the outside, in cells.
+			QMap<int, int> rows;
+			for(const PlanDoor& d : plan.doors)
+			{
+				const int a = plan.Room(TriRef(d.deck, d.cx, d.cy, d.side));
+				const int b = plan.Room(plan.AcrossCellEdge(d.deck, d.cx, d.cy, d.side));
+				if((a == room && b < 0) || (b == room && a < 0))
+					++rows[d.row];
+			}
+			int widest = 0;
+			for(int n : rows)
+				widest = qMax(widest, n);
+			const double need = qMin(size.x(), size.y()) / plan.cellFeet;
+			if(widest == 0)
+				res.text += QString(" The room needs a door to the outside wide enough for the vehicle (at least %1 cells): "
+									"add_door to outside with a width.").arg(int(ceil(need)));
+			else if(widest < need)
+				res.text += QString(" The room's door to the outside is %1 cells wide; the vehicle needs at least %2.")
+						.arg(widest).arg(int(ceil(need)));
+		}
+		return res;
+	}
+	if(spot.spacecraft)
+		throw Fail{ given ? QString("A landing spot does not fit with its middle on corner %1,%2.").arg(IntArg(args, "x", 0)).arg(IntArg(args, "y", 0))
+				: QString("No room for another landing spot on deck %1: they may not overlap.").arg(deck + 1) };
+	const QPointF size = plan.ParkingSize(spot);
+	throw Fail{ QString("A %1 spot (%2 x %3 ft, %4 x %5 cells) does not fit on the floor of %6 on deck %7%8. Make the room "
+						"bigger, or try across.").arg(spot.space ? "space vehicle" : "ground vehicle").arg(qRound(size.x()))
+			.arg(qRound(size.y())).arg(size.x() / plan.cellFeet, 0, 'f', 1).arg(size.y() / plan.cellFeet, 0, 'f', 1)
+			.arg(RoomName(plan, room)).arg(deck + 1).arg(given ? " there" : "") };
+}
+
+PlanToolResult AddWeapon(TriPlan& plan, const QJsonObject& args)
+{
+	const QString side = StrArg(args, "side", "top");
+	if(side != "top" && side != "bottom" && side != "port" && side != "starboard" && side != "fore" && side != "aft")
+		throw Fail{ "side is top, bottom, port, starboard, fore or aft." };
+	auto hullAt = [&plan](int d, int cx, int cy) {
+		for(int k = 0; k < 4; ++k)
+			if(plan.Hull(TriRef(d, cx, cy, k)))
+				return true;
+		return false;
+	};
+	// The middle of the hull along x, if no column is given.
+	int lo = plan.Width(), hi = -1;
+	for(int d = 0; d < plan.Decks(); ++d)
+		for(int cy = 0; cy < plan.Depth(); ++cy)
+			for(int cx = 0; cx < plan.Width(); ++cx)
+				if(hullAt(d, cx, cy))
+				{
+					lo = qMin(lo, cx);
+					hi = qMax(hi, cx);
+				}
+	if(hi < 0)
+		throw Fail{ "There is no hull yet to put a weapon on." };
+	const int x = Has(args, "x") ? IntArg(args, "x", 0) : (lo + hi) / 2;
+	TriRef best;
+	bool found = false;
+	if(side == "top" || side == "bottom")
+	{
+		// The middle of the beam, on the highest (lowest) deck with hull in that column.
+		int deck = Has(args, "deck") ? DeckArg(plan, args) : -1;
+		for(int d = 0; d < plan.Decks() && deck < 0; ++d)
+		{
+			const int dd = side == "top" ? plan.Decks() - 1 - d : d;
+			for(int cy = 0; cy < plan.Depth(); ++cy)
+				if(hullAt(dd, x, cy))
+				{
+					deck = dd;
+					break;
+				}
+		}
+		if(deck < 0)
+			throw Fail{ QString("There is no hull in column x %1.").arg(x) };
+		int y0 = plan.Depth(), y1 = -1;
+		for(int cy = 0; cy < plan.Depth(); ++cy)
+			if(hullAt(deck, x, cy))
+			{
+				y0 = qMin(y0, cy);
+				y1 = qMax(y1, cy);
+			}
+		if(y1 < 0)
+			throw Fail{ QString("There is no hull on deck %1 in column x %2.").arg(deck + 1).arg(x) };
+		const int cy = (y0 + y1) / 2;
+		for(int k = 0; k < 4 && !found; ++k)
+			if(plan.Hull(TriRef(deck, x, cy, k)))
+			{
+				best = TriRef(deck, x, cy, k);
+				found = true;
+			}
+	}
+	else
+	{
+		// The outermost hull triangle on that side, in that column (fore and aft:
+		// the end of the hull, in the middle of the beam).
+		const int k = SideFromName(side);
+		const int deck = Has(args, "deck") ? DeckArg(plan, args) : -1;
+		double bestScore = -1e9;
+		for(int d = 0; d < plan.Decks(); ++d)
+		{
+			if(deck >= 0 && d != deck)
+				continue;
+			for(int cy = 0; cy < plan.Depth(); ++cy)
+				for(int cx = 0; cx < plan.Width(); ++cx)
+				{
+					const TriRef t(d, cx, cy, k);
+					if(!plan.Hull(t) || plan.Hull(plan.AcrossCellEdge(d, cx, cy, k)))
+						continue;
+					double score;
+					if(k == TRI_N || k == TRI_S)
+						score = -fabs(cx - x) * 10 + (k == TRI_N ? cy : -cy);
+					else
+						score = (k == TRI_E ? cx : -cx) * 10 - fabs(cy - plan.Depth() / 2.0);
+					if(deck < 0)
+						score -= fabs(d - (plan.Decks() - 1) / 2.0) * 0.1;
+					if(score > bestScore)
+					{
+						bestScore = score;
+						best = t;
+						found = true;
+					}
+				}
+		}
+	}
+	if(!found)
+		throw Fail{ QString("No hull edge found on the %1 side there.").arg(side) };
+	if(plan.EmitterAt(best, true) >= 0)
+		throw Fail{ QString("There is a weapon emitter there already (deck %1, cell %2,%3).").arg(best.deck + 1).arg(best.cx).arg(best.cy) };
+	PlanEmitter e;
+	e.deck = best.deck;
+	e.cx = best.cx;
+	e.cy = best.cy;
+	e.k = best.k;
+	e.weapon = true;
+	e.module = IntArg(args, "module", 0);
+	plan.emitters << e;
+	int weapons = 0, fire = 0;
+	for(const PlanEmitter& o : plan.emitters)
+		if(o.weapon && !o.marking && !o.skip)
+			++weapons;
+	for(const PlanStation& st : plan.stations)
+		if(st.type == "firecontrol" && !st.skip)
+			++fire;
+	PlanToolResult res;
+	res.changed = true;
+	res.deck = best.deck;
+	res.text = QString("Put a weapon emitter on the %1 of the hull at deck %2, cell %3,%4. Weapon emitters: %5; fire control "
+					   "stations placed by hand: %6.").arg(side).arg(best.deck + 1).arg(best.cx).arg(best.cy).arg(weapons).arg(fire);
+	if(fire < weapons)
+		res.text += " Each emitter needs a fire control station of its own: add_station firecontrol (the build adds "
+					"the template's own only if autoStations is on).";
+	return res;
+}
+
 // Takes the items 'match' picks out of a list; returns how many.
 template<typename T>
 int Sweep(QList<T>& list, const std::function<bool(const T&)>& match)
@@ -1650,8 +2270,16 @@ PlanToolResult RemoveItems(TriPlan& plan, const QJsonObject& args)
 		removed = Sweep<PlanPad>(plan.pads, [&](const PlanPad& p) {
 			return (deck < 0 || p.deck == deck) && inRoom(plan.RoomAtPoint(p.deck, p.x, p.y));
 		});
+	else if(what == "parking")
+		removed = Sweep<PlanParking>(plan.parking, [&](const PlanParking& p) {
+			return (deck < 0 || p.deck == deck) && (p.spacecraft ? room == -2 : inRoom(plan.RoomAtPoint(p.deck, p.cx, p.cy)));
+		});
+	else if(what == "weapons")
+		removed = Sweep<PlanEmitter>(plan.emitters, [&](const PlanEmitter& e) {
+			return e.weapon && !e.marking && (deck < 0 || e.deck == deck) && room == -2;
+		});
 	else
-		throw Fail{ "what is doors, windows, ladders, hatches, stairs, stations, berths or pads." };
+		throw Fail{ "what is doors, windows, ladders, hatches, stairs, stations, berths, pads, parking or weapons." };
 	PlanToolResult res;
 	res.changed = removed > 0;
 	res.deck = deck;
@@ -2292,6 +2920,14 @@ PlanToolResult RunPlanTool(TriPlan& plan, const QString& name, const QJsonObject
 			res = AddStations(plan, args);
 		else if(name == "add_berths")
 			res = AddBerths(plan, args);
+		else if(name == "set_paint")
+			res = SetPaint(plan, args);
+		else if(name == "paint_hull")
+			res = PaintHull(plan, args);
+		else if(name == "add_parking")
+			res = AddParking(plan, args);
+		else if(name == "add_weapon")
+			res = AddWeapon(plan, args);
 		else if(name == "remove_items")
 			res = RemoveItems(plan, args);
 		else if(name == "check_plan")

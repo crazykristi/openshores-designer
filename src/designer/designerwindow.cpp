@@ -338,6 +338,7 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	m_preview->SetHullOpacity(0.9f);
 
 	QSplitter* split = new QSplitter(Qt::Horizontal);
+	m_split = split;
 	split->addWidget(m_view);
 	split->addWidget(m_preview);
 	split->setStretchFactor(0, 3);
@@ -391,6 +392,7 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	QWidget* central = new QWidget;
 	QHBoxLayout* centralLayout = new QHBoxLayout(central);
 	centralLayout->setContentsMargins(0, 0, 0, 0);
+	m_side = side;
 	centralLayout->addWidget(side);
 	centralLayout->addWidget(split, 1);
 	setCentralWidget(central);
@@ -4799,8 +4801,20 @@ QImage DesignerWindow::AiPicture(bool threeD, int deck, float yaw, float pitch, 
 		if(m_steps->currentIndex() != StepRooms && m_steps->currentIndex() != StepCrew)
 			ShowStep(StepRooms);
 		SetDeck(qBound(0, deck, m_plan.Decks() - 1));
+		// The plan view gets the whole window while the picture is taken.
+		const QList<int> sizes = m_split->sizes();
+		const bool sideShown = m_side->isVisible(), previewShown = m_preview->isVisible();
+		m_side->hide();
+		m_preview->hide();
+		centralWidget()->layout()->activate();
 		m_view->FitToWindow();
-		return m_view->grab().toImage();
+		const QImage image = m_view->grab().toImage();
+		m_side->setVisible(sideShown);
+		m_preview->setVisible(previewShown);
+		centralWidget()->layout()->activate();
+		m_split->setSizes(sizes);
+		m_view->FitToWindow();
+		return image;
 	}
 	if(blueprint)
 	{
@@ -4814,9 +4828,22 @@ QImage DesignerWindow::AiPicture(bool threeD, int deck, float yaw, float pitch, 
 		if(m_shapeStale || m_shapeTimer->isActive() || m_designIsBlueprint || !m_hullShaped)
 			ShapeNow();
 	}
+	// Wide enough to see a long ship: the 3D view gets the whole window
+	// while the picture is taken, then the panels come back as they were.
+	const QList<int> sizes = m_split->sizes();
+	const bool sideShown = m_side->isVisible(), viewShown = m_view->isVisible();
+	m_side->hide();
+	m_view->hide();
+	// Lay out now, not on the next pass of the event loop.
+	centralWidget()->layout()->activate();
 	m_preview->FrameAll();
 	m_preview->SetViewAngles(yaw, pitch);
-	return m_preview->grabFramebuffer();
+	const QImage image = m_preview->grabFramebuffer();
+	m_side->setVisible(sideShown);
+	m_view->setVisible(viewShown);
+	centralWidget()->layout()->activate();
+	m_split->setSizes(sizes);
+	return image;
 }
 
 bool DesignerWindow::AiUndo()

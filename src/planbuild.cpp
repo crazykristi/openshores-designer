@@ -477,7 +477,7 @@ bool SlopeBetweenDecks(const TriPlan& plan, IndexedMesh& mesh, const std::functi
 // its face budget without the quadric method, which does not keep a surface
 // closed and does not know about paint. Every merge keeps the surface
 // closed and leaves the paint edges where they are.
-void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove = 0.0)
+void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove = 0.0, bool creases = false)
 {
 	const double cosTol = angleDegrees > 0 ? cos(angleDegrees * 3.14159265358979 / 180.0) : 1.0 - 1e-9;
 	const int nv = mesh.v.size();
@@ -517,7 +517,65 @@ void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove =
 					break;
 				}
 			}
-			if(!flat)
+			// Or on a straight crease between two flat areas (the edge of a
+			// floor and a wall): the vertex may slide along the crease to the
+			// next vertex on it, which keeps the shape exactly. Without this a
+			// long room kept a vertex at every cell along its edges, and its
+			// floor, ceiling and walls fanned out to all of them: thousands of
+			// faces for a plain corridor, past the game's blueprint size limit
+			// on a big ship. Rooms only ('creases'): on the hull the paint
+			// brush paints whole faces, and longer ones would paint coarser.
+			int creaseA = -1, creaseB = -1;
+			if(creases && !flat && angleDegrees <= 0 && n0.Length() > 0.5)
+			{
+				AuPoint n1;
+				int paint1 = -1;
+				bool two = true;
+				for(int fi : faces)
+				{
+					const AuPoint n = mesh.Normal(fi);
+					if(n.Length() < 0.5)
+						two = false;
+					else if(n.Dot(n0) >= cosTol)
+						two = two && mesh.paint[fi] == paint;
+					else if(paint1 < 0)
+					{
+						n1 = n;
+						paint1 = mesh.paint[fi];
+					}
+					else
+						two = two && n.Dot(n1) >= cosTol && mesh.paint[fi] == paint1;
+					if(!two)
+						break;
+				}
+				if(two && paint1 >= 0)
+				{
+					// The crease edges: those whose two faces are in different planes.
+					QMap<int, QList<int> > edgeFaces;
+					for(int fi : faces)
+						for(int j = 0; j < 3; ++j)
+						{
+							const int u = mesh.f[fi*3 + j];
+							if(u != v)
+								edgeFaces[u] << fi;
+						}
+					QList<int> crease;
+					for(QMap<int, QList<int> >::const_iterator it = edgeFaces.constBegin(); it != edgeFaces.constEnd(); ++it)
+						if(it.value().size() == 2 && mesh.Normal(it.value().at(0)).Dot(mesh.Normal(it.value().at(1))) < cosTol)
+							crease << it.key();
+					if(crease.size() == 2)
+					{
+						const AuPoint da = mesh.v[crease.at(0)] - mesh.v[v], db = mesh.v[crease.at(1)] - mesh.v[v];
+						const double la = da.Length(), lb = db.Length();
+						if(la > 1e-9 && lb > 1e-9 && da.Cross(db).Length() < 1e-6 * la * lb && da.Dot(db) < 0)
+						{
+							creaseA = crease.at(0);
+							creaseB = crease.at(1);
+						}
+					}
+				}
+			}
+			if(!flat && creaseA < 0)
 				continue;
 
 			// Interior: every edge out of the vertex is shared by two faces.
@@ -542,6 +600,8 @@ void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove =
 			for(QMap<int, int>::const_iterator it = ringCount.constBegin(); it != ringCount.constEnd(); ++it)
 			{
 				const int u = it.key();
+				if(!flat && u != creaseA && u != creaseB)
+					continue;
 				// The faces of u, to check that only the two faces on the
 				// edge v-u share both of their neighbours.
 				QSet<int> uRing;
@@ -575,7 +635,7 @@ void CollapseFlat(IndexedMesh& mesh, double angleDegrees = 0.0, double maxMove =
 					double longest = 0;
 					for(int j = 0; j < 3; ++j)
 						longest = qMax(longest, (mesh.v[idx[j]] - mesh.v[idx[(j + 1) % 3]]).Length());
-					if(n.Length() < 0.02 * longest * longest || n.Dot(n0) <= 0)
+					if(n.Length() < 0.02 * longest * longest || n.Dot(flat ? n0 : mesh.Normal(fi)) <= 0)
 					{
 						ok = false;
 						break;
@@ -1742,7 +1802,88 @@ static bool UnderOrOverStairs(const TriPlan& plan, const TriRef& t)
 	return true;
 }
 
+static QList<TriRef> RoomWalkFrom(const TriPlan& plan, int room, const TriRef& from, const TriRef& to);
+
+// The anchor of the piece of a room that 't' is in, on t's deck: the
+// walkable triangle nearest the piece's middle. A room may be drawn in
+// pieces on one deck that do not touch (a stairwell at one end of the ship
+// and a hall at the other, joined on another deck); the walks in each piece
+// meet at its own anchor. The piece is the walkable triangles only, the same
+// whichever triangle of it is asked about, so every walk in it finds the
+// same anchor. Returns false when there is no walkable triangle next to 't'.
+static bool PieceAnchor(const TriPlan& plan, int room, const TriRef& t, TriRef& anchor)
+{
+	auto key = [&plan](const TriRef& r) { return (qint64(r.deck) * plan.Depth() + r.cy) * plan.Width() * 4 + r.cx * 4 + r.k; };
+	auto walkable = [&](const TriRef& r) { return plan.Room(r) == room && !UnderOrOverStairs(plan, r); };
+	QQueue<TriRef> queue;
+	QSet<qint64> seen;
+	if(walkable(t))
+	{
+		queue.enqueue(t);
+		seen.insert(key(t));
+	}
+	else
+		for(int e = 0; e < 3; ++e)
+		{
+			const TriRef n = plan.Across(t, e);
+			if(walkable(n) && !seen.contains(key(n)))
+			{
+				queue.enqueue(n);
+				seen.insert(key(n));
+			}
+		}
+	QList<TriRef> piece;
+	while(!queue.isEmpty())
+	{
+		const TriRef r = queue.dequeue();
+		piece << r;
+		for(int e = 0; e < 3; ++e)
+		{
+			const TriRef n = plan.Across(r, e);
+			if(!walkable(n) || seen.contains(key(n)))
+				continue;
+			seen.insert(key(n));
+			queue.enqueue(n);
+		}
+	}
+	if(piece.isEmpty())
+		return false;
+	QPointF mid(0, 0);
+	for(const TriRef& r : piece)
+		mid += plan.TriCentre(r);
+	mid /= piece.size();
+	// Nearest the middle; ties go to the lowest key, so the choice does not
+	// depend on the order the piece was found in.
+	double best = 1e30;
+	qint64 bestKey = 0;
+	for(const TriRef& r : piece)
+	{
+		const QPointF d = plan.TriCentre(r) - mid;
+		const double dd = d.x() * d.x() + d.y() * d.y();
+		const qint64 k = key(r);
+		if(dd < best - 1e-9 || (dd < best + 1e-9 && k < bestKey))
+		{
+			best = dd;
+			bestKey = k;
+			anchor = r;
+		}
+	}
+	return true;
+}
+
 QList<TriRef> RoomWalk(const TriPlan& plan, int room, const TriRef& from, const TriRef& to)
+{
+	const QList<TriRef> walk = RoomWalkFrom(plan, room, from, to);
+	if(!walk.isEmpty() || from.deck != to.deck)
+		return walk;
+	// Not in the same piece as the room's anchor: from the anchor of its own.
+	TriRef anchor;
+	if(!PieceAnchor(plan, room, to, anchor))
+		return walk;
+	return RoomWalkFrom(plan, room, anchor, to);
+}
+
+static QList<TriRef> RoomWalkFrom(const TriPlan& plan, int room, const TriRef& from, const TriRef& to)
 {
 	QHash<qint64, qint64> cameFrom;
 	auto key = [&plan](const TriRef& t) { return (qint64(t.deck) * plan.Depth() + t.cy) * plan.Width() * 4 + t.cx * 4 + t.k; };
@@ -1784,24 +1925,149 @@ QList<TriRef> RoomWalk(const TriPlan& plan, int room, const TriRef& from, const 
 }
 
 // Points along a walk, with the ones on a straight line left out.
+// Rooms the crew cannot walk to from the rest of the ship: the game's crew
+// follow walk paths and ladders only, and never ride a turbo lift, so rooms
+// reached by a lift alone (a tower's decks) are cut off from the crew. The
+// walk paths and ladders are joined where their ends meet; the largest
+// network is the ship, and a room with paths only in other networks is
+// reported. (`shipgen path-check` lists the networks of a blueprint.)
+static QStringList CutOffRooms(const AuDesign& design)
+{
+	auto key = [](const AuPoint& p) { return QString("%1,%2,%3").arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1).arg(p.z, 0, 'f', 1); };
+	QHash<QString, QString> parent;
+	auto root = [&parent](QString at) {
+		while(parent.value(at, at) != at)
+			at = parent.value(at);
+		return at;
+	};
+	QList<QPair<AuPoint, AuPoint> > segs;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		if(!it.value() || (it.value()->Type() != AuScPart::Part_PathWalk && it.value()->Type() != AuScPart::Part_PathLadder))
+			continue;
+		const AuScPathSeg& seg = it.value()->PathSegment(0);
+		segs << qMakePair(AuPoint(seg.Loc1()), AuPoint(seg.Loc2()));
+		const QString ka = key(seg.Loc1()), kb = key(seg.Loc2());
+		if(!parent.contains(ka))
+			parent[ka] = ka;
+		if(!parent.contains(kb))
+			parent[kb] = kb;
+		const QString a = root(ka), b = root(kb);
+		if(a != b)
+			parent[a] = b;
+	}
+	QHash<QString, int> size;
+	for(const QPair<AuPoint, AuPoint>& sg : segs)
+		++size[root(key(sg.first))];
+	QString main;
+	for(QHash<QString, int>::const_iterator it = size.constBegin(); it != size.constEnd(); ++it)
+		if(main.isEmpty() || it.value() > size.value(main) || (it.value() == size.value(main) && it.key() < main))
+			main = it.key();
+	QStringList cutOff;
+	if(size.size() < 2)
+		return cutOff;
+	QMap<QString, int> inMain, inOther;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->Type() != AuScPart::Part_Room)
+			continue;
+		AuScFaceList faces;
+		part->Faces(faces);
+		AuScTriList tris;
+		faces.Triangles(tris);
+		if(tris.isEmpty())
+			continue;
+		AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
+		for(const AuScTri& t : tris)
+			for(const AuPoint& q : { AuPoint(t.V0()), AuPoint(t.V1()), AuPoint(t.V2()) })
+			{
+				mn = mn.Min(q);
+				mx = mx.Max(q);
+			}
+		for(const QPair<AuPoint, AuPoint>& sg : segs)
+			for(const AuPoint& e : { sg.first, sg.second })
+				if(e.x >= mn.x && e.y >= mn.y && e.z >= mn.z - 1 && e.x <= mx.x && e.y <= mx.y && e.z <= mx.z)
+					(root(key(sg.first)) == main ? inMain : inOther)[part->GroupName()]++;
+	}
+	for(QMap<QString, int>::const_iterator it = inOther.constBegin(); it != inOther.constEnd(); ++it)
+		if(!inMain.contains(it.key()))
+			cutOff << it.key();
+	return cutOff;
+}
+
+// The triangle of a deck under a point of the plan, or an invalid one off the grid.
+static TriRef TriAtPoint(const TriPlan& plan, int deck, const QPointF& q)
+{
+	const QPointF c0 = plan.Corner(0, 0);
+	const double cell = plan.cellFeet;
+	const int cx = int(floor((q.x() - c0.x()) / cell)), cy = int(floor((q.y() - c0.y()) / cell));
+	if(cx < 0 || cy < 0 || cx >= plan.Width() || cy >= plan.Depth())
+		return TriRef(deck, -1, -1, 0);
+	const QPointF c = plan.CellCentre(cx, cy);
+	const double dx = q.x() - c.x(), dy = q.y() - c.y();
+	return TriRef(deck, cx, cy, fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S));
+}
+
+// Points along a walk: from triangle middle to triangle middle, then pulled
+// straight. A walk across a room goes from one triangle to the next, which
+// zigzags (no two steps in a line), and a long corridor made one walk path
+// for every triangle: thousands on a big ship, past the game's size limit
+// for a blueprint. Each point now goes straight to the furthest one after it
+// that it can see: the line between them stays on the walk's room, off the
+// stairs, and a little way from its walls.
 QList<AuPoint> WalkPoints(const TriPlan& plan, const QList<TriRef>& walk, double z)
 {
-	QList<AuPoint> pts;
+	QList<QPointF> pts;
 	for(const TriRef& t : walk)
-	{
-		const QPointF c = plan.TriCentre(t);
-		pts << AuPoint(c.x(), c.y(), z);
-	}
+		pts << plan.TriCentre(t);
 	QList<AuPoint> out;
-	for(int i = 0; i < pts.size(); ++i)
-	{
-		if(i > 0 && i + 1 < pts.size())
+	if(pts.isEmpty())
+		return out;
+	const int room = plan.Room(walk.first());
+	const int deck = walk.first().deck;
+	const double margin = qMin(1.5, plan.cellFeet * .3);
+	const double step = plan.cellFeet / 8;
+	auto onFloor = [&](const QPointF& q, const TriRef& a, const TriRef& b) {
+		const TriRef t = TriAtPoint(plan, deck, q);
+		if(t.cx < 0 || plan.Room(t) != room)
+			return false;
+		return t == a || t == b || !UnderOrOverStairs(plan, t);
+	};
+	auto sees = [&](int i, int j) {
+		const QPointF a = pts.at(i), b = pts.at(j), d = b - a;
+		const double len = sqrt(d.x() * d.x() + d.y() * d.y());
+		if(len < 1e-9)
+			return true;
+		const QPointF side(-d.y() / len * margin, d.x() / len * margin);
+		const int n = int(ceil(len / step));
+		for(int k = 1; k < n; ++k)
 		{
-			AuPoint a = pts[i] - out.last(), b = pts[i + 1] - pts[i];
-			if(a.Length() > 1e-9 && b.Length() > 1e-9 && fabs(a.Dot(b) / (a.Length() * b.Length()) - 1.0) < 1e-6)
-				continue;
+			const double f = double(k) / n;
+			const QPointF q = a + d * f;
+			if(!onFloor(q, walk.at(i), walk.at(j)))
+				return false;
+			// Clear of the walls, except near the ends (a door is in a wall).
+			const double along = f * len;
+			if(along > plan.cellFeet && len - along > plan.cellFeet
+					&& (!onFloor(q + side, walk.at(i), walk.at(j)) || !onFloor(q - side, walk.at(i), walk.at(j))))
+				return false;
 		}
-		out << pts[i];
+		return true;
+	};
+	int i = 0;
+	out << AuPoint(pts.at(0).x(), pts.at(0).y(), z);
+	while(i + 1 < pts.size())
+	{
+		int j = i + 1;
+		for(int k = pts.size() - 1; k > i + 1; --k)
+			if(sees(i, k))
+			{
+				j = k;
+				break;
+			}
+		out << AuPoint(pts.at(j).x(), pts.at(j).y(), z);
+		i = j;
 	}
 	return out;
 }
@@ -4489,12 +4755,19 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 		}
 		return o;
 	};
+	// How far from the outline the distances are needed: the shape only
+	// looks at them near the skin and within the reach of a slope; further
+	// out only their sign counts. Searching all the way for every point was
+	// as slow as the square of the size (a small mast deck over a long hull:
+	// most of its field is hundreds of cells from its outline).
+	const double far = reach + skin + 4 * cell;
+	const int farRings = int(ceil(far / cell)) + 2;
 	// The edges near a point, ring by ring, until 'done' says the rest are
-	// further than the ring.
+	// further than the ring, or the rings are further than 'far'.
 	auto nearEdges = [&](const Outline& o, const QPointF& q, const std::function<void(const QLineF&)>& visit,
 						 const std::function<double()>& best) {
 		const int bi = int(floor((q.x() - gx0) / cell)), bj = int(floor((q.y() - gy0) / cell));
-		for(int r = 0; r < qMax(o.bnx, o.bny); ++r)
+		for(int r = 0; r < qMin(qMax(o.bnx, o.bny), farRings); ++r)
 		{
 			for(int y = bj - r; y <= bj + r; ++y)
 				for(int x = bi - r; x <= bi + r; ++x)
@@ -4570,7 +4843,7 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 							dir = dist > 1e-6 && (u <= 0 || u >= 1) ? dd / dist : QPointF(ab.y(), -ab.x()) / qMax(len, 1e-12);
 						}
 					}, [&]() { return bestD; });
-					if(bestD < 1e29)
+					if(bestD <= far)
 					{
 						double run = 0;
 						const double step = s / 4;
@@ -4582,6 +4855,7 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 				}
 				double best = 1e30;
 				nearEdges(o, q, [&](const QLineF& l) { best = qMin(best, segDist(q, l)); }, [&]() { return best; });
+				best = qMin(best, far);
 				field[j * gnx + i] = float(inside ? -best : best);
 			}
 		return field;
@@ -6202,7 +6476,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 					[&plan, r, d](const TriRef& t) { return t.deck == d && plan.Room(t) == r; },
 					[&plan, d, z0, z1](int level) { return level == d ? z0 : z1; }, 1, false, true,
 					[](const TriRef&) { return 0; });
-			CollapseFlat(mesh);
+			CollapseFlat(mesh, 0.0, 0.0, true);
 			// Corners out of the hull are moved in, sideways only so that the
 			// floor and the ceiling stay level: where a model's hull narrows
 			// (a fighter's cockpit under its canopy) the walls lean in with
@@ -6733,11 +7007,15 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		// of the ladder does the clearing in front of the door reach down:
 		// looked for straight below the ladder, from under the hull upwards.
 		const QString doorExit = door.exit.isEmpty() ? plan.hullDoorExit : door.exit;
-		const bool wayDown = doorExit != "none";
+		// A room with no floor (open to the deck below): the door is cut, as
+		// part of a tall opening drawn a deck at a time, but nobody walks
+		// through it there, so no way down and no walk paths in the air.
+		const bool floorless = IsOpenToDeckBelowType(room->type);
+		const bool wayDown = doorExit != "none" && !floorless;
 		const double rampRise = z0 - (hullBottom - SHIPGEN_RAMP_BELOW_HULL);
 		const double rampLimit = doorExit == "ramp" ? SHIPGEN_RAMP_LONGEST_RISE : SHIPGEN_RAMP_MAX_RISE;
 		const double rampRun = door.rampRun > 0 ? door.rampRun : SHIPGEN_RAMP_RUN_PER_RISE;
-		const bool rampExpected = (doorExit == "auto" || doorExit == "ramp") && options.ramps
+		const bool rampExpected = (doorExit == "auto" || doorExit == "ramp") && options.ramps && !floorless
 				&& rampRise >= .5 && rampRise <= rampLimit;
 		if(doorExit == "ramp" && options.ramps && rampRise > rampLimit)
 			report.warnings << QString("The hull door of '%1' is %2 ft up, too high for a ramp (%3 ft at most); it gets a ladder.")
@@ -6802,7 +7080,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 				hullBottom - SHIPGEN_RAMP_BELOW_HULL, rampTop, rampFoot, rampRun, rampLimit);
 		if(ramp)
 			++report.ramps;
-		if(options.walkPaths)
+		if(options.walkPaths && !floorless)
 		{
 			const double pz = z0;
 			const QPointF ci = plan.TriCentre(inner);
@@ -8141,8 +8419,14 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			// landing and the room above.
 			const int back = (stair.side + 2) % 4;
 			const TriRef start(stair.deck, x0, y0, back), landing(stair.deck + 1, xl, yl, back);
-			AddWalk(*design, WalkPoints(plan, RoomWalk(plan, lower->room, lower->anchor, start), lz0), paths);
-			AddWalk(*design, WalkPoints(plan, RoomWalk(plan, upper->room, upper->anchor, landing), uz0), paths);
+			const QList<TriRef> walkDown = RoomWalk(plan, lower->room, lower->anchor, start);
+			const QList<TriRef> walkUp = RoomWalk(plan, upper->room, upper->anchor, landing);
+			if(walkDown.isEmpty() || walkUp.isEmpty())
+				report.warnings << QString("The crew path up the %1 from '%2' to '%3' could not be joined to the room %4; "
+						"the crew may not be able to use it.").arg(what, lower->group, upper->group)
+						.arg(walkDown.isEmpty() ? "below" : "above");
+			AddWalk(*design, WalkPoints(plan, walkDown, lz0), paths);
+			AddWalk(*design, WalkPoints(plan, walkUp, uz0), paths);
 			const QPointF sc = plan.TriCentre(start), lc = plan.TriCentre(landing);
 			const AuPoint bottom(sc.x(), sc.y(), lz0), up(top.x, top.y, uz0), off(lc.x(), lc.y(), uz0);
 			AddWalkOnce(*design, bottom, up, 0, paths);
@@ -8842,6 +9126,16 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		if(const int boxes = AddHullClearance(*design, 1.0, 7.0, &blocked, &cleared))
 			report.notes << QString("Walking room round the hull: %1 sq ft of the %2 sq ft the game would block at ground level "
 					"was opened up (%3 hull void boxes).").arg(cleared).arg(blocked).arg(boxes);
+	}
+
+	if(options.walkPaths)
+	{
+		const QStringList cut = CutOffRooms(*design);
+		if(!cut.isEmpty())
+			report.warnings << QString("The crew cannot walk to %1 from the rest of the ship: no door, ladder or stairs joins "
+					"%2 to it, and the game's crew do not ride turbo lifts. Join each deck by ladders or stairs as well "
+					"(`shipgen path-check` lists the separate parts).").arg(cut.size() > 8 ? cut.mid(0, 8).join(", ")
+					+ QString(" and %1 more").arg(cut.size() - 8) : cut.join(", ")).arg(cut.size() == 1 ? "it" : "them");
 	}
 
 	// A fighter's pilot has to see out: what the helm (and a captain's

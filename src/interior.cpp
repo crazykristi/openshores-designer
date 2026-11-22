@@ -40,10 +40,24 @@ double SignedVolume(const AuScFaceList& faces)
 void OrientFaces(AuScFaceList& faces, bool positive)
 {
 	const double volume = SignedVolume(faces);
-	if(volume == 0 || (volume > 0) == positive)
-		return;
-	faces.ReverseTriangleFacing();
-	faces.ReverseVertexNormals();
+	if(volume != 0 && (volume > 0) != positive)
+		faces.ReverseTriangleFacing();
+	// The vertex normals (the shading) belong on the side the face is seen
+	// from: the engine's own normal, (V2 - V0) x (V1 - V0). Turning a triangle
+	// round swaps whole corners, normals and all, so it leaves them pointing
+	// the way they did; turn them only where most of them point against the
+	// face (always negating them after a turn put every one of a plan hull's
+	// normals inside it).
+	AuScTriList tris;
+	faces.Triangles(tris);
+	double agree = 0;
+	for(const AuScTri& t : tris)
+	{
+		const AuPoint n = t.Normal();
+		agree += n.Dot(t.V0().m_N) + n.Dot(t.V1().m_N) + n.Dot(t.V2().m_N);
+	}
+	if(agree < 0)
+		faces.ReverseVertexNormals();
 }
 
 // Splits a part's faces into those near a box and the rest.

@@ -478,6 +478,7 @@ public:
 	QString	name = "Drawn ship";
 	QString	templateKey = "military_frigate";	// What the furnishing follows (shipgen.h, AllTemplates()).
 	QString	ftlDrive = "wormhole-p";			// The FTL drive (Brief::ftlDrive).
+	QString	maneuverDrive = "gravity";			// "gravity" or "rocket" (Brief::maneuverDrive).
 	bool	station = false;				// A space station (SC_Station): built in space, no FTL drive.
 	// Stations of the template left out, and what goes with them:
 	// "shield" (and the shields), "firecontrol" (and the weapon bay),

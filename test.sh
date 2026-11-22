@@ -1176,6 +1176,13 @@ add_window|{"room":"Bridge","side":"fore","length":4}
 check_plan|{}
 CALLS
 	"$SHIPGEN" build-plan "$AI" --out "$WORK/plan/ai.SoH" > "$WORK/plan/ai-build.txt" 2>&1
+	# The maneuver drive choice: a rocket drive in the blueprint, its stats
+	# and materials, and kept when the blueprint is opened as a plan again.
+	cp "$AI" "$WORK/plan/ai-rocket.json"
+	"$SHIPGEN" plan-tool "$WORK/plan/ai-rocket.json" set_settings '{"maneuverDrive":"rocket"}' >> "$AIT" 2>&1
+	"$SHIPGEN" build-plan "$WORK/plan/ai-rocket.json" --out "$WORK/plan/ai-rocket.SoH" > /dev/null 2>&1
+	"$SHIPGEN" stats "$WORK/plan/ai-rocket.SoH" > "$WORK/plan/ai-rocket-stats.txt" 2>&1
+	"$SHIPGEN" plan-from-blueprint "$WORK/plan/ai-rocket.SoH" "$WORK/plan/ai-rocket-back.json" > /dev/null 2>&1
 	mkdir -p "$WORK/plan/mcp"
 	cp "$AI" "$WORK/plan/mcp/ai.json"
 	cat > "$WORK/plan/mcp-in.jsonl" <<'MCP'
@@ -1207,6 +1214,9 @@ MCP
 			qgrep 'Put a window 4 cells long in the fore wall of Bridge 1' "$AIT" &&
 			qgrep 'No problems found' "$AIT" &&
 			qgrep 'Errors (0)' "$WORK/plan/ai-build.txt" &&
+			qgrep 'Maneuver DriveRocket Drive Module' "$WORK/plan/ai-rocket-stats.txt" &&
+			qgrep -E '^  [0-9.,]+ x Rocket Drive Module$' "$WORK/plan/ai-rocket-stats.txt" &&
+			qgrep '"maneuverDrive": *"rocket"' "$WORK/plan/ai-rocket-back.json" &&
 			[ "$mcpids" = "1 2 3 4 5 6 7 8 9 10 11 " ] &&
 			qgrep '"protocolVersion":"2025-06-18"' "$WORK/plan/mcp-out.jsonl" &&
 			qgrep '"name":"connect_decks"' "$WORK/plan/mcp-out.jsonl" &&
@@ -1219,7 +1229,7 @@ MCP
 			qgrep '"mimeType":"image/png"' "$WORK/plan/mcp-out.jsonl" &&
 			qgrep '"code":-32601' "$WORK/plan/mcp-out.jsonl"; then
 		pass=$((pass+1))
-		echo "  ok    AI plan tools and the designer's MCP server"
+		echo "  ok    AI plan tools, the designer's MCP server, and the rocket drive choice"
 	else
 		fail=$((fail+1))
 		echo "  FAIL  AI plan tools or MCP server (reply order: $mcpids)"

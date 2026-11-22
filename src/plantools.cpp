@@ -140,7 +140,7 @@ QJsonArray PlanToolDefinitions()
 	{
 		QJsonObject p;
 		p["what"] = Choice({ "room_types", "station_types", "berth_kinds", "ship_templates", "building_templates",
-							 "ftl_drives", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
+							 "ftl_drives", "maneuver_drives", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
 		tools << Tool("list_choices", "The names the other tools take: room types, station types, berth kinds, ship and "
 					  "building templates, FTL drives, hull styles and the ship systems whose volumes can be set.", p);
 	}
@@ -163,6 +163,8 @@ QJsonArray PlanToolDefinitions()
 		p["name"] = Prop("string", "The design's name.");
 		p["template"] = Prop("string", "Ships: the ship template.");
 		p["ftlDrive"] = Prop("string", "Ships: the FTL drive (list_choices ftl_drives).");
+		p["maneuverDrive"] = Choice({ "gravity", "rocket" }, "Ships: the maneuver drive. A gravity drive runs on power; a "
+									"rocket drive burns fuel and uses no power.");
 		p["station"] = Prop("boolean", "Ships: a space station (built in space, no FTL drive).");
 		p["cellFeet"] = Prop("number", "Feet per cell side.");
 		p["deckFeet"] = Prop("number", "Feet from one deck floor to the next.");
@@ -686,8 +688,8 @@ QString PlanSummary(const TriPlan& plan)
 	else
 	{
 		const ShipTemplate* t = FindTemplate(plan.templateKey);
-		out << QString("Template: %1%2   FTL drive: %3").arg(plan.templateKey)
-				.arg(t ? QString(" (%1)").arg(t->label) : QString()).arg(plan.ftlDrive);
+		out << QString("Template: %1%2   FTL drive: %3   Maneuver drive: %4").arg(plan.templateKey)
+				.arg(t ? QString(" (%1)").arg(t->label) : QString()).arg(plan.ftlDrive).arg(plan.maneuverDrive);
 	}
 	out << QString("Grid: %1 x %2 cells of %3 ft (%4 x %5 ft); x 0-%6 aft to fore, y 0-%7 starboard to port")
 			.arg(plan.Width()).arg(plan.Depth()).arg(plan.cellFeet).arg(plan.Width() * plan.cellFeet)
@@ -925,6 +927,8 @@ QString Choices(const TriPlan& plan, const QString& what)
 			d << QString("%1 (%2)").arg(c.first, c.second);
 		out << "FTL drives: " + d.join(", ");
 	}
+	if(all || what == "maneuver_drives")
+		out << "Maneuver drives: gravity (runs on power), rocket (burns fuel, no power)";
 	if(all || what == "hull_styles")
 		out << "Hull styles: smooth (rounded), angular (flat panels), classic (straight walls, as the game's old designer)";
 	if(all || what == "system_volumes")
@@ -1864,6 +1868,13 @@ PlanToolResult SetSettings(TriPlan& plan, const QJsonObject& args)
 			if(!known)
 				throw Fail{ QString("There is no FTL drive \"%1\"; list_choices ftl_drives has them.").arg(d) };
 			plan.ftlDrive = d;
+		}
+		else if(key == "maneuverDrive")
+		{
+			const QString d = StrArg(args, "maneuverDrive");
+			if(d != "gravity" && d != "rocket")
+				throw Fail{ "maneuverDrive is gravity or rocket." };
+			plan.maneuverDrive = d;
 		}
 		else if(key == "station")
 			plan.station = BoolArg(args, "station", plan.station);

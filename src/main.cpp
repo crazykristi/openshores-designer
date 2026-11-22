@@ -2485,6 +2485,7 @@ int cmdGenerate(const QStringList& args)
 	bool keepAxes = false;
 	bool station = false;
 	QString ftlDrive;
+	QString maneuverDrive;
 	QString presetKey;
 	int variations = 1;
 
@@ -2528,6 +2529,7 @@ int cmdGenerate(const QStringList& args)
 		else if(a == "--keep-axes")			keepAxes = true;
 		else if(a == "--station")			station = true;
 		else if(a == "--ftl" && hasNext)		ftlDrive = args.at(++i);
+		else if(a == "--maneuver" && hasNext)	maneuverDrive = args.at(++i);
 		else if(a == "--vary" && hasNext)	variations = args.at(++i).toInt();
 		else if(a == "--wall" && hasNext)		wall = args.at(++i).toDouble();
 		else if(a == "--deck" && hasNext)		deck = args.at(++i).toDouble();
@@ -2613,6 +2615,15 @@ int cmdGenerate(const QStringList& args)
 			return 2;
 		}
 		brief.ftlDrive = ftlDrive;
+	}
+	if(!maneuverDrive.isEmpty())
+	{
+		if(maneuverDrive != "gravity" && maneuverDrive != "rocket")
+		{
+			err() << "unknown maneuver drive '" << maneuverDrive << "'; gravity or rocket\n";
+			return 2;
+		}
+		brief.maneuverDrive = maneuverDrive;
 	}
 	if(brief.name.isEmpty())
 		brief.name = name.isEmpty() ? QString("Generated Ship") : name;
@@ -3001,6 +3012,7 @@ void usage()
 	out() << "                     [--base-height <feet>] [--base-together|--base-separate]\n";
 	out() << "                     [--allow-open-hull]  place rooms in a hull that is not closed (unverified)\n";
 	out() << "                     [--ftl none|warp1..warp9|wormhole-p|wormhole-pn|wormhole-pnn]  default wormhole-p\n";
+	out() << "                     [--maneuver gravity|rocket]  the maneuver drive (default gravity)\n";
 	out() << "                     [--keep-axes]  do not turn a hull that is longer along X (the game's fore is +Y)\n";
 	out() << "                     [--station]  a space station: built in space, no FTL drive (experimental)\n";
 	out() << "  shipgen generate-building --brief <file.json> [--out <dir>] [--name <name>]\n";

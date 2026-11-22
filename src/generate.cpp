@@ -1292,6 +1292,10 @@ bool ApplyHandVolumes(AuScDesign& design, const ModuleSpec& hand, QStringList& w
 static void AllocateVolumes(AuScDesign& design, const Brief& brief, const QList<quint16>& ftlParts,
 		QList<quint16> weaponParts, const QSet<QString>& placedStationTypes, QStringList& warnings)
 {
+	// The maneuver drive first: a rocket burns fuel and a gravity drive power,
+	// and the report the shares are checked against has to know which.
+	design.SetManeuverDriveModule(brief.maneuverDrive == "rocket" ? CID_RocketDriveModule : CID_GravityDriveModule);
+
 	// Module volumes.
 	//
 	// The hull volume is split up between the systems. Some of the systems

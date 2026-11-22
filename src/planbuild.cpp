@@ -8626,6 +8626,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		brief.name = plan.name;
 		ApplyTemplate(brief, plan.templateKey);
 		brief.ftlDrive = plan.station ? QString("none") : plan.ftlDrive;
+		brief.maneuverDrive = plan.maneuverDrive;
 		brief.handModules = plan.handModules;
 		// Stations left out, and with them what they run (the generator
 		// fits no shields without a shield station and no weapon bay
@@ -9521,6 +9522,7 @@ bool PlanFromBlueprint(const QString& file, const PlanFromModelOptions& optionsI
 		plan.station = sc->Structure() == SC_Station;
 		if(plan.station)
 			plan.ftlDrive = "none";
+		plan.maneuverDrive = sc->ManeuverDriveModule() == CID_RocketDriveModule ? "rocket" : "gravity";
 	}
 
 	// Each part's triangles where the plan has put the hull.

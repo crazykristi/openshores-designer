@@ -429,6 +429,7 @@ bool LoadBrief(const QString& fileName, Brief& brief, QString& error)
 	if(o.contains("layout")) brief.layout = o.value("layout").toString();
 	if(o.contains("crew")) brief.crew = o.value("crew").toInt();
 	if(o.contains("ftl")) brief.ftlDrive = o.value("ftl").toString();
+	if(o.contains("maneuverDrive")) brief.maneuverDrive = o.value("maneuverDrive").toString() == "rocket" ? "rocket" : "gravity";
 
 	if(o.contains("rooms"))
 	{
@@ -519,6 +520,7 @@ QString BriefToJson(const Brief& brief)
 		o["layout"] = brief.layout;
 	o["crew"] = brief.crew;
 	o["ftl"] = brief.ftlDrive;
+	o["maneuverDrive"] = brief.maneuverDrive;
 
 	QJsonArray rooms;
 	for(const RoomSpec& r : brief.rooms)

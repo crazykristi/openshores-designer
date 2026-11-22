@@ -1911,6 +1911,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 	root["name"] = name;
 	root["template"] = templateKey;
 	root["ftl"] = ftlDrive;
+	if(maneuverDrive == "rocket")
+		root["maneuverDrive"] = maneuverDrive;
 	if(station)
 		root["station"] = true;
 	if(!mode.isEmpty())
@@ -2407,6 +2409,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.name = root["name"].toString(plan.name);
 	plan.templateKey = root["template"].toString(plan.templateKey);
 	plan.ftlDrive = root["ftl"].toString(plan.ftlDrive);
+	plan.maneuverDrive = root["maneuverDrive"].toString() == "rocket" ? "rocket" : "gravity";
 	plan.station = root["station"].toBool(false);
 	plan.mode = root["mode"].toString();
 	if(plan.mode != "fighter" && plan.mode != "building")

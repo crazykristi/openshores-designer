@@ -762,8 +762,15 @@ QWidget* DesignerWindow::MakeShipPage()
 	m_ftl = new QComboBox;
 	for(const auto& choice : FtlDriveChoices())
 		m_ftl->addItem(choice.second, choice.first);
-	m_ftl->setToolTip("The FTL drive the engineer station runs. The game fits a maneuver drive by itself.");
+	m_ftl->setToolTip("The FTL drive the engineer station runs.");
 	form->addRow("FTL drive", m_ftl);
+	m_maneuver = new QComboBox;
+	m_maneuver->addItem("Gravity drive", "gravity");
+	m_maneuver->addItem("Rocket drive", "rocket");
+	m_maneuver->setToolTip("The drive that moves the ship at sublight speed. A gravity drive runs on the power plant; "
+						   "a rocket drive burns fuel and uses no power, so the ship needs more fuel and less power. "
+						   "The Expected stats on the Build page show the difference.");
+	form->addRow("Maneuver drive", m_maneuver);
 	m_station = new QCheckBox("Space station");
 	m_station->setToolTip("A space station: the game builds it in space, and it gets no FTL drive (experimental).");
 	form->addRow(m_station);
@@ -784,7 +791,7 @@ QWidget* DesignerWindow::MakeShipPage()
 	connect(m_fireControl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	m_shipForm = form;
 	// The fire control choice stays for buildings: a weapons base's bays.
-	m_shipOnly = { m_fighter, m_template, m_ftl, m_station, m_noShields, m_noWeapons, m_noTransporter };
+	m_shipOnly = { m_fighter, m_template, m_ftl, m_maneuver, m_station, m_noShields, m_noWeapons, m_noTransporter };
 	m_cellFeet = new QDoubleSpinBox;
 	m_cellFeet->setRange(2, 20);
 	m_cellFeet->setSingleStep(0.5);
@@ -859,6 +866,7 @@ QWidget* DesignerWindow::MakeShipPage()
 	connect(m_name, &QLineEdit::editingFinished, this, &DesignerWindow::OnSettingsChanged);
 	connect(m_template, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	connect(m_ftl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
+	connect(m_maneuver, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	for(QCheckBox* box : { m_station, m_noShields, m_noWeapons, m_noTransporter })
 		connect(box, &QCheckBox::toggled, this, &DesignerWindow::OnSettingsChanged);
 	for(QDoubleSpinBox* box : { m_cellFeet, m_deckFeet, m_floorFeet })
@@ -2776,6 +2784,7 @@ void DesignerWindow::RefreshAll()
 	m_name->setText(m_plan.name);
 	m_template->setCurrentIndex(qMax(0, m_template->findData(m_plan.templateKey)));
 	m_ftl->setCurrentIndex(qMax(0, m_ftl->findData(m_plan.ftlDrive)));
+	m_maneuver->setCurrentIndex(qMax(0, m_maneuver->findData(m_plan.maneuverDrive)));
 	m_station->setChecked(m_plan.station);
 	m_noShields->setChecked(m_plan.leaveOut.contains("shield"));
 	m_noWeapons->setChecked(m_plan.leaveOut.contains("firecontrol"));
@@ -3969,6 +3978,7 @@ void DesignerWindow::OnSettingsChanged()
 	m_plan.name = m_name->text().trimmed().isEmpty() ? m_plan.name : m_name->text().trimmed();
 	m_plan.templateKey = m_template->currentData().toString();
 	m_plan.ftlDrive = m_ftl->currentData().toString();
+	m_plan.maneuverDrive = m_maneuver->currentData().toString();
 	m_plan.station = m_station->isChecked();
 	m_plan.leaveOut.clear();
 	if(m_noShields->isChecked())

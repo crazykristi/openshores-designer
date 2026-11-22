@@ -260,6 +260,7 @@ private:
 	QLineEdit*		m_name = 0;
 	QComboBox*		m_template = 0;
 	QComboBox*		m_ftl = 0;
+	QComboBox*		m_maneuver = 0;			// TriPlan::maneuverDrive.
 	// Lengths are kept in feet; with 'm_metric' they are shown in meters.
 	bool			m_metric = false;
 	double			Shown(double feet) const { return m_metric ? feet * 0.3048 : feet; }

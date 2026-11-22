@@ -600,12 +600,12 @@ QString RoomTypeArg(const TriPlan& plan, const QString& given)
 	const QString alias = aliases.value(given.toLower());
 	if(!alias.isEmpty() && types.contains(alias))
 		return alias;
-	QStringList close;
+	QStringList matches;
 	for(const QString& t : types)
 		if(t.contains(given, Qt::CaseInsensitive) || given.contains(t, Qt::CaseInsensitive))
-			close << t;
+			matches << t;
 	throw Fail{ QString("There is no room type \"%1\".%2 list_choices room_types has them all.").arg(given)
-			.arg(close.isEmpty() ? QString() : QString(" Did you mean %1?").arg(close.join(" or "))) };
+			.arg(matches.isEmpty() ? QString() : QString(" Did you mean %1?").arg(matches.join(" or "))) };
 }
 
 // A room by its name (any case), or by its type when only one room has it.
@@ -1858,15 +1858,15 @@ PlanToolResult SetPaint(TriPlan& plan, const QJsonObject& args)
 				for(int k = 0; k < count && id < 0; ++k)
 					if(AuTextureLibItem::LibraryTextureName(quint16(k)).compare(t, Qt::CaseInsensitive) == 0)
 						id = k;
-				QStringList near;
+				QStringList matches;
 				for(int k = 0; k < count && id < 0; ++k)
 					if(AuTextureLibItem::LibraryTextureName(quint16(k)).contains(t, Qt::CaseInsensitive))
-						near << QString("%1 %2").arg(k).arg(AuTextureLibItem::LibraryTextureName(quint16(k)));
-				if(id < 0 && near.size() == 1)
-					id = near.first().section(' ', 0, 0).toInt();
+						matches << QString("%1 %2").arg(k).arg(AuTextureLibItem::LibraryTextureName(quint16(k)));
+				if(id < 0 && matches.size() == 1)
+					id = matches.first().section(' ', 0, 0).toInt();
 				else if(id < 0)
-					throw Fail{ near.isEmpty() ? QString("There is no library texture \"%1\" (list_choices textures).").arg(t)
-							: QString("\"%1\" could be: %2.").arg(t, near.join(", ")) };
+					throw Fail{ matches.isEmpty() ? QString("There is no library texture \"%1\" (list_choices textures).").arg(t)
+							: QString("\"%1\" could be: %2.").arg(t, matches.join(", ")) };
 			}
 			if(id < 0 || id >= count || AuTextureLibItem::LibraryTextureName(quint16(id)).isEmpty())
 				throw Fail{ QString("There is no library texture %1 (list_choices textures).").arg(t) };

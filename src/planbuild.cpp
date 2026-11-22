@@ -4760,8 +4760,8 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 	// out only their sign counts. Searching all the way for every point was
 	// as slow as the square of the size (a small mast deck over a long hull:
 	// most of its field is hundreds of cells from its outline).
-	const double far = reach + skin + 4 * cell;
-	const int farRings = int(ceil(far / cell)) + 2;
+	const double farDist = reach + skin + 4 * cell;
+	const int farRings = int(ceil(farDist / cell)) + 2;
 	// The edges near a point, ring by ring, until 'done' says the rest are
 	// further than the ring, or the rings are further than 'far'.
 	auto nearEdges = [&](const Outline& o, const QPointF& q, const std::function<void(const QLineF&)>& visit,
@@ -4843,7 +4843,7 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 							dir = dist > 1e-6 && (u <= 0 || u >= 1) ? dd / dist : QPointF(ab.y(), -ab.x()) / qMax(len, 1e-12);
 						}
 					}, [&]() { return bestD; });
-					if(bestD <= far)
+					if(bestD <= farDist)
 					{
 						double run = 0;
 						const double step = s / 4;
@@ -4855,7 +4855,7 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 				}
 				double best = 1e30;
 				nearEdges(o, q, [&](const QLineF& l) { best = qMin(best, segDist(q, l)); }, [&]() { return best; });
-				best = qMin(best, far);
+				best = qMin(best, farDist);
 				field[j * gnx + i] = float(inside ? -best : best);
 			}
 		return field;

@@ -1738,6 +1738,7 @@ int cmdInspect(const QStringList& args)
 
 	const AuScParts& parts = design->Parts();
 	QMap<QString, int> byType;
+	QMap<QString, quint64> memByType;
 	QStringList roomVoids;
 	QStringList stations;
 	for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
@@ -1746,6 +1747,7 @@ int cmdInspect(const QStringList& args)
 		if(!p)
 			continue;
 		byType[p->TypeName()]++;
+		memByType[p->TypeName()] += p->MemoryUsage();
 		if(p->IsRoomVoid())
 			roomVoids << QString("%1 (part %2%3)").arg(p->GroupName()).arg(it.key())
 					.arg(p->AssociatedPartId() ? QString(", doorway of door %1").arg(p->AssociatedPartId()) : QString());
@@ -1763,9 +1765,20 @@ int cmdInspect(const QStringList& args)
 	out() << "Parts        : " << parts.size() << "\n";
 	out() << "Hull volume  : " << parts.HullVolume() << " cubic meters\n";
 	out() << "Crew berths  : " << parts.CrewBerths() << "\n\n";
-	out() << "Parts by type:\n";
+	out() << "Parts by type (count, memory the game counts against its blueprint size limit):\n";
 	for(QMap<QString, int>::const_iterator it = byType.constBegin(); it != byType.constEnd(); ++it)
-		out() << "  " << it.key() << ": " << it.value() << "\n";
+		out() << "  " << it.key() << ": " << it.value() << "  " << memByType.value(it.key()) << " bytes\n";
+	{
+		QList<QPair<quint64, QString>> heavy;
+		for(AuScParts::const_iterator it = parts.constBegin(); it != parts.constEnd(); ++it)
+			if(it.value())
+				heavy << qMakePair(it.value()->MemoryUsage(), [&]() { AuPoint mn, mx; QString b; if(PartBounds(it.value(), mn, mx)) b = QString(" x %1..%2 y %3..%4 z %5..%6").arg(int(mn.x)).arg(int(mx.x)).arg(int(mn.y)).arg(int(mx.y)).arg(int(mn.z)).arg(int(mx.z)); AuScFaceList fl; it.value()->Faces(fl); AuScTriList tl; fl.Triangles(tl); return QString("part %1 %2 [%3]%4 faces %5 tris %6").arg(it.key()).arg(it.value()->TypeName()).arg(it.value()->GroupName()).arg(b).arg(fl.size()).arg(tl.size()); }());
+		std::sort(heavy.begin(), heavy.end(), [](const QPair<quint64, QString>& x, const QPair<quint64, QString>& y) { return x.first > y.first; });
+		out() << "Heaviest parts:\n";
+		for(int i = 0; i < qMin(12, heavy.size()); ++i)
+			out() << "  " << heavy.at(i).second << ": " << heavy.at(i).first << " bytes\n";
+	}
+	out() << "Blueprint memory: " << design->MemoryUsage() << " bytes (the game's limit is 28000000)\n";
 
 	out() << "\nHull parts:\n";
 	int hullPartsSeen = 0;
@@ -2151,6 +2164,212 @@ int cmdInspect(const QStringList& args)
 // than the raster silhouettes that placement works on. This is what answers
 // "is the room really inside the model", not "does the engine's silhouette
 // think it is".
+
+// The walk paths of a blueprint as networks: paths that meet end to end
+// (within a tenth of a foot) are one network. Each network with how many
+// paths it has, where it lies, and the rooms its points are in.
+int cmdPathCheck(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		err() << "usage: shipgen path-check <design.SoH>\n";
+		return 2;
+	}
+	AuDesign* design = LoadForTool(args.first());
+	if(!design)
+	{
+		err() << "could not load: " << args.first() << "\n";
+		return 1;
+	}
+	auto key = [](const AuPoint& p) { return QString("%1,%2,%3").arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1).arg(p.z, 0, 'f', 1); };
+	QHash<QString, QString> parent;
+	std::function<QString(const QString&)> root = [&](const QString& k) {
+		QString at = k;
+		while(parent.value(at, at) != at)
+			at = parent.value(at);
+		return at;
+	};
+	QList<QPair<AuPoint, AuPoint> > segs;
+	for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+	{
+		if(!it.value() || (it.value()->Type() != AuScPart::Part_PathWalk && it.value()->Type() != AuScPart::Part_PathLadder))
+			continue;
+		const AuScPathSeg& seg = it.value()->PathSegment(0);
+		segs << qMakePair(AuPoint(seg.Loc1()), AuPoint(seg.Loc2()));
+		const QString ka = key(seg.Loc1()), kb = key(seg.Loc2());
+		if(!parent.contains(ka))
+			parent[ka] = ka;
+		if(!parent.contains(kb))
+			parent[kb] = kb;
+		const QString a = root(ka), b = root(kb);
+		if(a != b)
+			parent[a] = b;
+	}
+	// The rooms, to say where each network is.
+	struct RoomBox { QString name; AuPoint mn, mx; };
+	QList<RoomBox> rooms;
+	for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->Type() != AuScPart::Part_Room)
+			continue;
+		RoomBox r;
+		r.name = part->GroupName();
+		if(PartBounds(part, r.mn, r.mx))
+			rooms << r;
+	}
+	struct Net { int paths = 0; AuPoint mn{1e30, 1e30, 1e30}, mx{-1e30, -1e30, -1e30}; QMap<QString, int> in; };
+	QHash<QString, Net> nets;
+	for(const QPair<AuPoint, AuPoint>& sg : segs)
+	{
+		Net& n = nets[root(key(sg.first))];
+		++n.paths;
+		const AuPoint ends[2] = { sg.first, sg.second };
+		for(const AuPoint& e : ends)
+		{
+			n.mn = n.mn.Min(e);
+			n.mx = n.mx.Max(e);
+			for(const RoomBox& r : rooms)
+				if(e.x >= r.mn.x && e.y >= r.mn.y && e.z >= r.mn.z - 1 && e.x <= r.mx.x && e.y <= r.mx.y && e.z <= r.mx.z)
+					++n.in[r.name];
+		}
+	}
+	QList<Net> list = nets.values();
+	std::sort(list.begin(), list.end(), [](const Net& a, const Net& b) { return a.paths > b.paths; });
+	out() << QString("%1 walk paths in %2 network(s)\n").arg(segs.size()).arg(list.size());
+	for(const Net& n : list)
+	{
+		QStringList where;
+		for(auto w = n.in.constBegin(); w != n.in.constEnd(); ++w)
+			where << w.key();
+		if(where.size() > 6)
+			where = where.mid(0, 6) << QString("and %1 more").arg(n.in.size() - 6);
+		out() << QString("  %1 path(s)  x %2..%3  y %4..%5  z %6..%7  %8\n").arg(n.paths)
+				.arg(n.mn.x, 0, 'f', 0).arg(n.mx.x, 0, 'f', 0).arg(n.mn.y, 0, 'f', 0).arg(n.mx.y, 0, 'f', 0)
+				.arg(n.mn.z, 0, 'f', 0).arg(n.mx.z, 0, 'f', 0).arg(where.isEmpty() ? QString("(in no room)") : where.join(", "));
+	}
+	return 0;
+}
+
+// Which way the hull triangles face, by the game's own rule: AuScTri's
+// normal is (V2 - V0) x (V1 - V0), so a triangle is seen from the side its
+// corners go round clockwise. For each triangle a ray goes out from its
+// middle along that normal; crossing the hull an odd number of times means
+// it points into the solid, so the triangle faces the wrong way.
+int cmdFacingCheck(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		err() << "usage: shipgen facing-check <design.SoH>\n";
+		return 2;
+	}
+	AuDesign* design = LoadForTool(args.first());
+	if(!design)
+	{
+		err() << "could not load: " << args.first() << "\n";
+		return 1;
+	}
+	struct T { AuPoint a, b, c, n, vn; };
+	auto hit = [](const AuPoint& o, const AuPoint& d, const T& t) {
+		// Moller-Trumbore, either side.
+		const AuPoint e1 = t.b - t.a, e2 = t.c - t.a, p = d.Cross(e2);
+		const double det = e1.Dot(p);
+		if(fabs(det) < 1e-12)
+			return false;
+		const AuPoint s = o - t.a;
+		const double u = s.Dot(p) / det;
+		if(u < 0 || u > 1)
+			return false;
+		const AuPoint q = s.Cross(e1);
+		const double v = d.Dot(q) / det;
+		if(v < 0 || u + v > 1)
+			return false;
+		return e2.Dot(q) / det > 1e-6;
+	};
+	int total = 0, totalIn = 0;
+	for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted() || !part->IsHullMesh())
+			continue;
+		AuScFaceList faces;
+		part->Faces(faces);
+		AuScTriList tris;
+		faces.Triangles(tris);
+		QVector<T> ts;
+		double volume = 0;
+		for(const AuScTri& tri : tris)
+		{
+			T t;
+			t.a = AuPoint(tri.V0());
+			t.b = AuPoint(tri.V1());
+			t.c = AuPoint(tri.V2());
+			t.n = tri.Normal();
+			t.vn = tri.V0().m_N + tri.V1().m_N + tri.V2().m_N;
+			ts << t;
+			// Six times the signed volume, by the usual (anticlockwise) rule.
+			volume += t.a.Dot(t.b.Cross(t.c));
+		}
+		// Shared edges walked the same way by both their triangles: one of the
+		// two is wound the wrong way round (holes do not upset this count).
+		QHash<QString, int> walked;
+		auto key = [](const AuPoint& p) {
+			return QString("%1,%2,%3").arg(qRound64(p.x * 1000)).arg(qRound64(p.y * 1000)).arg(qRound64(p.z * 1000));
+		};
+		for(const T& t : ts)
+		{
+			const QString k[3] = { key(t.a), key(t.b), key(t.c) };
+			for(int e = 0; e < 3; ++e)
+				++walked[k[e] + ">" + k[(e + 1) % 3]];
+		}
+		// Four triangles on one edge, two each way, are a seam, not a fault:
+		// only the surplus one way over the other counts.
+		int conflicts = 0, seams = 0;
+		for(auto w = walked.constBegin(); w != walked.constEnd(); ++w)
+			if(w.value() > 1)
+			{
+				const QStringList ab = w.key().split('>');
+				const int back = walked.value(ab.at(1) + ">" + ab.at(0));
+				if(w.value() <= back)
+				{
+					++seams;
+					continue;
+				}
+				conflicts += w.value() - qMax(1, back);
+				if(args.contains("--where"))
+					out() << "  same way twice: " << w.key() << " (thousandths of a foot)\n";
+			}
+		int out_ = 0, in_ = 0, flat = 0, shadeAgree = 0, shadeAgainst = 0;
+		const AuPoint jitter(1.3e-4, -0.7e-4, 0.9e-4);
+		for(const T& t : ts)
+		{
+			if(t.n.IsZero())
+			{
+				++flat;
+				continue;
+			}
+			AuPoint d = t.n + jitter;
+			d.Unit();
+			const AuPoint o = (t.a + t.b + t.c) / 3.0 + d * 1e-3;
+			int crossings = 0;
+			for(const T& u : ts)
+				if(hit(o, d, u))
+					++crossings;
+			++((crossings % 2) ? in_ : out_);
+			if(!t.vn.IsZero())
+				++(t.vn.Dot(t.n) >= 0 ? shadeAgree : shadeAgainst);
+		}
+		out() << QString("part %1  %2 triangles: game normal points out %3, into the solid %4, no area %5; "
+						 "signed volume by the anticlockwise rule %6 (negative: wound clockwise round the outside); "
+						 "vertex normals with the face %7, against it %8; edges wound the wrong way %9, seams of 4+ triangles %10\n")
+				.arg(it.key()).arg(ts.size()).arg(out_).arg(in_).arg(flat).arg(volume / 6, 0, 'f', 0)
+				.arg(shadeAgree).arg(shadeAgainst).arg(conflicts).arg(seams);
+		total += ts.size();
+		totalIn += in_;
+	}
+	out() << QString("%1 hull triangles, %2 facing into the solid by the game's rule\n").arg(total).arg(totalIn);
+	return 0;
+}
 
 int cmdAudit(const QStringList& args)
 {
@@ -2959,6 +3178,8 @@ void usage()
 	out() << "usage:\n";
 	out() << "  shipgen inspect   <design.SoH>\n";
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
+	out() << "  shipgen path-check <design.SoH>  the walk paths as networks: how many, how big, which rooms\n";
+	out() << "  shipgen facing-check <design.SoH>  which way the hull triangles face, by the game's clockwise rule\n";
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";
 	out() << "  shipgen faces     <design.SoH> [<part>] [--where]  how the faces look: texture slot, paint, opacity, glow,\n"
@@ -3337,6 +3558,8 @@ int main(int argc, char* argv[])
 
 	if(command == "inspect")			return cmdInspect(rest);
 	if(command == "audit")				return cmdAudit(rest);
+	if(command == "facing-check")		return cmdFacingCheck(rest);
+	if(command == "path-check")			return cmdPathCheck(rest);
 	if(command == "resave")				return cmdResave(rest);
 	if(command == "decal")				return cmdDecal(rest);
 	if(command == "parts")				return cmdParts(rest);

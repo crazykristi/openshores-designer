@@ -14,6 +14,7 @@
 #include "designerwindow.h"
 #include "dgdata.h"
 #include "logging.h"
+#include "mcpserver.h"
 #include "preview.h"
 #include "version.h"
 
@@ -23,6 +24,15 @@ int main(int argc, char* argv[])
 	// Qt picks a new order for every run. A fixed order makes the same plan build
 	// to the same blueprint.
 	qSetGlobalQHashSeed(0);
+
+	// As an MCP server, standard output carries the protocol alone; it is
+	// claimed before anything can be printed on it.
+	bool mcp = false;
+	for(int i = 1; i < argc; ++i)
+		if(QByteArray(argv[i]) == "--mcp")
+			mcp = true;
+	if(mcp)
+		McpServer::ClaimStdout();
 
 	// The engine's obstruction-cache warning does not apply to an offline
 	// tool; see logging.h. Everything else is reported as usual.
@@ -76,6 +86,12 @@ int main(int argc, char* argv[])
 	parser.addOption(modelOption);
 	QCommandLineOption lengthOption(QStringList() << "length", "With --from-model: the length in feet.", "feet");
 	parser.addOption(lengthOption);
+	QCommandLineOption mcpOption(QStringList() << "mcp", "Also be an MCP server on standard input and output, so that an "
+			"AI assistant (Claude Desktop, Claude Code and others) can help design in this window.");
+	parser.addOption(mcpOption);
+	QCommandLineOption mcpFolderOption(QStringList() << "mcp-folder", "With --mcp: the only folder the AI may read and write "
+			"plans and blueprints in (default: \"Shipgen designs\" in your documents).", "folder");
+	parser.addOption(mcpFolderOption);
 	parser.process(app);
 
 	// Run from a script nobody is there to answer; otherwise say what is
@@ -110,6 +126,13 @@ int main(int argc, char* argv[])
 		std::printf("%s\n", made ? "plan made from the model" : "no plan from the model");
 		if(!made && scripted)
 			return 1;
+	}
+
+	if(mcp)
+	{
+		McpServer* server = new McpServer(&window, parser.isSet(mcpFolderOption) ? parser.value(mcpFolderOption)
+				: McpServer::DefaultFolder(), &app);
+		server->Start();
 	}
 
 	if(parser.isSet(exportOption))

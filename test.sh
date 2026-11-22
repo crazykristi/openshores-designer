@@ -1145,6 +1145,88 @@ PY
 		grep -E 'Acceleration|Fuel Cell|Storage Space|warning|x |Errors|by hand' "$WORK/plan"/stats-*.txt "$WORK/plan/hand-volumes.txt" | head -20
 	fi
 
+	# The simple plan tools an AI uses (plantools.h): a small ship drawn by
+	# rooms and doors, with the mistakes an AI makes refused with a reason;
+	# then the designer's MCP server on standard input and output, answering
+	# in order, keeping its files in its folder.
+	AI="$WORK/plan/ai.json"
+	AIT="$WORK/plan/ai-tools.txt"
+	rm -f "$AI"
+	"$SHIPGEN" plan-tool "$AI" new_plan '{"name":"AI","sizeX":30,"sizeY":14,"decks":2}' --new > "$AIT" 2>&1
+	while IFS='|' read -r tool json; do
+		echo "> $tool" >> "$AIT"
+		"$SHIPGEN" plan-tool "$AI" "$tool" "$json" >> "$AIT" 2>&1
+	done <<'CALLS'
+draw_hull|{"deck":1,"toDeck":2,"x":3,"sizeX":22,"sizeY":10,"centred":true}
+add_room|{"type":"Hall","deck":1,"x":3,"sizeX":22,"sizeY":2,"centred":true}
+add_room|{"type":"Engineering","deck":1,"x":3,"y":2,"sizeX":8,"sizeY":4}
+add_room|{"type":"Crew Cabin","deck":1,"x":12,"y":8,"sizeX":8,"sizeY":4}
+add_room|{"type":"Bridge","deck":2,"x":17,"sizeX":8,"sizeY":8,"centred":true}
+add_room|{"type":"Hall","label":"Upper Hall","deck":2,"x":3,"sizeX":14,"sizeY":2,"centred":true}
+add_room|{"type":"Hold","deck":1,"x":5,"sizeX":3,"sizeY":2,"centred":true}
+add_door|{"from":"Hall 1","to":"Engine Room 1"}
+add_door|{"from":"Hall 1","to":"Crew Cabin 1"}
+add_door|{"from":"Hall 1","to":"outside","side":"aft"}
+add_door|{"from":"Crew Cabin 1","to":"outside","side":"aft"}
+add_door|{"from":"Upper Hall","to":"Bridge 1"}
+connect_decks|{"lower":"Hall 1","upper":"Upper Hall"}
+add_station|{"type":"helm","room":"Bridge"}
+add_berths|{"kind":"crew","room":"Crew Cabin 1","count":4}
+add_window|{"room":"Bridge","side":"fore","length":4}
+check_plan|{}
+CALLS
+	"$SHIPGEN" build-plan "$AI" --out "$WORK/plan/ai.SoH" > "$WORK/plan/ai-build.txt" 2>&1
+	mkdir -p "$WORK/plan/mcp"
+	cp "$AI" "$WORK/plan/mcp/ai.json"
+	cat > "$WORK/plan/mcp-in.jsonl" <<'MCP'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"open_plan","arguments":{"file":"ai"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add_room","arguments":{"type":"Sick Bay","deck":2,"x":5,"y":2,"sizeX":4,"sizeY":4}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"build","arguments":{}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"undo","arguments":{}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"expected_stats","arguments":{"quality":120}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"save_blueprint","arguments":{"file":"ai-mcp"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"save_plan","arguments":{"file":"../outside"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"picture","arguments":{"view":"plan","deck":1}}}
+{"jsonrpc":"2.0","id":11,"method":"bogus"}
+MCP
+	if [ -x "$(dirname "$SHIPGEN")/shipgen-designer" ]; then
+		QT_QPA_PLATFORM=offscreen timeout 300 "$(dirname "$SHIPGEN")/shipgen-designer" --mcp --mcp-folder "$WORK/plan/mcp" \
+				< "$WORK/plan/mcp-in.jsonl" > "$WORK/plan/mcp-out.jsonl" 2> "$WORK/plan/mcp-err.txt"
+	fi
+	mcpids=$(grep -o '"id":[0-9]*,"jsonrpc"' "$WORK/plan/mcp-out.jsonl" 2>/dev/null | tr -dc '0-9\n' | tr '\n' ' ')
+	if qgrep 'Added Engine Room 1 \[Engine Room\]' "$AIT" &&
+			qgrep 'overlap Hall 1' "$AIT" &&
+			qgrep 'Put a door between Hall 1 and outside on deck 1, on the aft edge' "$AIT" &&
+			qgrep 'No wall of Crew Cabin 1 on its aft side is on the edge of the hull' "$AIT" &&
+			qgrep 'Put a ladder from Hall 1 on deck 1 up to Upper Hall' "$AIT" &&
+			qgrep 'Placed 1 helm station in Bridge 1' "$AIT" &&
+			qgrep 'Placed 4 crew berths in Crew Cabin 1' "$AIT" &&
+			qgrep 'Put a window 4 cells long in the fore wall of Bridge 1' "$AIT" &&
+			qgrep 'No problems found' "$AIT" &&
+			qgrep 'Errors (0)' "$WORK/plan/ai-build.txt" &&
+			[ "$mcpids" = "1 2 3 4 5 6 7 8 9 10 11 " ] &&
+			qgrep '"protocolVersion":"2025-06-18"' "$WORK/plan/mcp-out.jsonl" &&
+			qgrep '"name":"connect_decks"' "$WORK/plan/mcp-out.jsonl" &&
+			qgrep 'The engine accepted the blueprint' "$WORK/plan/mcp-out.jsonl" &&
+			qgrep 'Undid the last change' "$WORK/plan/mcp-out.jsonl" &&
+			qgrep 'Expected at Q120' "$WORK/plan/mcp-out.jsonl" &&
+			[ -s "$WORK/plan/mcp/ai-mcp.SoH" ] &&
+			qgrep 'only be read and written in the designs folder' "$WORK/plan/mcp-out.jsonl" &&
+			[ ! -e "$WORK/plan/outside.json" ] &&
+			qgrep '"mimeType":"image/png"' "$WORK/plan/mcp-out.jsonl" &&
+			qgrep '"code":-32601' "$WORK/plan/mcp-out.jsonl"; then
+		pass=$((pass+1))
+		echo "  ok    AI plan tools and the designer's MCP server"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  AI plan tools or MCP server (reply order: $mcpids)"
+		grep -v '^>' "$AIT" | head -30
+		grep -E 'Errors|error' "$WORK/plan/ai-build.txt" | head -5
+		cut -c1-300 "$WORK/plan/mcp-out.jsonl" | head -12
+	fi
 	# The military bases: the same drawing as a weapons base, with a weapon
 	# emitter drawn and a shield station placed by hand, and as a shield
 	# base. Each gets its station, the weapons base a fire control station

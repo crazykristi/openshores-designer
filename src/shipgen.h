@@ -104,10 +104,6 @@ struct Brief
 	// The FTL drive the engineer runs: "none", "warp1" to "warp9",
 	// "wormhole-p", "wormhole-pn" or "wormhole-pnn" (see FtlDriveChoices).
 	QString							ftlDrive = "wormhole-p";
-	// The maneuver drive: "gravity" (the Gravity Drive Module, which runs on
-	// power) or "rocket" (the Rocket Drive Module, which burns fuel and
-	// uses no power).
-	QString							maneuverDrive = "gravity";
 
 	// Expand all room and station counts into individual entries.
 	QList<RoomSpec>	ExpandedRooms() const;

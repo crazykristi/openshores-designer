@@ -49,6 +49,9 @@
 #include "version.h"
 #include "triplan.h"
 #include "stats.h"
+#include "plantools.h"
+#include <QJsonDocument>
+#include <QJsonParseError>
 
 namespace {
 
@@ -2242,6 +2245,61 @@ int cmdAudit(const QStringList& args)
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 // What a design is expected to do at a quality, its berths and its materials.
+// Runs one of the plan tools (plantools.h) on a plan file, as the designer's
+// MCP server does: the plan is saved back when the tool changed it.
+int cmdPlanTool(const QStringList& args)
+{
+	if(args.size() < 2)
+	{
+		err() << "usage: shipgen plan-tool <plan.json> <tool> [<json arguments>] [--new]\n"
+				 "       shipgen plan-tool --list\n";
+		if(!args.isEmpty() && args.first() == "--list")
+		{
+			for(const QJsonValue& v : PlanToolDefinitions())
+				out() << v.toObject()["name"].toString() << "  " << v.toObject()["description"].toString() << "\n";
+			out() << flush;
+			return 0;
+		}
+		return 2;
+	}
+	const QString file = args.at(0), tool = args.at(1);
+	QJsonObject toolArgs;
+	bool fresh = false;
+	for(int i = 2; i < args.size(); ++i)
+	{
+		if(args.at(i) == "--new")
+		{
+			fresh = true;
+			continue;
+		}
+		QJsonParseError perr;
+		const QJsonDocument doc = QJsonDocument::fromJson(args.at(i).toUtf8(), &perr);
+		if(!doc.isObject())
+		{
+			err() << "the arguments are not a JSON object: " << perr.errorString() << "\n";
+			return 2;
+		}
+		toolArgs = doc.object();
+	}
+	TriPlan plan;
+	QString error;
+	if(!fresh && !plan.Load(file, error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	const PlanToolResult res = RunPlanTool(plan, tool, toolArgs);
+	out() << res.text << "\n" << flush;
+	if(!res.ok)
+		return 3;
+	if(res.changed && !plan.Save(file, error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	return 0;
+}
+
 int cmdStats(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -2922,6 +2980,8 @@ void usage()
 	out() << "                     turn a triangle plan (from shipgen-designer) into a blueprint\n";
 	out() << "  shipgen validate  <design.SoH>\n";
 	out() << "  shipgen stats     <design.SoH> [--q N] [--html]   expected stats, berths and materials\n";
+	out() << "  shipgen plan-tool <plan.json> <tool> [<json arguments>] [--new]   one of the simple plan tools the\n"
+			 "                     designer's MCP server offers an AI (--list: the tools)\n";
 	out() << "  shipgen templates\n";
 	out() << "  shipgen brief         <template> <file.json>\n";
 	out() << "  shipgen building-brief <template> <file.json>\n";
@@ -3286,6 +3346,7 @@ int main(int argc, char* argv[])
 	if(command == "build-plan")			return cmdBuildPlan(rest);
 	if(command == "validate")			return cmdValidate(rest);
 	if(command == "stats")				return cmdStats(rest);
+	if(command == "plan-tool")			return cmdPlanTool(rest);
 	if(command == "templates")			return cmdTemplates();
 	if(command == "brief")				return cmdBrief(rest);
 	if(command == "building-brief")	return cmdBuildingBrief(rest);

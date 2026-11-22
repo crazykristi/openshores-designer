@@ -39,6 +39,7 @@
 #include <QMutex>
 #include <QPlainTextEdit>
 #include <QProgressBar>
+#include <QImage>
 #include <QToolButton>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -65,6 +66,7 @@
 #include "decal.h"
 #include "generate.h"
 #include "names.h"
+#include "plantools.h"
 #include "planview.h"
 #include "stats.h"
 #include "preview.h"
@@ -181,16 +183,6 @@ QIcon Swatch(const QColor& colour)
 	QPixmap pm(16, 16);
 	pm.fill(colour);
 	return QIcon(pm);
-}
-
-// A colour for a new room, so that rooms next to each other can be told apart.
-QColor RoomColour(int index)
-{
-	static const QColor colours[] = {
-		QColor(90, 140, 220), QColor(220, 130, 70), QColor(120, 190, 110), QColor(200, 90, 160),
-		QColor(80, 190, 190), QColor(210, 190, 80), QColor(150, 110, 210), QColor(200, 100, 100),
-	};
-	return colours[index % 8];
 }
 
 QWidget* Scrolled(QWidget* page)
@@ -405,6 +397,10 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 
 	m_status = new QLabel;
 	statusBar()->addWidget(m_status, 1);
+	m_aiStatus = new QLabel;
+	m_aiStatus->setStyleSheet("QLabel { color: #2a7; font-weight: bold; }");
+	m_aiStatus->hide();
+	statusBar()->addPermanentWidget(m_aiStatus);
 	// The task bar: hidden until something takes a while.
 	m_taskBox = new QWidget;
 	QHBoxLayout* taskLayout = new QHBoxLayout(m_taskBox);
@@ -1613,34 +1609,7 @@ void DesignerWindow::RefreshCrew()
 // (the game counts every console but the transporter as a crew station).
 QStringList DesignerWindow::HandBerthCheck() const
 {
-	QStringList w;
-	if(m_plan.IsBuilding() || m_plan.autoBerths)
-		return w;
-	int stations = 0, crew = 0, any = 0;
-	for(const PlanStation& st : m_plan.stations)
-		if(!st.skip && st.type != "transporter")
-			++stations;
-	for(const PlanBerth& b : m_plan.berths)
-	{
-		if(b.skip)
-			continue;
-		++any;
-		if(b.kind == "crew")
-			++crew;
-	}
-	if(m_plan.autoStations)
-	{
-		if(any == 0)
-			w << "The automatic berths are off and no berths are placed by hand: the ship will have no berths "
-				 "at all, and the game will not warn about it.";
-		else if(stations > crew)
-			w << QString("The automatic berths are off: %1 station(s) are placed by hand but only %2 crew "
-						 "berth(s), and the template's own stations need crew too.").arg(stations).arg(crew);
-	}
-	else if(stations > crew)
-		w << QString("The automatic berths are off: %1 station(s) placed by hand but only %2 crew berth(s).")
-				.arg(stations).arg(crew);
-	return w;
+	return HandBerthWarnings(m_plan);
 }
 
 void DesignerWindow::RefreshBerthBanners()
@@ -4730,4 +4699,127 @@ void DesignerWindow::OnBuild()
 {
 	BuildNow();
 	m_preview->FrameAll();
+}
+
+//-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+// For an AI assistant (mcpserver.h).
+
+void DesignerWindow::ApplyAiChange(const TriPlan& plan, bool hullChanged, bool newPlan, int deck, const QString& what)
+{
+	Q_UNUSED(hullChanged);		// Rooms reshape the hull too (the smoothing gives way to them).
+	OnAboutToChange();
+	m_plan = plan;
+	if(newPlan)
+		m_hullShaped = false;
+	m_view->SetDeck(qBound(0, deck >= 0 ? deck : m_view->Deck(), m_plan.Decks() - 1));
+	RefreshAll();
+	m_view->update();
+	m_dirty = true;
+	RefreshTitle();
+	m_status->setText("AI assistant: " + what);
+	if(newPlan)
+	{
+		m_view->FitToWindow();
+		m_frameAfterShape = true;
+	}
+	PlanEdited();
+}
+
+bool DesignerWindow::AiBuild(QString& report)
+{
+	const bool ok = BuildNow();
+	report = m_reportText->toPlainText();
+	return ok;
+}
+
+QString DesignerWindow::AiStats(int quality)
+{
+	BuildNow();
+	if(!m_design)
+		return "The blueprint could not be built, so there are no stats.";
+	return StatsText(WorkOutStats(*m_design, qBound(1, quality, 255)));
+}
+
+bool DesignerWindow::AiSavePlan(const QString& fileName, QString& error)
+{
+	if(!m_plan.Save(fileName, error))
+		return false;
+	m_planFile = fileName;
+	m_dirty = false;
+	RefreshTitle();
+	m_status->setText("AI assistant: saved " + fileName);
+	return true;
+}
+
+bool DesignerWindow::AiOpenPlan(const QString& fileName, QString& error)
+{
+	TriPlan plan;
+	if(!plan.Load(fileName, error))
+		return false;
+	ApplyAiChange(plan, true, true, 0, "opened " + fileName);
+	m_planFile = fileName;
+	m_dirty = false;
+	RefreshTitle();
+	return true;
+}
+
+bool DesignerWindow::AiSaveBlueprint(const QString& fileName, QString& report, QString& error)
+{
+	AiBuild(report);
+	if(!m_design)
+	{
+		error = "The blueprint could not be built.";
+		return false;
+	}
+	if(!SaveDesign(*m_design, fileName, QList<OpaquePart>(),
+			m_designIsBlueprint ? m_report.vehicleSpots : QList<VehicleSpotSave>()))
+	{
+		error = "Could not write " + fileName;
+		return false;
+	}
+	m_status->setText("AI assistant: saved the blueprint " + fileName);
+	return true;
+}
+
+QImage DesignerWindow::AiPicture(bool threeD, int deck, float yaw, float pitch, bool blueprint)
+{
+	if(!threeD)
+	{
+		// The rooms, doors and the rest are drawn on the Rooms and Crew steps.
+		if(m_steps->currentIndex() != StepRooms && m_steps->currentIndex() != StepCrew)
+			ShowStep(StepRooms);
+		SetDeck(qBound(0, deck, m_plan.Decks() - 1));
+		m_view->FitToWindow();
+		return m_view->grab().toImage();
+	}
+	if(blueprint)
+	{
+		BuildNow();
+		ShowStep(StepBuild);
+	}
+	else
+	{
+		if(m_steps->currentIndex() == StepBuild)
+			ShowStep(StepRooms);
+		if(m_shapeStale || m_shapeTimer->isActive() || m_designIsBlueprint || !m_hullShaped)
+			ShapeNow();
+	}
+	m_preview->FrameAll();
+	m_preview->SetViewAngles(yaw, pitch);
+	return m_preview->grabFramebuffer();
+}
+
+bool DesignerWindow::AiUndo()
+{
+	if(m_undo.isEmpty())
+		return false;
+	OnUndo();
+	m_status->setText("AI assistant: undid the last change");
+	return true;
+}
+
+void DesignerWindow::SetAiStatus(const QString& text)
+{
+	m_aiStatus->setText(text);
+	m_aiStatus->setVisible(!text.isEmpty());
 }

@@ -113,6 +113,8 @@ shipgen inspect  <design.SoH>           show what is inside a design
 shipgen audit    <design.SoH>           exact check: is the hull solid and is every room inside it
 shipgen validate <design.SoH>           run the engine report on a design
 shipgen stats    <design.SoH> [--q N]   expected stats at a quality, berth warnings and materials (a guide only)
+shipgen plan-tool <plan.json> <tool> [<json arguments>] [--new]
+                                        one of the AI's plan tools on a plan file (--list: the tools)
 shipgen generate-building --brief <file.json> [--out <dir>]
                    [--model <file>] [--fit <feet>] [--faces <n>]
                    [--texture <file.png|#rrggbb>]... [--paint <mode>] [--paint-scale <feet>]
@@ -528,6 +530,43 @@ programs on Linux. The script
 downloads `appimagetool` into `build/tools/` the first time;
 `APPDIR_ONLY=1 ./package-appimage.sh` makes only the folder
 `build/AppDir`, which runs as `build/AppDir/AppRun`.
+
+## Designing with an AI assistant (MCP)
+
+The designer can let an AI assistant help design, through the Model Context
+Protocol (MCP), which Claude Desktop, Claude Code and other AI apps use.
+Started with `--mcp`, the designer opens its window as usual and takes
+the AI's requests on its standard input and output. The AI app starts it
+itself; add it to the app's MCP servers, for example in Claude Desktop's
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "shipgen": {
+      "command": "/path/to/shipgen-designer-x86_64.AppImage",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+(on Windows the `command` is the path to `shipgen-designer.exe`, with
+its backslashes doubled), or in Claude Code:
+`claude mcp add shipgen -- /path/to/shipgen-designer --mcp`.
+
+The AI gets simple tools that work in whole cells and rooms by name, not
+triangles: draw a deck's hull outline, add a room of a type and size, put a
+door between two rooms (or to the outside), join decks with a ladder or
+stairs, place stations and berths, and check the plan for rooms nobody can
+reach. It can see a deck as a text map or a picture, build the blueprint and
+read its report, work out the expected stats, and save the plan and the
+blueprint. Every change shows in the window straight away and is one step
+of the designer's undo, so any of it can be taken back.
+
+Files are read and written in one folder only: `Shipgen designs` in your
+documents, or the folder given with `--mcp-folder <folder>`. The expected
+stats are a guide; check the design in the game before building it.
 
 ## The graphical tool
 

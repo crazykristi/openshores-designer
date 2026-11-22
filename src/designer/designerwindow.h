@@ -32,6 +32,7 @@ class QDragMoveEvent;
 class QDropEvent;
 class QMimeData;
 class QFormLayout;
+class QImage;
 class QGroupBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -86,6 +87,29 @@ public:
 	// day, unless that is turned off in the Help menu.
 	void	CheckForUpdatesAtStart();
 	bool	ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell = true, bool fighter = false);
+
+	// For an AI assistant through the MCP server (mcpserver.h). None of these
+	// opens a dialog: the AI is told what went wrong instead.
+	const TriPlan&	Plan() const { return m_plan; }
+	// Puts in a plan the AI changed, as one step the user can undo, and shows
+	// 'deck' (from 0; -1 leaves the deck shown as it is).
+	void	ApplyAiChange(const TriPlan& plan, bool hullChanged, bool newPlan, int deck, const QString& what);
+	// Builds the blueprint: the report as the Build page shows it; returns
+	// whether the engine accepted it.
+	bool	AiBuild(QString& report);
+	// Builds, then the expected stats at 'quality' (stats.h) as text.
+	QString	AiStats(int quality);
+	bool	AiSavePlan(const QString& fileName, QString& error);
+	bool	AiOpenPlan(const QString& fileName, QString& error);
+	// Builds and saves the blueprint, even when the engine has errors (they
+	// are in 'report').
+	bool	AiSaveBlueprint(const QString& fileName, QString& report, QString& error);
+	// A picture of the plan (a deck) or of the 3D view, from 'yaw' and 'pitch'
+	// in degrees; with 'blueprint' the 3D view shows the built blueprint.
+	QImage	AiPicture(bool threeD, int deck, float yaw, float pitch, bool blueprint);
+	bool	AiUndo();
+	// The words in the status bar that say an AI is connected.
+	void	SetAiStatus(const QString& text);
 
 private slots:
 	void	OnNew();
@@ -207,6 +231,7 @@ private:
 	QTabWidget*		m_steps = 0;
 	QTimer*			m_shapeTimer = 0;
 	QLabel*			m_status = 0;
+	QLabel*			m_aiStatus = 0;			// Shown while an AI assistant is connected (--mcp).
 	bool			m_autoRedraw = true;
 	bool			m_shapeStale = false;		// The 3D view does not show the plan as it is.
 	QThread*		m_shapeWorker = 0;

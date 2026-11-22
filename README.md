@@ -112,6 +112,7 @@ shipgen generate  --model <file.3ds|file.stl|file.obj> [--model <file> ...] | --
 shipgen inspect  <design.SoH>           show what is inside a design
 shipgen audit    <design.SoH>           exact check: is the hull solid and is every room inside it
 shipgen validate <design.SoH>           run the engine report on a design
+shipgen stats    <design.SoH> [--q N]   expected stats at a quality, berth warnings and materials (a guide only)
 shipgen generate-building --brief <file.json> [--out <dir>]
                    [--model <file>] [--fit <feet>] [--faces <n>]
                    [--texture <file.png|#rrggbb>]... [--paint <mode>] [--paint-scale <feet>]

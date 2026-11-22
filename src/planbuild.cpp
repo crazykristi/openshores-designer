@@ -8626,6 +8626,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		brief.name = plan.name;
 		ApplyTemplate(brief, plan.templateKey);
 		brief.ftlDrive = plan.station ? QString("none") : plan.ftlDrive;
+		brief.handModules = plan.handModules;
 		// Stations left out, and with them what they run (the generator
 		// fits no shields without a shield station and no weapon bay
 		// without fire control).

@@ -104,6 +104,12 @@ COMMODITYID FtlDriveModule(const QString& key);
 // hull changed after it was furnished (the stations stay as they are).
 void AllocateSystemVolumes(AuScDesign& design, const Brief& brief, QStringList& notes);
 
+// Puts in the volumes set by hand (non-zero in 'hand'), cubic meters, as
+// they are; the structure (skeleton) grows or shrinks by the difference,
+// unless it is set by hand too. Says in 'warnings' when the systems no
+// longer fit in the hull. Returns true if anything changed.
+bool ApplyHandVolumes(AuScDesign& design, const ModuleSpec& hand, QStringList& warnings);
+
 // The quarter turn about Z that takes +X to +Y, the game's fore.
 AuMatrix4x4 QuarterTurnToFore();
 

@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QHash>
+#include <QRegularExpression>
 #include <QElapsedTimer>
 
 #include <cstdio>
@@ -47,6 +48,7 @@
 #include "sohfile.h"
 #include "version.h"
 #include "triplan.h"
+#include "stats.h"
 
 namespace {
 
@@ -2237,6 +2239,45 @@ int cmdAudit(const QStringList& args)
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+//-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+// What a design is expected to do at a quality, its berths and its materials.
+int cmdStats(const QStringList& args)
+{
+	if(args.isEmpty())
+	{
+		err() << "usage: shipgen stats <design.SoH> [--q N] [--html]\n";
+		return 2;
+	}
+	int q = 1;
+	bool html = false;
+	for(int i = 1; i < args.size(); ++i)
+	{
+		if(args.at(i) == "--q" && i + 1 < args.size())
+			q = args.at(++i).toInt();
+		else if(args.at(i) == "--html")
+			html = true;
+	}
+	AuDesign* design = LoadForTool(args.first());
+	if(!design)
+	{
+		err() << "could not load: " << args.first() << "\n";
+		return 1;
+	}
+	if(AuScDesign* sc = dynamic_cast<AuScDesign*>(design))
+		sc->RefreshObstructionsCache();
+	const DesignStats stats = WorkOutStats(*design, q);
+	delete design;
+
+	if(html)
+	{
+		out() << stats.html << "\n" << flush;
+		return 0;
+	}
+	out() << StatsText(stats) << flush;
+	return 0;
+}
+
 int cmdValidate(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -2880,6 +2921,7 @@ void usage()
 	out() << "  shipgen build-plan   <plan.json> [--out <file.SoH>] [--no-furnish] [--no-paths] [--no-ramps] [--no-hull-clearance]\n";
 	out() << "                     turn a triangle plan (from shipgen-designer) into a blueprint\n";
 	out() << "  shipgen validate  <design.SoH>\n";
+	out() << "  shipgen stats     <design.SoH> [--q N] [--html]   expected stats, berths and materials\n";
 	out() << "  shipgen templates\n";
 	out() << "  shipgen brief         <template> <file.json>\n";
 	out() << "  shipgen building-brief <template> <file.json>\n";
@@ -3243,6 +3285,7 @@ int main(int argc, char* argv[])
 	if(command == "plan-from-blueprint")	return cmdPlanFromBlueprint(rest);
 	if(command == "build-plan")			return cmdBuildPlan(rest);
 	if(command == "validate")			return cmdValidate(rest);
+	if(command == "stats")				return cmdStats(rest);
 	if(command == "templates")			return cmdTemplates();
 	if(command == "brief")				return cmdBrief(rest);
 	if(command == "building-brief")	return cmdBuildingBrief(rest);

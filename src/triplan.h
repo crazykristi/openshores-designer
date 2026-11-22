@@ -42,6 +42,11 @@
 #include "building.h"
 #include "decal.h"
 
+// The ship system volumes that can be set by hand: key (as in a plan file),
+// label, and the field of a ModuleSpec.
+struct HandModuleKey { const char* key; const char* label; quint32 ModuleSpec::* field; };
+const QList<HandModuleKey>& HandModuleKeys();
+
 // The four triangles of a cell, named after the cell edge they stand on.
 enum TriSide
 {
@@ -497,6 +502,12 @@ public:
 	QString	bridgeStyle = "hazeron";	// How stations look (BridgeStyles in names.h).
 	bool	deskStanding = false;		// Integrated desks: the operator stands, with no stool.
 	double	deskHeightFeet = 0;			// Their top edge above the floor. 0: the usual height for sitting or standing.
+	// Ship system volumes set by hand on the Build page, cubic meters (0: the
+	// template's share). The structure makes up the difference.
+	ModuleSpec	handModules;
+	// The quality of modules and materials the Build page works the expected
+	// stats out for. Only for the stats: it is not put in the blueprint.
+	int		statsQuality = 100;
 	// The height of the desks' top edge, within what suits sitting or standing.
 	double DeskTopFeet() const
 	{

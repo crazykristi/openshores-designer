@@ -19,6 +19,23 @@
 #include <QStringList>
 #include <cmath>
 
+const QList<HandModuleKey>& HandModuleKeys()
+{
+	static const QList<HandModuleKey> keys = {
+		{ "powerPlant",		"Power plant",		&ModuleSpec::powerPlant },
+		{ "maneuverDrive",	"Maneuver drive",	&ModuleSpec::maneuverDrive },
+		{ "capacitor",		"Capacitor",		&ModuleSpec::capacitor },
+		{ "fuel",			"Fuel",				&ModuleSpec::fuel },
+		{ "lifeSupport",	"Life support",		&ModuleSpec::lifeSupport },
+		{ "sensors",		"Sensors",			&ModuleSpec::sensors },
+		{ "shields",		"Shields",			&ModuleSpec::shields },
+		{ "armor",			"Armor",			&ModuleSpec::armor },
+		{ "hold",			"Hold",				&ModuleSpec::hold },
+		{ "skeleton",		"Structure",		&ModuleSpec::skeleton },
+	};
+	return keys;
+}
+
 namespace {
 
 // Run length coding for a layer: "count*value,count*value,...".
@@ -1957,6 +1974,16 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		root["deskStanding"] = true;
 	if(deskHeightFeet > 0)
 		root["deskHeight"] = deskHeightFeet;
+	{
+		QJsonObject hand;
+		for(const HandModuleKey& k : HandModuleKeys())
+			if(handModules.*k.field)
+				hand[k.key] = double(handModules.*k.field);
+		if(!hand.isEmpty())
+			root["handModules"] = hand;
+	}
+	if(statsQuality != 100)
+		root["statsQuality"] = statsQuality;
 	if(hullDoorExit != "auto")
 		root["hullDoorExit"] = hullDoorExit;
 	if(hullStyle != "smooth")
@@ -2434,6 +2461,12 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 	plan.bridgeStyle = root["bridgeStyle"].toString("hazeron");
 	plan.deskStanding = root["deskStanding"].toBool(false);
 	plan.deskHeightFeet = root["deskHeight"].toDouble(0);
+	{
+		const QJsonObject hand = root["handModules"].toObject();
+		for(const HandModuleKey& k : HandModuleKeys())
+			plan.handModules.*k.field = quint32(qBound(0.0, hand[k.key].toDouble(0), 10000000.0));
+	}
+	plan.statsQuality = qBound(1, root["statsQuality"].toInt(100), 255);
 	plan.hullDoorExit = root["hullDoorExit"].toString("auto");
 	if(plan.hullDoorExit != "ladder" && plan.hullDoorExit != "none")
 		plan.hullDoorExit = "auto";

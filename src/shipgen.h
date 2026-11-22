@@ -96,9 +96,18 @@ struct Brief
 	ModuleSpec						modules;
 	int								crew = 0;		// Nominal crew size.
 	bool							modulesFromTemplate = true;
+	// Volumes set by hand (the designer's Build page), cubic meters; 0 leaves
+	// that system to the template. They are put in as they are after the
+	// rest is shared out, and the structure (skeleton) makes up the
+	// difference.
+	ModuleSpec						handModules;
 	// The FTL drive the engineer runs: "none", "warp1" to "warp9",
 	// "wormhole-p", "wormhole-pn" or "wormhole-pnn" (see FtlDriveChoices).
 	QString							ftlDrive = "wormhole-p";
+	// The maneuver drive: "gravity" (the Gravity Drive Module, which runs on
+	// power) or "rocket" (the Rocket Drive Module, which burns fuel and
+	// uses no power).
+	QString							maneuverDrive = "gravity";
 
 	// Expand all room and station counts into individual entries.
 	QList<RoomSpec>	ExpandedRooms() const;

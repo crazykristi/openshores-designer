@@ -1103,6 +1103,48 @@ PY
 		echo "  FAIL  building site"
 		grep -iE 'site|^Errors' "$WORK/plan/building.txt" "$WORK/plan"/site-*.txt | head -20
 	fi
+	# Expected stats and materials (stats.cpp), with the game's own report
+	# code: a higher quality gives a faster ship; volumes set by hand go in
+	# as they are, the structure making up the difference; with no berths
+	# the warning the game leaves out is given; a building lists its
+	# material.
+	python3 - "$WORK/plan/example.json" "$WORK/plan" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+h = json.loads(json.dumps(p)); h['handModules'] = {'fuel': 2000, 'hold': 500}
+json.dump(h, open(sys.argv[2] + '/hand-volumes.json', 'w'))
+b = json.loads(json.dumps(p)); b['autoBerths'] = False; b['berths'] = []
+json.dump(b, open(sys.argv[2] + '/no-berths.json', 'w'))
+PY
+	"$SHIPGEN" build-plan "$WORK/plan/hand-volumes.json" --out "$WORK/plan/hand-volumes.SoH" > "$WORK/plan/hand-volumes.txt" 2>&1
+	"$SHIPGEN" build-plan "$WORK/plan/no-berths.json" --out "$WORK/plan/no-berths.SoH" > /dev/null 2>&1
+	"$SHIPGEN" stats "$WORK/plan/example.SoH" --q 50 > "$WORK/plan/stats-q50.txt" 2>&1
+	"$SHIPGEN" stats "$WORK/plan/example.SoH" --q 200 > "$WORK/plan/stats-q200.txt" 2>&1
+	"$SHIPGEN" stats "$WORK/plan/hand-volumes.SoH" > "$WORK/plan/stats-hand.txt" 2>&1
+	"$SHIPGEN" stats "$WORK/plan/no-berths.SoH" > "$WORK/plan/stats-no-berths.txt" 2>&1
+	"$SHIPGEN" stats "$WORK/plan/building.SoH" > "$WORK/plan/stats-building.txt" 2>&1
+	acc50=$(grep -o '^[0-9.,]*m/sec. Acceleration' "$WORK/plan/stats-q50.txt" | head -1 | tr -dc '0-9')
+	acc200=$(grep -o '^[0-9.,]*m/sec. Acceleration' "$WORK/plan/stats-q200.txt" | head -1 | tr -dc '0-9')
+	if [ -n "$acc50" ] && [ -n "$acc200" ] && [ "$acc200" -gt "$acc50" ] &&
+			qgrep '^Expected at Q50' "$WORK/plan/stats-q50.txt" &&
+			qgrep -E '^  [0-9.,]+ x Metal$' "$WORK/plan/stats-q50.txt" &&
+			qgrep 'enough for the stations' "$WORK/plan/stats-q50.txt" &&
+			qgrep 'Only a guide\|only a guide' "$WORK/plan/stats-q50.txt" &&
+			qgrep '^Errors (0)' "$WORK/plan/hand-volumes.txt" &&
+			qgrep 'Volumes set by hand' "$WORK/plan/hand-volumes.txt" &&
+			qgrep -E '2[.,]?000m. Fuel Cell' "$WORK/plan/stats-hand.txt" &&
+			qgrep -E '500m. Storage Space' "$WORK/plan/stats-hand.txt" &&
+			qgrep 'warning: No berths at all' "$WORK/plan/stats-no-berths.txt" &&
+			qgrep -E '^  [0-9.,]+ x [A-Z]' "$WORK/plan/stats-building.txt" &&
+			! qgrep 'commodity [0-9]' "$WORK/plan/stats-q50.txt" "$WORK/plan/stats-building.txt"; then
+		pass=$((pass+1))
+		echo "  ok    expected stats: quality, hand-set volumes, berth warnings and materials"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  expected stats (acceleration Q50 $acc50, Q200 $acc200)"
+		grep -E 'Acceleration|Fuel Cell|Storage Space|warning|x |Errors|by hand' "$WORK/plan"/stats-*.txt "$WORK/plan/hand-volumes.txt" | head -20
+	fi
+
 	# The military bases: the same drawing as a weapons base, with a weapon
 	# emitter drawn and a shield station placed by hand, and as a shield
 	# base. Each gets its station, the weapons base a fire control station

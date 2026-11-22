@@ -51,6 +51,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QTextBrowser>
 #include <QThread>
 #include <QTreeWidget>
 #include <QTimer>
@@ -65,6 +66,7 @@
 #include "generate.h"
 #include "names.h"
 #include "planview.h"
+#include "stats.h"
 #include "preview.h"
 #include "shipgen.h"
 #include "version.h"
@@ -1565,6 +1567,12 @@ QWidget* DesignerWindow::MakeCrewPage()
 	m_crewCounts = new QLabel;
 	m_crewCounts->setWordWrap(true);
 	layout->addWidget(m_crewCounts);
+	m_crewBerthBanner = new QLabel;
+	m_crewBerthBanner->setWordWrap(true);
+	m_crewBerthBanner->setStyleSheet("QLabel { background: #fff1c2; color: #5a3d00; border: 1px solid #d9a400; "
+			"border-radius: 4px; padding: 6px; }");
+	m_crewBerthBanner->setVisible(false);
+	layout->addWidget(m_crewBerthBanner);
 	layout->addStretch(1);
 
 	connect(m_crewTool, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { ApplyDrawMode(); });
@@ -1597,6 +1605,131 @@ void DesignerWindow::RefreshCrew()
 	m_updating = was;
 	m_crewCounts->setText(QString("Placed by hand: %1 stations, %2 berths, %3 transporter pads, %4 walk paths.")
 			.arg(m_plan.stations.size()).arg(m_plan.berths.size()).arg(m_plan.pads.size()).arg(m_plan.paths.size()));
+	RefreshBerthBanners();
+}
+
+// Before a build: with the automatic berths off, only the berths placed by
+// hand are built, so they are counted against the stations placed by hand
+// (the game counts every console but the transporter as a crew station).
+QStringList DesignerWindow::HandBerthCheck() const
+{
+	QStringList w;
+	if(m_plan.IsBuilding() || m_plan.autoBerths)
+		return w;
+	int stations = 0, crew = 0, any = 0;
+	for(const PlanStation& st : m_plan.stations)
+		if(!st.skip && st.type != "transporter")
+			++stations;
+	for(const PlanBerth& b : m_plan.berths)
+	{
+		if(b.skip)
+			continue;
+		++any;
+		if(b.kind == "crew")
+			++crew;
+	}
+	if(m_plan.autoStations)
+	{
+		if(any == 0)
+			w << "The automatic berths are off and no berths are placed by hand: the ship will have no berths "
+				 "at all, and the game will not warn about it.";
+		else if(stations > crew)
+			w << QString("The automatic berths are off: %1 station(s) are placed by hand but only %2 crew "
+						 "berth(s), and the template's own stations need crew too.").arg(stations).arg(crew);
+	}
+	else if(stations > crew)
+		w << QString("The automatic berths are off: %1 station(s) placed by hand but only %2 crew berth(s).")
+				.arg(stations).arg(crew);
+	return w;
+}
+
+void DesignerWindow::RefreshBerthBanners()
+{
+	QStringList lines = HandBerthCheck();
+	if(!m_builtBerthWarnings.isEmpty())
+	{
+		if(!lines.isEmpty())
+			lines << "";
+		lines << "At the last build:";
+		lines << m_builtBerthWarnings;
+	}
+	const QString text = lines.isEmpty() ? QString() :
+			"<b>Berths may be short for the stations.</b> You can still build and save; the ship may not work "
+			"as intended in the game.<br>" + lines.join("<br>").toHtmlEscaped().replace("&lt;br&gt;", "<br>");
+	for(QLabel* banner : { m_berthBanner, m_crewBerthBanner })
+		if(banner)
+		{
+			banner->setText(text);
+			banner->setVisible(!lines.isEmpty());
+		}
+}
+
+void DesignerWindow::RefreshVolumeBox()
+{
+	if(!m_volumeBox)
+		return;
+	const bool was = m_updating;
+	m_updating = true;
+	m_statsQ->setValue(m_plan.statsQuality);
+	m_volumeBox->setVisible(!m_plan.IsBuilding());
+	const AuScDesign* sc = m_designIsBlueprint ? dynamic_cast<const AuScDesign*>(m_design) : 0;
+	const QList<HandModuleKey>& keys = HandModuleKeys();
+	quint64 sum = 0;
+	for(int i = 0; i < keys.size() && i < m_volumeSpins.size(); ++i)
+	{
+		m_volumeSpins[i]->setValue(int(m_plan.handModules.*keys.at(i).field));
+		quint32 now = 0;
+		if(sc)
+		{
+			const QString key = keys.at(i).key;
+			now = key == "powerPlant" ? sc->PowerPlantVolume() : key == "maneuverDrive" ? sc->ManeuverDriveVolume()
+				: key == "capacitor" ? sc->CapacitorVolume() : key == "fuel" ? sc->FuelVolume()
+				: key == "lifeSupport" ? sc->LifeSupportVolume() : key == "sensors" ? sc->SensorVolume()
+				: key == "shields" ? sc->ShieldVolume() : key == "armor" ? sc->ArmorVolume()
+				: key == "hold" ? sc->HoldVolume() : sc->SkeletonVolume();
+			sum += now;
+		}
+		m_volumeNow[i]->setText(sc ? QString("now %L1").arg(now) : QString());
+		m_volumeNow[i]->setToolTip("Cubic meters in the built blueprint.");
+	}
+	if(sc)
+		m_volumeTotal->setText(QString("Hull %L1 m\u00b3; these systems %L2 m\u00b3 (the FTL drive and weapon bays "
+				"have the rest).").arg(sc->HullVolume()).arg(sum));
+	else
+		m_volumeTotal->setText("Build the blueprint to see the volumes it has.");
+	m_updating = was;
+}
+
+void DesignerWindow::RefreshStats()
+{
+	RefreshVolumeBox();
+	if(!m_statsText)
+		return;
+	if(!m_design || !m_designIsBlueprint)
+	{
+		m_statsText->setHtml("<p>Build the blueprint (above) to see what it is expected to do.</p>");
+		return;
+	}
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	const DesignStats stats = WorkOutStats(*m_design, m_plan.statsQuality);
+	QApplication::restoreOverrideCursor();
+	QString html;
+	const QStringList berth = BerthWarnings(stats);
+	if(!berth.isEmpty())
+	{
+		html += "<p style=\"color:#b06000;\"><b>Berths may be short:</b><br>";
+		for(const QString& w : berth)
+			html += w.toHtmlEscaped() + "<br>";
+		html += "</p>";
+	}
+	html += QString("<p><b>MATERIALS</b> (used up, at Q%1 or better)<br>").arg(stats.quality);
+	for(const QPair<QString, int>& m : stats.materials)
+		html += QString("%L1 &times; %2<br>").arg(m.second).arg(m.first.toHtmlEscaped());
+	if(!stats.tools.isEmpty())
+		html += QString("<i>Tools, not used up:</i> %1").arg(stats.tools.join(", ").toHtmlEscaped());
+	html += "</p><hr>";
+	html += stats.html;
+	m_statsText->setHtml(html);
 }
 
 void DesignerWindow::RefreshBuildList()
@@ -2114,9 +2247,119 @@ QWidget* DesignerWindow::MakeBuildPage()
 	m_reportText->setToolTip("What was built, and the engine's own errors and warnings. Errors have to be put "
 							 "right before the game takes the blueprint.");
 	m_reportText->setMinimumHeight(300);
-	layout->addWidget(m_reportText, 1);
+
+	m_berthBanner = new QLabel;
+	m_berthBanner->setWordWrap(true);
+	m_berthBanner->setStyleSheet("QLabel { background: #fff1c2; color: #5a3d00; border: 1px solid #d9a400; "
+			"border-radius: 4px; padding: 6px; }");
+	m_berthBanner->setVisible(false);
+	layout->addWidget(m_berthBanner);
+
+	m_buildTabs = new QTabWidget;
+	m_buildTabs->addTab(m_reportText, "Report");
+	m_buildTabs->addTab(MakeStatsTab(), "Expected stats");
+	m_buildTabs->setTabToolTip(1, "What the blueprint is expected to do with modules and materials of a quality you "
+			"choose, and what it is made of, as the game's own report code works it out. Only a guide: check it in "
+			"the game.");
+	layout->addWidget(m_buildTabs, 1);
 	connect(build, &QPushButton::clicked, this, &DesignerWindow::OnBuild);
 	connect(save, &QPushButton::clicked, this, &DesignerWindow::OnExport);
+	return page;
+}
+
+QWidget* DesignerWindow::MakeStatsTab()
+{
+	QWidget* page = new QWidget;
+	QVBoxLayout* layout = new QVBoxLayout(page);
+	QLabel* caveat = new QLabel(QString("<b>Only a guide.</b> ") + QString(kStatsCaveat).toHtmlEscaped());
+	caveat->setWordWrap(true);
+	caveat->setStyleSheet("QLabel { background: #fff1c2; color: #5a3d00; border: 1px solid #d9a400; "
+			"border-radius: 4px; padding: 6px; }");
+	layout->addWidget(caveat);
+
+	QHBoxLayout* qRow = new QHBoxLayout;
+	qRow->addWidget(new QLabel("Quality (Q) of the modules and materials"));
+	m_statsQ = new QSpinBox;
+	m_statsQ->setRange(1, 255);
+	m_statsQ->setKeyboardTracking(false);
+	m_statsQ->setToolTip("The stats are worked out as if every module and material were of this quality. In the "
+			"game the quality comes from what you build with. Q87 is the game's baseline: drives, capacitors and "
+			"sensors do what their size says; lower is weaker, higher stronger. Only for the stats: it is not put "
+			"in the blueprint. Saved with the plan.");
+	qRow->addWidget(m_statsQ);
+	qRow->addStretch(1);
+	layout->addLayout(qRow);
+	connect(m_statsQ, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int q) {
+		if(m_updating || q == m_plan.statsQuality)
+			return;
+		m_plan.statsQuality = q;
+		m_dirty = true;
+		RefreshTitle();
+		RefreshStats();
+	});
+
+	m_volumeBox = new QGroupBox("System volumes (ships)");
+	QGridLayout* grid = new QGridLayout(m_volumeBox);
+	m_volumeHelp = new QLabel("Auto: the build's share. A number is used as it is; the structure makes up the "
+			"difference.");
+	m_volumeHelp->setWordWrap(true);
+	m_volumeHelp->setMinimumHeight(m_volumeHelp->fontMetrics().lineSpacing() * 2 + 4);
+	m_volumeBox->setToolTip("Left on auto, the build shares the hull out the way the kind of ship has it. A number "
+			"is put in as it is, and the structure (the framework) grows or shrinks to make up the difference. "
+			"Changes show in the stats at once and go into the blueprint when you save it; going back to auto "
+			"takes effect at the next build. The FTL drive and weapon bays are sized by the build.");
+	grid->addWidget(m_volumeHelp, 0, 0, 1, 3);
+	int row = 1;
+	for(const HandModuleKey& k : HandModuleKeys())
+	{
+		QSpinBox* spin = new QSpinBox;
+		spin->setRange(0, 10000000);
+		spin->setSpecialValueText("auto");
+		spin->setSuffix(QString::fromUtf8(" m\u00b3"));
+		spin->setKeyboardTracking(false);
+		spin->setGroupSeparatorShown(true);
+		spin->setToolTip(QString("Cubic meters of %1, or auto for the build's share.").arg(QString(k.label).toLower()));
+		QLabel* now = new QLabel;
+		grid->addWidget(new QLabel(k.label), row, 0);
+		grid->addWidget(spin, row, 1);
+		grid->addWidget(now, row, 2);
+		m_volumeSpins << spin;
+		m_volumeNow << now;
+		const int index = row - 1;
+		connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, index](int value) {
+			if(m_updating)
+				return;
+			const HandModuleKey& k = HandModuleKeys().at(index);
+			if(m_plan.handModules.*k.field == quint32(value))
+				return;
+			OnAboutToChange();
+			m_plan.handModules.*k.field = quint32(value);
+			m_dirty = true;
+			RefreshTitle();
+			// Into the built blueprint at once, so that what is saved is what
+			// the stats show.
+			if(m_designIsBlueprint)
+				if(AuScDesign* sc = dynamic_cast<AuScDesign*>(m_design))
+				{
+					QStringList warnings;
+					ApplyHandVolumes(*sc, m_plan.handModules, warnings);
+					if(!warnings.isEmpty())
+						m_status->setText(warnings.first());
+				}
+			RefreshStats();
+		});
+		++row;
+	}
+	m_volumeTotal = new QLabel;
+	m_volumeTotal->setWordWrap(true);
+	grid->addWidget(m_volumeTotal, row, 0, 1, 3);
+	grid->setColumnStretch(2, 1);
+	layout->addWidget(m_volumeBox);
+
+	m_statsText = new QTextBrowser;
+	m_statsText->setMinimumHeight(300);
+	m_statsText->setOpenLinks(false);
+	layout->addWidget(m_statsText, 1);
 	return page;
 }
 
@@ -2617,6 +2860,7 @@ void DesignerWindow::RefreshAll()
 	RefreshPalette();
 	RefreshCrew();
 	RefreshBuildList();
+	RefreshVolumeBox();
 	RefreshDecals();
 	ApplyDrawMode();
 	RefreshTitle();
@@ -2786,6 +3030,8 @@ void DesignerWindow::OnStepChanged(int step)
 	if(step == StepBuild)
 	{
 		RefreshBuildList();
+		RefreshBerthBanners();
+		RefreshStats();
 		if(m_design)
 		{
 			m_preview->SetHullOpacity(0.25f);
@@ -4454,8 +4700,30 @@ bool DesignerWindow::BuildNow()
 		lines << "  Error: " + e;
 	for(const QString& w : m_report.engineWarnings)
 		lines << "  Warning: " + w;
+	// The berths against the stations, as the game counts them (it says
+	// nothing when there are none at all), at the top where they are seen.
+	m_builtBerthWarnings.clear();
+	if(m_design && !m_plan.IsBuilding())
+		m_builtBerthWarnings = BerthWarnings(WorkOutStats(*m_design, m_plan.statsQuality));
+	if(!m_builtBerthWarnings.isEmpty())
+	{
+		QStringList top;
+		top << "BERTHS MAY BE SHORT FOR THE STATIONS (you can still save; the ship may not work as intended):";
+		for(const QString& w : m_builtBerthWarnings)
+			top << "  " + w;
+		top << "";
+		lines = top + lines;
+	}
 	m_reportText->setPlainText(lines.join("\n"));
+	RefreshBerthBanners();
+	RefreshStats();
 	return m_report.ok;
+}
+
+void DesignerWindow::ShowStatsTab()
+{
+	m_steps->setCurrentIndex(StepBuild);
+	m_buildTabs->setCurrentIndex(1);
 }
 
 void DesignerWindow::OnBuild()

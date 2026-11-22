@@ -66,6 +66,8 @@ int main(int argc, char* argv[])
 	parser.addOption(deckOption);
 	QCommandLineOption buildOption(QStringList() << "build", "Build the blueprint straight away.");
 	parser.addOption(buildOption);
+	QCommandLineOption statsOption(QStringList() << "stats", "With --build: show the expected stats of the blueprint.");
+	parser.addOption(statsOption);
 	QCommandLineOption exportOption(QStringList() << "export", "Build the blueprint, save it here and quit.", "file.SoH");
 	parser.addOption(exportOption);
 	QCommandLineOption shotOption(QStringList() << "screenshot", "Save a picture of the window and quit.", "file.png");
@@ -120,7 +122,15 @@ int main(int argc, char* argv[])
 	if(parser.isSet(stepOption))
 		window.ShowStep(parser.value(stepOption).toInt() - 1);
 	if(parser.isSet(buildOption))
-		QTimer::singleShot(100, &window, [&window]() { window.BuildNow(); window.FrameView(); });
+	{
+		const bool stats = parser.isSet(statsOption);
+		QTimer::singleShot(100, &window, [&window, stats]() {
+			window.BuildNow();
+			window.FrameView();
+			if(stats)
+				window.ShowStatsTab();
+		});
+	}
 
 	if(parser.isSet(shotOption))
 	{

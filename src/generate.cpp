@@ -1287,6 +1287,8 @@ static bool PlaceRooms(const QList<RoomSpec>& rooms, double usableLength, double
 // How many times the maneuver drive share of the brief the ships get.
 #define SHIPGEN_MANEUVER_BOOST 3.5
 
+bool ApplyHandVolumes(AuScDesign& design, const ModuleSpec& hand, QStringList& warnings);
+
 static void AllocateVolumes(AuScDesign& design, const Brief& brief, const QList<quint16>& ftlParts,
 		QList<quint16> weaponParts, const QSet<QString>& placedStationTypes, QStringList& warnings)
 {
@@ -1515,6 +1517,57 @@ static void AllocateVolumes(AuScDesign& design, const Brief& brief, const QList<
 			warnings << QString("With no engineer station, the power plant and maneuver drive were made %1 and %2 cubic "
 					"meters (under 100 together).").arg(modules.powerPlant).arg(modules.maneuverDrive);
 	}
+
+	// Last, the volumes set by hand, as they are.
+	if(ApplyHandVolumes(design, brief.handModules, warnings))
+		warnings << QString("Volumes set by hand (Build page) were put in; the structure made up the difference.");
+}
+
+bool ApplyHandVolumes(AuScDesign& design, const ModuleSpec& hand, QStringList& warnings)
+{
+	if(hand.IsEmpty())
+		return false;
+	struct Entry { quint32 want; quint32 have; void (AuScDesign::*set)(quint32); const char* name; };
+	const Entry entries[] = {
+		{ hand.powerPlant,		design.PowerPlantVolume(),		&AuScDesign::SetPowerPlantVolume,		"power plant" },
+		{ hand.maneuverDrive,	design.ManeuverDriveVolume(),	&AuScDesign::SetManeuverDriveVolume,	"maneuver drive" },
+		{ hand.capacitor,		design.CapacitorVolume(),		&AuScDesign::SetCapacitorVolume,		"capacitor" },
+		{ hand.fuel,			design.FuelVolume(),			&AuScDesign::SetFuelVolume,				"fuel" },
+		{ hand.lifeSupport,		design.LifeSupportVolume(),		&AuScDesign::SetLifeSupportVolume,		"life support" },
+		{ hand.armor,			design.ArmorVolume(),			&AuScDesign::SetArmorVolume,			"armor" },
+		{ hand.hold,			design.HoldVolume(),			&AuScDesign::SetHoldVolume,				"hold" },
+		{ hand.sensors,			design.SensorVolume(),			&AuScDesign::SetSensorVolume,			"sensors" },
+		{ hand.shields,			design.ShieldVolume(),			&AuScDesign::SetShieldVolume,			"shields" },
+	};
+	bool changed = false;
+	qint64 skeleton = design.SkeletonVolume();
+	for(const Entry& e : entries)
+	{
+		if(!e.want || e.want == e.have)
+			continue;
+		(design.*e.set)(e.want);
+		skeleton -= qint64(e.want) - qint64(e.have);
+		changed = true;
+	}
+	if(hand.skeleton)
+	{
+		if(hand.skeleton != design.SkeletonVolume())
+			changed = true;
+		design.SetSkeletonVolume(hand.skeleton);
+	}
+	else
+	{
+		if(skeleton < 1)
+		{
+			warnings << QString("The volumes set by hand are %1 cubic meters more than the structure could give up: "
+					"the systems no longer fit in the hull. Make some of them smaller.").arg(1 - skeleton);
+			skeleton = 1;
+		}
+		if(quint32(skeleton) != design.SkeletonVolume())
+			changed = true;
+		design.SetSkeletonVolume(quint32(skeleton));
+	}
+	return changed;
 }
 
 void AllocateSystemVolumes(AuScDesign& design, const Brief& brief, QStringList& notes)

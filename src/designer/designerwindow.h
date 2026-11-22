@@ -42,6 +42,8 @@ class QPushButton;
 class QProgressBar;
 class QThread;
 class QTreeWidget;
+class QSpinBox;
+class QTextBrowser;
 class QToolButton;
 class QSlider;
 class QSpinBox;
@@ -65,6 +67,7 @@ public:
 	void	ShapeSoon();
 	// Builds the blueprint and shows it. Returns whether the engine accepted it.
 	bool	BuildNow();
+	void	ShowStatsTab();		// The Expected stats tab of the Build page.
 	// With 'ask', a blueprint the engine does not accept is only saved if the user says so.
 	bool	SaveBlueprint(const QString& fileName, bool ask = true);
 	void	ShowStep(int step);
@@ -141,6 +144,7 @@ private:
 	void		ApplyCrewChoice();
 	QWidget*	MakePaintPage();
 	QWidget*	MakeBuildPage();
+	QWidget*	MakeStatsTab();
 	void		RefreshAll();
 	void		RefreshRooms();
 	void		RefreshPalette();
@@ -340,6 +344,24 @@ private:
 
 	// The build page.
 	QPlainTextEdit*	m_reportText = 0;
+	// Expected stats (stats.h): the quality they are for, the ship's system
+	// volumes set by hand, the game's report and the materials.
+	QTabWidget*		m_buildTabs = 0;
+	QSpinBox*		m_statsQ = 0;
+	QGroupBox*		m_volumeBox = 0;
+	QLabel*			m_volumeHelp = 0;
+	QList<QSpinBox*>	m_volumeSpins;		// In the order of HandModuleKeys().
+	QList<QLabel*>	m_volumeNow;
+	QLabel*			m_volumeTotal = 0;
+	QTextBrowser*	m_statsText = 0;
+	// Berths short for the stations: on the Build page and the Crew page.
+	QLabel*			m_berthBanner = 0;
+	QLabel*			m_crewBerthBanner = 0;
+	QStringList		m_builtBerthWarnings;	// From the last build.
+	void			RefreshStats();
+	void			RefreshVolumeBox();
+	void			RefreshBerthBanners();
+	QStringList		HandBerthCheck() const;
 	void			NewFromModel(bool fighter);
 	QCheckBox*		m_fighter = 0;			// TriPlan::mode "fighter".
 	QLabel*			m_fighterBanner = 0;	// Says fighter mode is experimental.

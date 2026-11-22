@@ -18,14 +18,13 @@ long-term aim is an offline designer inside the OpenShores client.
 
 **Download:** the releases on GitHub
 (<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.7-beta-rc4-hf1](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7-beta-rc4-hf1),
-the second release candidate of the first beta: a finish per colour
-(see-through, shiny, glowing), canopies for fighters, less geometry outside
-the hull, a check of what the pilot sees, door buttons where you click and
-outside hull doors, and a fix for large hull doors; with everything from
-rc1: stations, berths and paths placed by hand,
-choosing what gets built, turbolifts, landing spots, door buttons, liveries,
-quarter turns, FBX and glTF models, and fighter mode (experimental). Problems:
+is [0.3.7](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7),
+the first full release: everything from the 0.3.7 betas (buildings, decals,
+textured paint, stairs and ramps, a Crew step, turbolifts, landing spots,
+liveries, fighter mode and more), with expected stats, a choice of maneuver
+drive, tall doors, an MCP server so an AI assistant can design in the open
+window (experimental), and fixes to the crew's walk paths and the blueprint
+size of big ships. Problems:
 contact the author or open an issue at
 <https://github.com/crazykristi/openshores-designer/issues>) are an AppImage holding the designer, `shipgen-gui` and the
 command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below.
@@ -508,9 +507,9 @@ Releases are an AppImage of the triangle designer that also holds
 
 ```
 ./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage shipgen <command> ...
+./shipgen-designer-0.3.7-x86_64.AppImage                # the triangle designer
+./shipgen-designer-0.3.7-x86_64.AppImage gui            # shipgen-gui
+./shipgen-designer-0.3.7-x86_64.AppImage shipgen <command> ...
 ```
 
 The version is in `src/version.h`.

@@ -1,23 +1,115 @@
-# Shipgen Designer 0.3.7-beta-rc4-hf1
+# Shipgen Designer 0.3.7
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
 triangles, paint it, and build a blueprint the game loads.
 
-0.3.7-beta-rc4-hf1 is a hotfix of rc4, the fourth **release candidate** of
-the first beta (see *Hotfix 1* below). Since rc3 it adds a building mode (with military weapons and shield bases),
-decals, textured paint and a paint brush in the 3D view, doors in floors and
-ceilings, stairs and ramps of several widths and slopes, clearer hull
-windows, copying decks, free flight through the 3D view, and a check for new
-versions, with fixes for problems found in the game (maintenance consoles, zero-G shafts, holes
-round windows, weapon bays).
+0.3.7 is the first full release, after four release candidates. Since
+0.3.7-beta-rc4-hf1 it adds expected stats for a chosen quality, a choice
+between a gravity and a rocket maneuver drive, a building's site, tall doors,
+walking room round curved hulls, surface effect previews and an MCP server so
+that an AI assistant can design in the open window, with fixes to the crew's
+walk paths, the blueprint size of big ships and the corner normals of the
+built parts. Everything from the betas is below.
 
 **Problems?** If something goes wrong, please either contact the author
 (`crazykristi` on GitHub) or report an issue at
 <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
 plan file (`.json`) and what you expected help most.
 
-## Hotfix 1
+## Bug fixes since rc4-hf1
+
+* **Crew could not walk between the pieces of a room.** A room drawn in
+  separate pieces on one deck (cut in two by a ladder shaft, a lift or
+  another room) had walk paths only in the piece holding its middle, so
+  stairs, ladders and doors in the other pieces led nowhere. Each piece is
+  now joined from its own middle. On a 21-deck land battleship this joined
+  11 separate path networks into 2, and the crew routes that work went from
+  235 to 704 of 812; the rest need a ladder the plan does not have, which
+  the new warning below points out.
+* **Walk paths no longer run through hull doors of rooms open to the deck
+  below** (a vehicle bay's upper deck), where there is no floor to walk on.
+* **Walk paths go straight across a room** instead of zigzagging from
+  triangle to triangle, so a ship has a few hundred path parts instead of
+  thousands.
+* **Big ships went over the game's blueprint size limit** (28 MB). Rooms kept
+  a corner at every cell along their floor and wall edges, so a long
+  corridor had over 2,000 faces. Those corners are taken out where the edge
+  runs straight; the rooms keep exactly their shape. A 600 m battleship went
+  from 28.6 MB to under 8 MB.
+* **The corner normals of the built parts pointed inwards.** The triangles
+  themselves faced the right way (the game draws a triangle from the side
+  its corners go round clockwise), but the normal kept at each corner was
+  the opposite of the face's. Build blueprints again to get the fix.
+* **Big angular hulls took very long to build** (one took over 12 minutes);
+  the hull comes out the same, in a fraction of the time.
+* **Turbo Lift was missing from the ship room types**; the room type list
+  scrolls instead of reaching past the screen.
+* **Effect faces got no effect texture coordinates**, so the game showed a
+  single pixel of the effect picture.
+* **The game's walking outlines of each part were saved from partway through
+  the build**; they are now made at the very end, when every part is in
+  place.
+
+## New since rc4-hf1
+
+* **Expected stats** (Build page): the game's own design report for a chosen
+  quality, and the raw materials the build uses up, as a guide; the game can
+  change, so check the design in the game before building it. Ships can set
+  system volumes by hand, and the structure makes up the difference. A
+  yellow box on the Build and Crew pages warns when the berths may be short
+  for the stations. Also `shipgen stats`.
+* **A choice of maneuver drive** (Ship page): a Gravity Drive Module, which
+  runs on power, or a Rocket Drive Module, which burns fuel and needs no
+  power. Opening a blueprint keeps its drive.
+* **A building's site**: an area kind for buildings, the building's plot on
+  every deck. Generated parking goes inside it; anything drawn outside it is
+  shown in red and stops the build.
+* **New ships** ask for the cell size, length and beam in cells, with the
+  real size shown as you type. *New from a 3D model* links the length and
+  the number of cells both ways, and warns when a ship is too long for the
+  grid (400 cells).
+* **Room borders**: bold two-tone lines between rooms, and between rooms and
+  the outside, so two rooms of one colour can be told apart.
+* **A compass in the 3D view**: fore, aft, port, starboard and up, turning
+  with the camera. The *New* menu names say spaceship and building plainly.
+* **Rooms the crew cannot reach** are a warning in the build report. The
+  game's crew walk and climb; they never ride a turbo lift, so every deck
+  needs ladders or stairs to the rest of the ship as well. A stair whose
+  walk path cannot be joined to its room is a warning too.
+* New commands: `shipgen path-check` (the separate networks of walk paths in
+  a blueprint, and the rooms in each), `shipgen facing-check` (which way the
+  hull triangles face, by the game's rule), `shipgen probe` (what stops
+  someone standing at a point), `shipgen effects`, `shipgen stats`, and
+  `shipgen inspect` now shows how much of the game's size limit each kind
+  of part uses.
+
+## Experimental since rc4-hf1
+
+* **AI assistants in the designer (MCP).** `shipgen-designer --mcp` opens the
+  designer as usual and is also an MCP server, so an AI app (Claude Desktop,
+  Claude Code and others) can design in the open window while you watch. It
+  has tools that work in cells and rooms by name: draw each deck's hull, add
+  rooms, doors (also tall ones), windows, ladders and stairs, stations,
+  berths, landing and vehicle spots and weapon emitters, paint the hull with
+  colours, empire colours and the game's textures, check the plan, see a
+  deck as a text map or a picture, build, expected stats, save and open.
+  Every change is one undo step, and files stay in one folder
+  (`--mcp-folder`). Redrawing the 3D view while drawing stays your choice.
+  `shipgen plan-tool` runs the same tools on a plan file.
+* **Tall doors**: a door into a room open to the deck below can reach up
+  through the decks above, inside or in the hull, with one door the full
+  height.
+* **Walking room round the hull**: the game stops people at outlines of the
+  hull that are bigger than its real shape, so they got stuck beside curved
+  hulls, under wings and between engines. The build opens the ground up
+  there (`build-plan --no-hull-clearance` leaves it out).
+* **Surface effect previews**: the 3D view animates the game's surface
+  effects, each only when the game would run it (shields up, weapons
+  firing, FTL drives charged, ...), set under *View > Surface effects*.
+  Effects that can never run on the design are tinted pink, with the reason.
+
+## Hotfix 1 of rc4
 
 * **The 3D view stayed empty with NVIDIA drivers on Windows**, with the
   message "The 3D view needs OpenGL 3.3" even though the driver gives 3.3 or
@@ -25,7 +117,7 @@ plan file (`.json`) and what you expected help most.
   NVIDIA ..."), which the check misread. Only the first two numbers are read
   now.
 
-## New since rc3
+## New in rc4 (since rc3)
 
 * **Updates from inside the designer**: *Help > Check for a new version...*
   shows the notes of a newer release and can download and install it (the
@@ -92,7 +184,7 @@ plan file (`.json`) and what you expected help most.
   Sensor, shield, fire control, medic and transporter stations placed by
   hand on the Crew page are used in buildings as well.
 
-## Experimental since rc3
+## Experimental in rc4
 
 * **A paint brush in the 3D view** (Paint page): paint straight on the hull
   with the colour or texture picked, a round or square brush of a size in
@@ -104,7 +196,7 @@ plan file (`.json`) and what you expected help most.
   length and angle show under the choice, and a right click on a flight
   gives it the choice picked. A ramp is a smooth slope instead of steps.
 
-## Changes and fixes since rc3
+## Changes and fixes in rc4
 
 * **Maintenance consoles** no longer stand in doorways or stick out of the
   hull: they go only into an engine room, on a stretch of its own wall with
@@ -258,10 +350,10 @@ before relying on them, and tell us how they behave.
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.7-beta-rc4-hf1-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.7-x86_64.AppImage
+./shipgen-designer-0.3.7-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.7-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.7-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -269,14 +361,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.7-beta-rc4-hf1-windows-x86_64.zip` and start
+`shipgen-designer-0.3.7-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.7-beta-rc4-hf1-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.7-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The
@@ -314,6 +406,9 @@ downloads, once GitHub has built them.
 
 ## Known limits
 
+* Window lining can reach a few feet out of the hull on a narrow upper deck
+  with windows.
+
 * The paint brush paints whole faces: the hull's own faces set how fine it
   can paint. Decals and image textures are at most 256 pixels a side.
 
@@ -321,7 +416,8 @@ downloads, once GitHub has built them.
   hull but get no cells, so a side door over a wing gets a ladder that runs
   into it (a low door gets a ramp instead).
 
-* Rooms are one deck high; hull doors are one deck high.
+* Rooms are one deck high; doors are one deck high except tall doors into
+  rooms open to the deck below.
 * Coming down a ladder from the top, crew may lie level for a moment.
 * Desks do not block walking, and at unusual heights a seated or standing
   character's hands may not meet the desk. A bridge over several decks is not

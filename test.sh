@@ -1068,6 +1068,41 @@ PY
 		echo "  FAIL  building mode"
 		grep -E 'Error|Warning|Note' "$WORK/plan/building.txt" | head -10
 	fi
+	# The building's site (plot): without one drawn, the closest rectangle
+	# round everything; a site drawn is the game's site, the generated parking
+	# goes inside it (or is left out), and whatever is outside it stops the
+	# build. A ship plan has no site.
+	python3 - "$WORK/plan/building.json" "$WORK/plan" "$WORK/plan/example.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+def save(name, site):
+    q = json.loads(json.dumps(p))
+    q['areas'] = [dict(deck=0, x0=site[0], y0=site[1], x1=site[2], y1=site[3], kind='site')]
+    json.dump(q, open(sys.argv[2] + '/' + name, 'w'))
+save('site-big.json', (-3, -16, 39, 19))      # Room for all, the parking too.
+save('site-tight.json', (-3, -3, 39, 19))     # The building, no room for the parking.
+save('site-small.json', (0, 0, 20, 16))       # Half the hull outside.
+s = json.load(open(sys.argv[3]))
+s['areas'] = [dict(deck=0, x0=0, y0=0, x1=4, y1=4, kind='site')]
+json.dump(s, open(sys.argv[2] + '/site-ship.json', 'w'))
+PY
+	for n in big tight small ship; do
+		"$SHIPGEN" build-plan "$WORK/plan/site-$n.json" --out "$WORK/plan/site-$n.SoH" > "$WORK/plan/site-$n.txt" 2>&1
+	done
+	if grep -q 'No site was drawn: the site is the closest rectangle' "$WORK/plan/building.txt" &&
+			grep -q '^Errors (0)' "$WORK/plan/site-big.txt" && grep -q 'The site drawn: 210 by 175 ft' "$WORK/plan/site-big.txt" &&
+			! grep -q 'did not fit in the site' "$WORK/plan/site-big.txt" &&
+			grep -q '^Errors (0)' "$WORK/plan/site-tight.txt" && grep -q 'parking spot(s) did not fit in the site' "$WORK/plan/site-tight.txt" &&
+			grep -q 'Site: [0-9]* hull cells (with their skin) on deck 1 are outside the site' "$WORK/plan/site-small.txt" &&
+			! grep -q '^Errors (0)' "$WORK/plan/site-small.txt" &&
+			grep -q '^Errors (0)' "$WORK/plan/site-ship.txt" && ! grep -qE 'Site:|site drawn|No site was drawn' "$WORK/plan/site-ship.txt"; then
+		pass=$((pass+1))
+		echo "  ok    building site: drawn or the closest fit; the parking goes inside it; what is outside stops the build; ships have none"
+	else
+		fail=$((fail+1))
+		echo "  FAIL  building site"
+		grep -iE 'site|^Errors' "$WORK/plan/building.txt" "$WORK/plan"/site-*.txt | head -20
+	fi
 	# The military bases: the same drawing as a weapons base, with a weapon
 	# emitter drawn and a shield station placed by hand, and as a shield
 	# base. Each gets its station, the weapons base a fire control station

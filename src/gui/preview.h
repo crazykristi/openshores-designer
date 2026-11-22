@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QSet>
 #include <QVector3D>
+#include <QMatrix4x4>
 #include <QOpenGLBuffer>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
@@ -232,6 +233,19 @@ private:
 	int					m_effectSeqFrame = 0;
 	int					m_effectRandFrame = 0;
 	class QLabel*		m_effectNote = 0;	// What never runs, over the view's corner.
+	// Which way fore, port and up are (game axes: the plan's fore and port
+	// turned with the ship; a building is not turned), and the marker that
+	// shows them in the view's corner.
+	QVector3D			m_fore = QVector3D(0, 1, 0);
+	QVector3D			m_port = QVector3D(-1, 0, 0);
+	class QWidget*		m_directions = 0;
+	void	PlaceDirections();
+public:
+	// For the marker: the camera's turn (the view matrix, no projection).
+	QMatrix4x4	ViewTurn() const;
+	QVector3D	Fore() const { return m_fore; }
+	QVector3D	Port() const { return m_port; }
+private:
 	void	UpdateEffectTimer();
 	void	UpdateEffectNote();
 	void	PlaceEffectNote();

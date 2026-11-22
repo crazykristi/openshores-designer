@@ -92,6 +92,9 @@ struct BuildingBrief
 	int						spaceParking = 0;	// Landing pads for space vehicles.
 	int						spacecraftParking = 0;	// Berths for spacecraft (238 ft square each), beside the building.
 	int						rocketParking = 0;	// Space rocket parking spots (about 33 ft square), in front.
+	// A site drawn in the designer (feet, as the building stands): the parking
+	// and spacecraft berths the generator lays out go inside it, or not at all.
+	QRectF					siteBounds;
 	bool					buildZone = true;	// Platforms: a build zone over the deck, for buildings on top.
 	double					lightRange = 0;		// Feet a lamp's light reaches (0: 45 ft for a street light,
 												// the game's default otherwise). The default is 200 m.
@@ -122,6 +125,7 @@ struct BuildingResult
 	QStringList				errors;		// From the design report.
 	QList<quint16>			weaponBayParts;		// The fire control stations (each a weapon bay).
 	QSet<quint16>			handModuleParts;	// Those whose bay was chosen by hand.
+	QRectF					groundUse;			// What the generated parking and spacecraft berths take up (feet).
 };
 
 // The building templates.

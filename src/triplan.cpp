@@ -1,8 +1,11 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // shipgen - a ship drawn with triangles.
+
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "triplan.h"
+
+#include <QMap>
 #include "names.h"
 
 #include <QDir>
@@ -227,7 +230,8 @@ void TriPlan::AddDeck(bool below)
 		for(PlanStation& st : stations)
 			++st.deck;
 		for(PlanArea& a : areas)
-			++a.deck;
+			if(a.kind != "site")
+				++a.deck;
 		for(PlanProp& pr : props)
 			++pr.deck;
 		for(PlanBerth& b : berths)
@@ -333,6 +337,21 @@ int TriPlan::CopyDeck(int deck, int times, bool withRooms)
 		InsertDeckCopy(emitters, from, at, withRooms);
 		InsertDeckCopy(stations, from, at, withRooms);
 		InsertDeckCopy(areas, from, at, withRooms);
+		// One site, on every deck: not copied with a deck.
+		{
+			bool seen = false;
+			for(int i = 0; i < areas.size(); ++i)
+				if(areas.at(i).kind == "site")
+				{
+					if(seen)
+						areas.removeAt(i--);
+					else
+					{
+						areas[i].deck = 0;
+						seen = true;
+					}
+				}
+		}
 		InsertDeckCopy(props, from, at, withRooms);
 		InsertDeckCopy(berths, from, at, withRooms);
 		InsertDeckCopy(pads, from, at, withRooms);
@@ -509,6 +528,10 @@ void TriPlan::RemoveDeck(int deck)
 	emitters = keptEmitters;
 	// The rest placed by hand, in one go.
 	DropDeck(stations, deck);
+	// The site is on every deck: it stays, on deck 1.
+	for(PlanArea& a : areas)
+		if(a.kind == "site")
+			a.deck = deck == 0 ? 1 : 0;
 	DropDeck(areas, deck);
 	DropDeck(props, deck);
 	DropDeck(berths, deck);
@@ -2927,4 +2950,101 @@ TriPlan TriPlan::Example()
 			for(int k = 0; k < 4; ++k)
 				plan.SetPaint(TriRef(0, cx, cy, k), 1);
 	return plan;
+}
+
+int TriPlan::SiteArea() const
+{
+	if(!IsBuilding())
+		return -1;
+	for(int i = 0; i < areas.size(); ++i)
+		if(areas.at(i).kind == "site" && !areas.at(i).skip)
+			return i;
+	return -1;
+}
+
+QRectF TriPlan::SiteRect() const
+{
+	const int i = SiteArea();
+	if(i < 0)
+		return QRectF();
+	const PlanArea& a = areas.at(i);
+	return QRectF(Corner(a.cx0, a.cy0), Corner(a.cx1, a.cy1)).normalized();
+}
+
+QList<TriPlan::SiteProblem> TriPlan::OutsideSite() const
+{
+	QList<SiteProblem> out;
+	const QRectF site = SiteRect();
+	if(site.isNull())
+		return out;
+	// A hair of slack for rounding.
+	const QRectF inside = site.adjusted(-.01, -.01, .01, .01);
+	// 'test' has to be inside; 'shown' is where to mark it. By hand, as
+	// QRectF::contains turns down rectangles of no width.
+	auto add = [&](int deck, const QRectF& test, const char* what, const QRectF& shown = QRectF()) {
+		if(test.left() < inside.left() || test.right() > inside.right() || test.top() < inside.top()
+				|| test.bottom() > inside.bottom())
+		{
+			SiteProblem p;
+			p.deck = deck;
+			p.where = shown.isNull() ? test : shown;
+			p.what = what;
+			out << p;
+		}
+	};
+	for(int d = 0; d < Decks(); ++d)
+		for(int cy = 0; cy < Depth(); ++cy)
+			for(int cx = 0; cx < Width(); ++cx)
+			{
+				bool hull = false;
+				for(int k = 0; k < 4 && !hull; ++k)
+					hull = Hull(TriRef(d, cx, cy, k));
+				if(hull)
+				{
+					const QRectF cell = QRectF(Corner(cx, cy), Corner(cx + 1, cy + 1)).normalized();
+					add(d, cell.adjusted(-skinFeet, -skinFeet, skinFeet, skinFeet), "hull", cell);
+				}
+			}
+	for(const PlanParking& spot : parking)
+	{
+		if(spot.skip)
+			continue;
+		const QPointF c = Corner(spot.cx, spot.cy), half = ParkingSize(spot) / 2.0;
+		add(spot.deck, QRectF(c - half, c + half), "parking");
+	}
+	for(int i = 0; i < areas.size(); ++i)
+	{
+		const PlanArea& a = areas.at(i);
+		if(a.skip || a.kind == "site")
+			continue;
+		add(a.deck, QRectF(Corner(a.cx0, a.cy0), Corner(a.cx1, a.cy1)).normalized(), "area");
+	}
+	for(const PlanProp& pr : props)
+	{
+		if(pr.skip)
+			continue;
+		const QPointF at = CellPointToWorld(pr.x, pr.y);
+		add(pr.deck, QRectF(at, at), "prop", QRectF(at - QPointF(cellFeet * .4, cellFeet * .4), at + QPointF(cellFeet * .4, cellFeet * .4)));
+	}
+	return out;
+}
+
+QStringList TriPlan::OutsideSiteText() const
+{
+	QMap<QPair<QString, int>, int> counts;
+	for(const SiteProblem& p : OutsideSite())
+		counts[qMakePair(p.what, p.deck)] += 1;
+	QStringList lines;
+	for(auto it = counts.constBegin(); it != counts.constEnd(); ++it)
+	{
+		const QString& what = it.key().first;
+		const int n = it.value();
+		const QString thing = what == "hull" ? (n == 1 ? "hull cell (with its skin)" : "hull cells (with their skin)")
+				: what == "parking" ? (n == 1 ? "parking spot" : "parking spots")
+				: what == "area" ? (n == 1 ? "area" : "areas")
+				: (n == 1 ? "thing on the ground" : "things on the ground");
+		lines << QString("%1 %2 on deck %3 %4 outside the site").arg(n).arg(thing).arg(it.key().second + 1)
+				.arg(n == 1 ? "is" : "are");
+	}
+	return lines;
 }

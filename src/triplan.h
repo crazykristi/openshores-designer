@@ -32,6 +32,7 @@
 #include <QList>
 #include <QPoint>
 #include <QPointF>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -261,7 +262,10 @@ const PlanVehicle* FindPlanVehicle(const QString& key);
 //  * "field": cracked earth the game counts as field (4,000 m² a field);
 //  * "paving": paved ground; "grass": a lawn;
 //  * "buildzone": where other buildings may be built (platforms), on top of
-//    the hull of the deck below, or on the ground on deck 1.
+//    the hull of the deck below, or on the ground on deck 1;
+//  * "site": the building's plot (at most one, on every deck): the game's
+//    build site. Everything drawn has to be inside it; without one, the build
+//    makes the closest rectangle round all of it.
 struct PlanArea
 {
 	int		deck = 0;
@@ -591,6 +595,22 @@ public:
 	// with the building generator, which leaves the drawn rooms as they are.
 	BuildingBrief	building;
 	bool	IsBuilding() const { return mode == "building"; }
+	// Building mode: the drawn site (an index into 'areas', -1 if none; the
+	// first one counts), and its rectangle in feet as Corner() gives them.
+	int		SiteArea() const;
+	QRectF	SiteRect() const;
+	// What is drawn outside the site, each with where it is (feet, as
+	// Corner()) and on which deck: hull cells (with the skin round them),
+	// parking spots, areas and things on the ground. Empty without a site.
+	struct SiteProblem
+	{
+		int		deck = 0;
+		QRectF	where;
+		QString	what;		// "hull", "parking", "area" or "prop".
+	};
+	QList<SiteProblem>	OutsideSite() const;
+	// The same, one line each kind for the user ("3 hull cells on deck 1 ...").
+	QStringList	OutsideSiteText() const;
 	// Makes this plan a building of the template (building.h,
 	// AllBuildingTemplates): the mode, the brief, and for a plan with
 	// nothing drawn yet storeys of a building's height.

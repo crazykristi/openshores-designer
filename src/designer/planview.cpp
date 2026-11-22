@@ -1247,7 +1247,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 	{
 		const QPointF w = ToWorld(event->pos());
 		const int under = AreaAt(w);
-		if(erase || (under >= 0 && m_plan->areas.at(under).kind == m_areaKind))
+		if(erase || (under >= 0 && m_plan->areas.at(under).kind == m_areaKind && m_areaKind != "site"))
 		{
 			if(under >= 0)
 			{
@@ -1258,7 +1258,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 			}
 			return;
 		}
-		NearestCorner(w, m_areaX0, m_areaY0);
+		NearestCorner(w, m_areaX0, m_areaY0, SiteBeyond());
 		m_areaX1 = m_areaX0;
 		m_areaY1 = m_areaY0;
 		m_areaDrag = true;
@@ -1884,7 +1884,7 @@ void PlanView::mouseMoveEvent(QMouseEvent* event)
 		m_hovering = true;
 		m_hoverWorld = ToWorld(event->pos());
 		if(m_areaDrag)
-			NearestCorner(m_hoverWorld, m_areaX1, m_areaY1);
+			NearestCorner(m_hoverWorld, m_areaX1, m_areaY1, SiteBeyond());
 		if(m_pathDrag)
 			m_pathEnd = m_hoverWorld;
 		setFocus();		// For R.
@@ -1952,7 +1952,33 @@ void PlanView::mouseReleaseEvent(QMouseEvent*)
 		a.cy0 = qMin(m_areaY0, m_areaY1);
 		a.cy1 = qMax(m_areaY0, m_areaY1);
 		a.kind = m_areaKind;
-		if(a.cx1 > a.cx0 && a.cy1 > a.cy0)
+		if(a.kind == "site")
+		{
+			// One site, on every deck (kept on deck 1): a new one takes the
+			// old one's place; a click on it without a drag takes it away.
+			a.deck = 0;
+			int old = -1;
+			for(int i = 0; i < m_plan->areas.size() && old < 0; ++i)
+				if(m_plan->areas.at(i).kind == "site")
+					old = i;
+			const bool drawnOne = a.cx1 > a.cx0 && a.cy1 > a.cy0;
+			if(drawnOne || old >= 0)
+			{
+				const PlanArea& o = old >= 0 ? m_plan->areas.at(old) : a;
+				const bool clickedOld = !drawnOne && m_areaX0 >= o.cx0 && m_areaX0 <= o.cx1 && m_areaY0 >= o.cy0
+						&& m_areaY0 <= o.cy1;
+				if(drawnOne || clickedOld)
+				{
+					emit AboutToChange();
+					if(old >= 0)
+						m_plan->areas.removeAt(old);
+					if(drawnOne)
+						m_plan->areas << a;
+					emit PlanChanged(false);
+				}
+			}
+		}
+		else if(a.cx1 > a.cx0 && a.cy1 > a.cy0)
 		{
 			emit AboutToChange();
 			m_plan->areas << a;
@@ -2086,11 +2112,19 @@ void PlanView::resizeEvent(QResizeEvent*)
 	FitToWindow();
 }
 
-void PlanView::NearestCorner(const QPointF& world, int& ix, int& iy) const
+void PlanView::NearestCorner(const QPointF& world, int& ix, int& iy, int beyond) const
 {
 	const QPointF origin = m_plan->Corner(0, 0);
-	ix = qBound(0, qRound((world.x() - origin.x()) / m_plan->cellFeet), m_plan->Width());
-	iy = qBound(0, qRound((world.y() - origin.y()) / m_plan->cellFeet), m_plan->Depth());
+	ix = qBound(-beyond, qRound((world.x() - origin.x()) / m_plan->cellFeet), m_plan->Width() + beyond);
+	iy = qBound(-beyond, qRound((world.y() - origin.y()) / m_plan->cellFeet), m_plan->Depth() + beyond);
+}
+
+int PlanView::SiteBeyond() const
+{
+	if(m_areaKind != "site" || !m_plan || m_plan->cellFeet <= 0)
+		return 0;
+	// The skin, and the ramps down from hull doors (about 10 ft out).
+	return int(std::ceil((m_plan->skinFeet + 12.0) / m_plan->cellFeet)) + 1;
 }
 
 void PlanView::SetHullTris(const AuScTriList& tris)
@@ -2546,13 +2580,20 @@ int PlanView::AreaAt(const QPointF& world) const
 	if(!m_plan)
 		return -1;
 	const QPointF c = ToCells(world);
+	// The site (on every deck) only when nothing else is there.
+	int site = -1;
 	for(int i = m_plan->areas.size() - 1; i >= 0; --i)
 	{
 		const PlanArea& a = m_plan->areas.at(i);
-		if(a.deck == m_deck && c.x() >= a.cx0 && c.x() <= a.cx1 && c.y() >= a.cy0 && c.y() <= a.cy1)
-			return i;
+		const bool isSite = a.kind == "site";
+		if((a.deck == m_deck || isSite) && c.x() >= a.cx0 && c.x() <= a.cx1 && c.y() >= a.cy0 && c.y() <= a.cy1)
+		{
+			if(!isSite)
+				return i;
+			site = i;
+		}
 	}
-	return -1;
+	return site;
 }
 
 int PlanView::PropAt(const QPointF& world) const
@@ -2584,6 +2625,7 @@ static QColor AreaColour(const QString& kind)
 	if(kind == "buildzone")	return QColor(90, 160, 255);
 	if(kind == "cobbles")	return QColor(160, 150, 140);
 	if(kind == "tarmac")	return QColor(70, 70, 80);
+	if(kind == "site")		return QColor(255, 220, 90);
 	return QColor(190, 190, 190);	// Paving.
 }
 
@@ -2594,6 +2636,7 @@ static QString AreaLabel(const QString& kind)
 	if(kind == "buildzone")	return "build zone";
 	if(kind == "cobbles")	return "cobbles";
 	if(kind == "tarmac")	return "tarmac";
+	if(kind == "site")		return "site";
 	return "paving";
 }
 
@@ -2606,6 +2649,21 @@ void PlanView::PaintGround(QPainter& p, double cellPixels)
 	};
 	for(const PlanArea& a : m_plan->areas)
 	{
+		if(a.kind == "site" && m_plan->IsBuilding())
+		{
+			// The plot: on every deck, an outline with its size at the top.
+			const QRectF r = rectOf(a.cx0, a.cy0, a.cx1, a.cy1);
+			const QColor c = AreaColour(a.kind);
+			p.setPen(QPen(c, qMax(2.0, cellPixels / 8), Qt::DashDotLine));
+			p.setBrush(Qt::NoBrush);
+			p.drawRect(r);
+			const double w = (a.cx1 - a.cx0) * m_plan->cellFeet, d = (a.cy1 - a.cy0) * m_plan->cellFeet;
+			const QString label = QString("site - %1 x %2 m").arg(w * 0.3048, 0, 'f', 1).arg(d * 0.3048, 0, 'f', 1);
+			const QRectF box = p.boundingRect(r.adjusted(4, 4, -4, -4), Qt::AlignHCenter | Qt::AlignTop, label);
+			p.fillRect(box.adjusted(-4, -1, 4, 1), QColor(20, 20, 20, 200));
+			p.drawText(box, Qt::AlignCenter, label);
+			continue;
+		}
 		if(a.deck != m_deck)
 			continue;
 		const QRectF r = rectOf(a.cx0, a.cy0, a.cx1, a.cy1);
@@ -2620,6 +2678,17 @@ void PlanView::PaintGround(QPainter& p, double cellPixels)
 		if(a.kind == "field")
 			text += QString(" - %1 m², %2 field(s)").arg(qRound(feet2 * 0.09290304)).arg(int(feet2 * 0.09290304 / 4000));
 		p.drawText(r, Qt::AlignCenter | Qt::TextWordWrap, text);
+	}
+	// What is outside the site, in red.
+	if(m_plan->IsBuilding() && m_plan->SiteArea() >= 0)
+	{
+		p.setPen(QPen(QColor(235, 50, 50), qMax(1.5, cellPixels / 12)));
+		QColor fill(235, 50, 50, 70);
+		p.setBrush(fill);
+		for(const TriPlan::SiteProblem& sp : m_plan->OutsideSite())
+			if(sp.deck == m_deck)
+				p.drawRect(QRectF(ToScreen(sp.where.topLeft()), ToScreen(sp.where.bottomRight())).normalized());
+		p.setBrush(Qt::NoBrush);
 	}
 	if(m_areaDrag)
 	{

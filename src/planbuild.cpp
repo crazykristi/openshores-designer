@@ -5357,6 +5357,8 @@ static void AddPlanGround(AuBdDesign& design, const TriPlan& plan, const Buildin
 		const QPointF lo = plan.Corner(a.cx0, a.cy0), hi = plan.Corner(a.cx1, a.cy1);
 		const double x0 = qMin(lo.x(), hi.x()) + shift.x, x1 = qMax(lo.x(), hi.x()) + shift.x;
 		const double y0 = qMin(lo.y(), hi.y()) + shift.y, y1 = qMax(lo.y(), hi.y()) + shift.y;
+		if(a.kind == "site")
+			continue;		// The building's own site, made at the end (SetMainSite).
 		if(a.kind == "buildzone" && !platform)
 		{
 			report.warnings << "A build zone was left out: the game takes build zones only on platforms (Building box, "
@@ -5469,52 +5471,145 @@ static void AddPlanGround(AuBdDesign& design, const TriPlan& plan, const Buildin
 	}
 }
 
-// Makes the building's site (the first site part with no pavement) reach over
-// the box mn..mx too, with a margin.
-static void GrowSite(AuBdDesign& design, const AuPoint& mn, const AuPoint& mx)
+// Makes the building's site (the site parts with no pavement; the areas
+// drawn are paved) the rectangle mn..mx, keeping its grass.
+static void SetMainSite(AuBdDesign& design, const AuPoint& mn, const AuPoint& mx)
 {
-	quint16 siteId = 0;
+	QList<quint16> old;
+	quint8 grass = 1;
 	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
 	{
 		const AuScSite* site = dynamic_cast<const AuScSite*>(it.value());
-		if(site && site->Pavement() == WORLDTEX_TYPE(0) && (!siteId || it.key() < siteId))
-			siteId = it.key();
-	}
-	AuPoint smn = mn, smx = mx;
-	quint8 grass = 1;
-	if(siteId)
-	{
-		const AuScSite* site = dynamic_cast<const AuScSite*>(design.Parts().value(siteId));
-		grass = site->Grass();
-		QSet<quint32> ids;
-		site->VertexIds(ids);
-		AuPoint omn(1e30, 1e30, 0), omx(-1e30, -1e30, 0);
-		for(quint32 v : ids)
+		if(site && site->Pavement() == WORLDTEX_TYPE(0))
 		{
-			const AuPoint p = site->VertexLoc(v);
-			omn = omn.Min(p);
-			omx = omx.Max(p);
+			if(old.isEmpty())
+				grass = site->Grass();
+			old << it.key();
 		}
-		// Already covers it all.
-		if(omn.x <= mn.x && omn.y <= mn.y && omx.x >= mx.x && omx.y >= mx.y)
-			return;
-		smn = omn.Min(mn);
-		smx = omx.Max(mx);
-		AuScParts deleted;
-		design.Parts().DeletePart(siteId, deleted);
 	}
-	const double m = 10;
+	for(quint16 id : old)
+	{
+		AuScParts deleted;
+		design.Parts().DeletePart(id, deleted);
+	}
 	AuPointArray bnd;
-	bnd.append(AuPoint(qMin(smn.x, mn.x - m), qMin(smn.y, mn.y - m), 0));
-	bnd.append(AuPoint(qMax(smx.x, mx.x + m), qMin(smn.y, mn.y - m), 0));
-	bnd.append(AuPoint(qMax(smx.x, mx.x + m), qMax(smx.y, mx.y + m), 0));
-	bnd.append(AuPoint(qMin(smn.x, mn.x - m), qMax(smx.y, mx.y + m), 0));
+	bnd.append(AuPoint(mn.x, mn.y, 0));
+	bnd.append(AuPoint(mx.x, mn.y, 0));
+	bnd.append(AuPoint(mx.x, mx.y, 0));
+	bnd.append(AuPoint(mn.x, mx.y, 0));
 	AuScSite site;
 	site.MakeSite(bnd, AuMatrix4x4::IdentityMatrix());
 	site.SetGrade(AuScSite::Level);
 	site.SetGrass(grass);
 	if(site.IsValid())
 		design.Parts().AddPart(site);
+}
+
+// The box (x and y, feet) every part but the building's own site takes up.
+static void PartsBox(const AuBdDesign& design, AuPoint& mn, AuPoint& mx)
+{
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted())
+			continue;
+		const AuScSite* site = dynamic_cast<const AuScSite*>(part);
+		if(site && site->Pavement() == WORLDTEX_TYPE(0))
+			continue;
+		QSet<quint32> ids;
+		part->VertexIds(ids);
+		for(quint32 v : ids)
+		{
+			const AuPoint p = part->VertexLoc(v);
+			mn = mn.Min(AuPoint(p.x, p.y, 0));
+			mx = mx.Max(AuPoint(p.x, p.y, 0));
+		}
+	}
+}
+
+// The building's site: the one drawn (everything outside it is an error), or
+// else the closest rectangle round all of the building, its parking and its
+// ground. 'ground' is what AddPlanGround took up, 'shift' how far the plan
+// moved onto the ground.
+static void PlaceSite(AuBdDesign& design, const TriPlan& plan, const AuPoint& shift, const AuPoint& groundMin,
+		const AuPoint& groundMax, const QRectF& generated, PlanBuildReport& report)
+{
+	const QRectF drawn = plan.SiteRect();
+	if(drawn.isNull())
+	{
+		AuPoint mn(1e30, 1e30, 0), mx(-1e30, -1e30, 0);
+		PartsBox(design, mn, mx);
+		if(groundMin.x <= groundMax.x)
+		{
+			mn = mn.Min(groundMin);
+			mx = mx.Max(groundMax);
+		}
+		if(!generated.isNull())
+		{
+			mn = mn.Min(AuPoint(generated.left(), generated.top(), 0));
+			mx = mx.Max(AuPoint(generated.right(), generated.bottom(), 0));
+		}
+		if(mn.x > mx.x)
+			return;
+		// The origin (the middle of the hull) is inside it.
+		mn = mn.Min(AuPoint(0, 0, 0));
+		mx = mx.Max(AuPoint(0, 0, 0));
+		SetMainSite(design, mn, mx);
+		report.notes << QString("No site was drawn: the site is the closest rectangle round the building, %1 by %2 ft.")
+				.arg(qRound(mx.x - mn.x)).arg(qRound(mx.y - mn.y));
+		return;
+	}
+	const QRectF site = drawn.translated(shift.x, shift.y);
+	const QRectF inside = site.adjusted(-.05, -.05, .05, .05);
+	const QStringList drawnOut = plan.OutsideSiteText();
+	for(const QString& line : drawnOut)
+		report.errors << QString("Site: %1. Make the site bigger (Rooms page, Areas) or move them in.").arg(line);
+	bool hullReported = false;
+	for(const TriPlan::SiteProblem& p : plan.OutsideSite())
+		hullReported = hullReported || p.what == "hull";
+	// What the build made itself: the hull as it came out, the parking, the
+	// fields and the spacecraft berths.
+	QMap<QString, int> made;
+	for(AuScParts::const_iterator it = design.Parts().constBegin(); it != design.Parts().constEnd(); ++it)
+	{
+		const AuScPart* part = it.value();
+		if(!part || part->IsOmitted())
+			continue;
+		const AuScSite* s = dynamic_cast<const AuScSite*>(part);
+		if(s && s->Pavement() == WORLDTEX_TYPE(0))
+			continue;
+		if(part->IsHullMesh() && hullReported)
+			continue;
+		if(s && !drawnOut.isEmpty())
+			continue;		// A drawn area, already said.
+		AuPoint mn(1e30, 1e30, 0), mx(-1e30, -1e30, 0);
+		QSet<quint32> ids;
+		part->VertexIds(ids);
+		for(quint32 v : ids)
+		{
+			const AuPoint q = part->VertexLoc(v);
+			mn = mn.Min(AuPoint(q.x, q.y, 0));
+			mx = mx.Max(AuPoint(q.x, q.y, 0));
+		}
+		// By hand: QRectF::contains turns down rectangles of no width, as a
+		// path's often is.
+		if(mn.x <= mx.x && (mn.x < inside.left() || mx.x > inside.right() || mn.y < inside.top() || mx.y > inside.bottom()))
+			made[part->TypeName()] += 1;
+	}
+	if(!made.isEmpty())
+	{
+		QStringList what;
+		for(auto it = made.constBegin(); it != made.constEnd(); ++it)
+			what << QString("%1 x %2").arg(it.value()).arg(it.key());
+		report.errors << QString("Site: parts the build made reach outside the site (%1): the hull as shaped, the ramps "
+				"and ladders down from hull doors, the parking laid out by itself, the fields of the Building box. Make "
+				"the site bigger.").arg(what.join(", "));
+	}
+	if(!generated.isNull() && !inside.contains(generated))
+		report.errors << "Site: the parking the build lays out by itself (Building box counts) does not fit in the site. "
+						 "Draw the parking spots inside it instead, or make the site bigger.";
+	SetMainSite(design, AuPoint(site.left(), site.top(), 0), AuPoint(site.right(), site.bottom(), 0));
+	report.notes << QString("The site drawn: %1 by %2 ft.").arg(qRound(site.width())).arg(qRound(site.height()));
 }
 
 // The rest of a building: stand the drawn hull on the ground, move it into
@@ -5925,6 +6020,8 @@ static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, con
 	// fire control station for each.
 	if(!weaponEmitters.isEmpty())
 		brief.volumes.weaponBays = qMax(brief.volumes.weaponBays, weaponEmitters.size());
+	if(plan.SiteArea() >= 0)
+		brief.siteBounds = plan.SiteRect().translated(shift.x, shift.y);
 	const BuildingResult result = GenerateBuilding(*building, brief, "drawn", &rooms, &drawnSpots);
 	if(!weaponEmitters.isEmpty())
 	{
@@ -5940,9 +6037,10 @@ static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, con
 		AuPoint gmn(1e30, 1e30, 0), gmx(-1e30, -1e30, 0);
 		const bool platform = noSite || brief.structure == "groundplatform" || iid == IID_GroundPlatform;
 		AddPlanGround(*building, plan, brief, shift, fieldCopies, noSite, platform, report, gmn, gmx);
-		// The site has to cover all of it.
-		if(!noSite && gmn.x <= gmx.x)
-			GrowSite(*building, gmn, gmx);
+		if(!noSite)
+			PlaceSite(*building, plan, shift, gmn, gmx, result.groundUse, report);
+		else if(plan.SiteArea() >= 0)
+			report.warnings << "The site drawn was left out: sea and aerial platforms must not have a site.";
 	}
 	for(const QString& w : result.warnings)
 		(w.startsWith("hull volume") ? report.notes : report.warnings) << w;

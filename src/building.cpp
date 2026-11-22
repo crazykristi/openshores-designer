@@ -3,6 +3,8 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "building.h"
+
+#include <QLineF>
 #include "interior.h"
 
 #include "generate.h"
@@ -1213,15 +1215,65 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 		AuMatrix4x4 plane = AuMatrix4x4::IdentityMatrix();
 		// Spacecraft berths beside the building, on the +X side: each takes
 		// GroundSpawnSizeLimit (119 ft) each way from its centre.
+		const QRectF& site = brief.siteBounds;
+		const double gapIn = 8.;
+		// With a drawn site: the free place for a w by d rectangle nearest
+		// the front of the building, inside the site.
+		auto freeInSite = [&](double w, double d, QRectF& found) {
+			if(site.width() < w || site.height() < d)
+				return false;
+			const QPointF aim(0.5 * (hullMin.x + hullMax.x), hullMin.y);
+			const double sx = qMax(1.0, (w + gapIn) / 2), sy = qMax(1.0, (d + gapIn) / 2);
+			bool any = false;
+			double best = 0;
+			for(double y = site.top(); y + d <= site.bottom() + 1e-6; y += sy)
+				for(double x = site.left(); x + w <= site.right() + 1e-6; x += sx)
+				{
+					const QRectF r(x, y, w, d);
+					const QRectF k = r.adjusted(-gapIn / 2, -gapIn / 2, gapIn / 2, gapIn / 2);
+					bool clear = true;
+					for(const QRectF& t : taken)
+						if(k.intersects(t))
+						{
+							clear = false;
+							break;
+						}
+					if(!clear)
+						continue;
+					const double dist = QLineF(r.center(), aim).length();
+					if(!any || dist < best)
+					{
+						any = true;
+						best = dist;
+						found = r;
+					}
+				}
+			return any;
+		};
+		int berthsLeft = 0;
 		for(int i = 0; i < brief.spacecraftParking; ++i)
 		{
-			const AuPoint c(hullMax.x + 20. + kSpacecraftBerth * (2 * i + 1), 0, 0);
+			AuPoint c(hullMax.x + 20. + kSpacecraftBerth * (2 * i + 1), 0, 0);
+			if(!site.isNull())
+			{
+				QRectF r;
+				if(!freeInSite(2 * kSpacecraftBerth, 2 * kSpacecraftBerth, r))
+				{
+					++berthsLeft;
+					continue;
+				}
+				c = AuPoint(r.center().x(), r.center().y(), 0);
+			}
 			AuScSpacecraftParkingSpot spot;
 			spot.MakeIcon(c, 0.f, plane);
 			if(spot.IsValid())
 				design.Parts().AddPart(spot);
 			taken << QRectF(c.x - kSpacecraftBerth, c.y - kSpacecraftBerth, 2 * kSpacecraftBerth, 2 * kSpacecraftBerth);
+			result.groundUse = result.groundUse.united(taken.last());
 		}
+		if(berthsLeft)
+			result.warnings << QString("%1 spacecraft berth(s) (238 ft square each) did not fit in the site and were left "
+					"out.").arg(berthsLeft);
 		const double gap = 8.;
 		const double rowWidth = qMax(120., hullMax.x - hullMin.x + 40.);
 		double front = hullMin.y - 10.;	// Rows grow outward from here.
@@ -1233,6 +1285,33 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 			return false;
 		};
 		auto placeRows = [&](int count, double w, double d, AuScPart::PART_TYPE type) {
+			if(!site.isNull())
+			{
+				// Inside the drawn site, nearest the front first.
+				int left = 0;
+				for(int i = 0; i < count; ++i)
+				{
+					QRectF r;
+					if(!freeInSite(w, d, r))
+					{
+						++left;
+						continue;
+					}
+					AuScPart* part = AuScPart::Create(type);
+					if(AuScIcon* icon = dynamic_cast<AuScIcon*>(part))
+					{
+						icon->MakeIcon(AuPoint(r.center().x(), r.center().y(), 0), 0.f, plane);
+						if(icon->IsValid())
+							design.Parts().AddPart(*icon);
+					}
+					delete part;
+					taken << r;
+					parkedArea = parkedArea.isNull() ? r : parkedArea.united(r);
+				}
+				if(left)
+					result.warnings << QString("%1 parking spot(s) did not fit in the site and were left out.").arg(left);
+				return;
+			}
 			const double pitch = w + gap;
 			const int perRow = qMax(1, int((rowWidth + gap) / pitch));
 			double rowFar = front;
@@ -1271,6 +1350,9 @@ BuildingResult GenerateBuilding(AuBdDesign& design, const BuildingBrief& briefIn
 		placeRows(brief.spaceParking, 12 * feet, 17 * feet, AuScPart::Part_SpaceVehicleParkingSpot);
 		placeRows(brief.rocketParking, 10 * feet, 10 * feet, AuScPart::Part_RocketParkingSpot);
 	}
+
+	if(!parkedArea.isNull())
+		result.groundUse = result.groundUse.united(parkedArea);
 
 	// The site. It is a flat polygon on the ground that has to cover the
 	// whole building and the parking. Sea and aerial platforms must not

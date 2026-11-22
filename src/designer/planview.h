@@ -130,7 +130,10 @@ private:
 	// the triangle, rather than being replaced by the hover text at once.
 	void	Notice(const TriRef& t, const QString& text);
 	// The grid corner nearest a point of the plan.
-	void	NearestCorner(const QPointF& world, int& ix, int& iy) const;
+	// 'beyond': how many cells past the grid's edge the corner may be (the
+	// site, so that it can hold the hull's skin round cells at the edge).
+	void	NearestCorner(const QPointF& world, int& ix, int& iy, int beyond = 0) const;
+	int		SiteBeyond() const;
 	// Where a contrail emitter is drawn: where it ends up on the hull.
 	QPointF	ContrailSpot(const PlanEmitter& e) const;
 

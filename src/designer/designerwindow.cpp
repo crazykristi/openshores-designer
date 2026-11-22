@@ -437,8 +437,8 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 
 	// Menus.
 	QMenu* file = menuBar()->addMenu("&File");
-	file->addAction("&New plan", this, SLOT(OnNew()), QKeySequence::New);
-	file->addAction("New plan from a 3D &model...", this, SLOT(OnNewFromModel()));
+	file->addAction("&New spaceship", this, SLOT(OnNew()), QKeySequence::New);
+	file->addAction("New spaceship from a 3D &model...", this, SLOT(OnNewFromModel()));
 	file->addAction("New &fighter (experimental)", this, SLOT(OnNewFighter()));
 	file->addAction("New fighter from a 3D model (experimental)...", this, SLOT(OnNewFighterFromModel()));
 	file->addAction("New &building...", this, SLOT(OnNewBuilding()));
@@ -1121,9 +1121,13 @@ QWidget* DesignerWindow::MakeRoomPage()
 		QComboBox* box = new QComboBox;
 		for(const auto& c : QList<QPair<QString, QString> >{ { "field", "Field (cracked earth)" }, { "grass", "Lawn" },
 				{ "paving", "Paving (concrete)" }, { "cobbles", "Cobbles" }, { "tarmac", "Tarmac" },
-				{ "buildzone", "Build zone (platforms)" } })
+				{ "buildzone", "Build zone (platforms)" }, { "site", "Site (the building's plot)" } })
 			box->addItem(c.second, c.first);
-		box->setToolTip("What the rectangles drawn from now on are.");
+		box->setToolTip("What the rectangles drawn from now on are.\n\nSite: the building's plot, the game's build site. "
+				"There is one, on every deck; drawing a new one moves it, a click on it takes it away. Everything "
+				"drawn has to be inside it (the hull with its skin, parking, areas, things on the ground): what is "
+				"outside shows in red and stops the build. Without a site, the build makes the closest rectangle "
+				"round all of it. Sea and aerial platforms have no site.");
 		f->addRow("Area", box);
 		connect(box, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, box](int) {
 			m_view->SetAreaKind(box->currentData().toString());
@@ -3270,7 +3274,7 @@ void DesignerWindow::NewFromModel(bool fighter)
 	if(modelFile.isEmpty())
 		return;
 	QDialog dialog(this);
-	dialog.setWindowTitle(fighter ? "New fighter from a 3D model (experimental)" : "New plan from a 3D model");
+	dialog.setWindowTitle(fighter ? "New fighter from a 3D model (experimental)" : "New spaceship from a 3D model");
 	QFormLayout* form = new QFormLayout(&dialog);
 	if(fighter)
 	{

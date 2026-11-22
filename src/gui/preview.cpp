@@ -4,6 +4,7 @@
 
 #include "preview.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 
@@ -37,9 +38,11 @@
 #include "auglsl.h"
 #include "version.h"
 #include "auscdesign.h"
+#include "aubddesign.h"
 #include "auscface.h"
 #include "auscparts.h"
 #include "audesign.h"
+#include "generate.h"
 
 namespace {
 
@@ -237,11 +240,96 @@ bool WarnAboutPrerequisites(const QString& problem)
 	return true;
 }
 
+namespace
+{
+// Fore, aft, port, starboard and up, in the view's corner, turning with the
+// camera. A child widget over the 3D view rather than drawn into it, so that
+// it shows the same everywhere.
+class DirectionMarker : public QWidget
+{
+public:
+	explicit DirectionMarker(DesignPreview* view) : QWidget(view), m_view(view)
+	{
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		setAttribute(Qt::WA_TranslucentBackground);
+		setFixedSize(120, 120);
+	}
+
+protected:
+	void paintEvent(QPaintEvent*) override
+	{
+		const QMatrix4x4 turn = m_view->ViewTurn();
+		const QVector3D fore = m_view->Fore(), port = m_view->Port(), up(0, 0, 1);
+		struct Arm { QVector3D dir; QString label; QColor colour; bool main; };
+		const QList<Arm> arms = {
+			{ fore, tr("Fore"), QColor(255, 120, 90), true },
+			{ -fore, tr("Aft"), QColor(255, 120, 90), false },
+			{ port, tr("Port"), QColor(235, 70, 70), true },
+			{ -port, tr("Stbd"), QColor(80, 200, 110), true },
+			{ up, tr("Up"), QColor(110, 170, 255), true },
+		};
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		const QPointF c(width() / 2.0, height() / 2.0);
+		const double len = width() / 2.0 - 22;
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(0, 0, 0, 90));
+		p.drawEllipse(c, len + 18, len + 18);
+		// The furthest first, so that the nearest are drawn over them.
+		QList<QPair<float, int> > order;
+		for(int i = 0; i < arms.size(); ++i)
+			order << qMakePair(turn.mapVector(arms.at(i).dir).z(), i);
+		std::sort(order.begin(), order.end());
+		QFont font = p.font();
+		font.setPointSizeF(qMax(7.0, font.pointSizeF() * .85));
+		font.setBold(true);
+		p.setFont(font);
+		for(const auto& o : order)
+		{
+			const Arm& a = arms.at(o.second);
+			const QVector3D v = turn.mapVector(a.dir);
+			// Pointing away from the eye: dimmer.
+			const bool away = v.z() < -0.05f;
+			QColor colour = a.colour;
+			if(away)
+				colour.setAlpha(110);
+			const QPointF tip = c + QPointF(v.x(), -v.y()) * len;
+			p.setPen(QPen(colour, a.main ? 2.5 : 1.5, a.main ? Qt::SolidLine : Qt::DashLine, Qt::RoundCap));
+			p.drawLine(c, tip);
+			const QPointF out = c + QPointF(v.x(), -v.y()) * (len + 11);
+			const QRectF box(out.x() - 20, out.y() - 8, 40, 16);
+			p.setPen(away ? QColor(220, 220, 220, 120) : QColor(245, 245, 245));
+			p.drawText(box, Qt::AlignCenter, a.label);
+		}
+	}
+
+private:
+	DesignPreview*	m_view;
+};
+}
+
 DesignPreview::DesignPreview(QWidget* parent) :
 	QOpenGLWidget(parent)
 {
 	setMinimumSize(320, 240);
 	setFocusPolicy(Qt::StrongFocus);
+	m_directions = new DirectionMarker(this);
+	m_directions->setToolTip(tr("Which way the design faces. Fore and port are as on the plan; a ship is turned to the "
+			"game's axes when built (fore along +Y), a building is not."));
+	m_directions->hide();
+}
+
+QMatrix4x4 DesignPreview::ViewTurn() const
+{
+	QMatrix4x4 projection, view;
+	BuildCameraMatrix(projection, view);
+	return view;
+}
+
+void DesignPreview::PlaceDirections()
+{
+	if(m_directions)
+		m_directions->move(width() - m_directions->width() - 6, height() - m_directions->height() - 6);
 }
 
 DesignPreview::~DesignPreview()
@@ -309,7 +397,7 @@ void DesignPreview::PlaceEffectNote()
 {
 	if(!m_effectNote)
 		return;
-	const int w = qMax(120, width() - 20);
+	const int w = qMax(120, width() - 20 - (m_directions && m_directions->isVisible() ? m_directions->width() + 6 : 0));
 	m_effectNote->setFixedWidth(qMin(w, 460));
 	m_effectNote->adjustSize();
 	m_effectNote->move(10, height() - m_effectNote->height() - 10);
@@ -446,6 +534,26 @@ void DesignPreview::SetDesign(const AuDesign* design, bool frame)
 	m_design = design;
 	m_pickValid = false;
 	m_effects = design ? AnalyseEffects(*design) : DesignEffects();
+	// A ship is in the game's axes (the plan's fore, +x, turned to +Y); a
+	// building keeps the plan's.
+	if(design && dynamic_cast<const AuBdDesign*>(design))
+	{
+		m_fore = QVector3D(1, 0, 0);
+		m_port = QVector3D(0, 1, 0);
+	}
+	else
+	{
+		const AuMatrix4x4 t = QuarterTurnToFore();
+		const AuPoint f = t.Project(AuPoint(1, 0, 0)), q = t.Project(AuPoint(0, 1, 0));
+		m_fore = QVector3D(float(f.x), float(f.y), float(f.z));
+		m_port = QVector3D(float(q.x), float(q.y), float(q.z));
+	}
+	if(m_directions)
+	{
+		PlaceDirections();
+		m_directions->setVisible(design != 0);
+		m_directions->update();
+	}
 	UpdateEffectTimer();
 	UpdateEffectNote();
 	// The palette may be different, so any textures that were loaded for the
@@ -543,6 +651,7 @@ void DesignPreview::resizeGL(int w, int h)
 	Q_UNUSED(w);
 	Q_UNUSED(h);
 	PlaceEffectNote();
+	PlaceDirections();
 }
 
 // A ball at 'at' and an arrow from it along 'dir'.
@@ -1187,6 +1296,8 @@ void DesignPreview::paintGL()
 		painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
 		painter.drawPolyline(outline);
 	}
+	if(m_directions && m_directions->isVisible())
+		m_directions->update();
 	if(m_fly)
 	{
 		QPainter painter(this);

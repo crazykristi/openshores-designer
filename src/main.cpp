@@ -2182,12 +2182,14 @@ int cmdTris(const QStringList& args)
 		err() << "could not load: " << args.first() << "\n";
 		return 1;
 	}
-	const AuScPart* part = design->Parts().value(quint16(args.at(1).toUInt()));
+	AuScPart* part = design->Parts().value(quint16(args.at(1).toUInt()));
 	if(!part)
 	{
 		err() << "no part " << args.at(1) << "\n";
 		return 1;
 	}
+	if(dynamic_cast<AuScDoor*>(part))
+		part->SetState(args.size() > 2 ? quint8(args.at(2).toUInt()) : quint8(AuScDoor::Closed));	// A door: its closed state, or the one given.
 	AuScFaceList faces;
 	part->Faces(faces);
 	AuScTriList tris;
@@ -3212,7 +3214,7 @@ void usage()
 	out() << "  shipgen inspect   <design.SoH>\n";
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
 	out() << "  shipgen path-check <design.SoH>  the walk paths as networks: how many, how big, which rooms\n";
-	out() << "  shipgen tris     <design.SoH> <part>  every triangle of one part\n"
+	out() << "  shipgen tris     <design.SoH> <part> [state]  every triangle of one part (a door: closed, or the state given)\n"
 		"  shipgen facing-check <design.SoH>  which way the hull triangles face, by the game's clockwise rule\n";
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";

@@ -1996,6 +1996,41 @@ static QStringList CutOffRooms(const AuDesign& design)
 	return cutOff;
 }
 
+// Cuts a room's wall open over a tall hull door, and gives the piece cut out
+// to the door. The door is made of the hull's piece and the lowest deck's
+// wall; the hull is drawn from outside only, so without the walls of the
+// decks above, the closed door could be seen through from inside there.
+static bool CutIntoDoor(AuDesign& design, const AuPoint& mn, const AuPoint& mx, quint16 meshId, quint16 doorId)
+{
+	AuScFaceList jig = BoxFaces(mn, mx);
+	OrientAsHull(jig);
+	QList<quint16> added;
+	if(!JigCut(design, AuScPart::Part_CuttingJig, jig, meshId, 0, &added))
+		return false;
+	AuScPart* door = design.Parts().value(doorId);
+	AuScParts deleted;
+	for(quint16 id : added)
+	{
+		AuScPart* piece = design.Parts().value(id);
+		if(door && piece)
+		{
+			// A door's faces are kept per state: the piece belongs to the
+			// closed door (the open door is out of the way).
+			AuScFaceList faces;
+			piece->Faces(faces);
+			AuScDoor* d = dynamic_cast<AuScDoor*>(door);
+			const quint8 was = door->State();
+			if(d)
+				door->SetState(AuScDoor::Closed);
+			door->AddFaces(faces);
+			if(d)
+				door->SetState(was);
+		}
+		design.Parts().DeletePart(id, deleted);
+	}
+	return true;
+}
+
 // The triangle of a deck under a point of the plan, or an invalid one off the grid.
 static TriRef TriAtPoint(const TriPlan& plan, int deck, const QPointF& q)
 {
@@ -6619,6 +6654,10 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	QList<AuPoint> onTheGround;		// Where a path meets the ground outside the ship.
 	QList<QPair<quint16, int> > texturedDoors;		// Door part, library texture.
 	QList<quint16> openDoors;						// Doors that start open (PlanDoor::open, PlanHatch::open).
+	// Tall hull doors: the opening, reaching a little into the room, and the
+	// room meshes of every deck it passes, cut again once the decks are joined.
+	struct TallDoorCut { AuPoint mn, mx; QList<quint16> meshes; quint16 door; };
+	QList<TallDoorCut> tallDoorCuts;
 	const double s = plan.cellFeet;
 	struct DoorRun { PlanDoor door; int count = 1; QPointF mid; QList<QPointF> buttons; };
 	QList<DoorRun> runs;
@@ -7057,9 +7096,38 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 				cmn.y = qMin(roomWall - sgn * .05, surface + sgn * 3.0);
 				cmx.y = qMax(roomWall - sgn * .05, surface + sgn * 3.0);
 			}
-			if(!upper || !CutOpening(*design, BoxFaces(cmn, cmx), upper->meshId, 0))
+			if(!upper || !CutIntoDoor(*design, cmn, cmx, upper->meshId, doorId))
 				report.warnings << QString("The wall of '%1' on deck %2, over its tall hull door, could not be cut.")
 						.arg(room->group).arg(door.deck + i + 1);
+		}
+		if(decksUp > 0)
+		{
+			// The decks of an open room are joined later (the floors and
+			// ceilings between them cut away, the gap lined with walls); that
+			// lining crosses this door, so the opening is cut through it then.
+			AuPoint cmn = mn, cmx = mx;
+			cmn.z += .01;
+			if(xWall)
+			{
+				cmn.x = qMin(roomWall - sgn * .3, surface + sgn * 3.0);
+				cmx.x = qMax(roomWall - sgn * .3, surface + sgn * 3.0);
+			}
+			else
+			{
+				cmn.y = qMin(roomWall - sgn * .3, surface + sgn * 3.0);
+				cmx.y = qMax(roomWall - sgn * .3, surface + sgn * 3.0);
+			}
+			QList<quint16> meshes;
+			meshes << room->meshId;
+			for(int i = 1; i <= decksUp; ++i)
+			{
+				const DeckRoom* ua = 0;
+				const DeckRoom* ub = 0;
+				upperRooms(i, ua, ub);
+				if(const DeckRoom* upper = ra ? ua : ub)
+					meshes << upper->meshId;
+			}
+			tallDoorCuts << TallDoorCut{ cmn, cmx, meshes, doorId };
 		}
 		if(door.open)
 			openDoors << doorId;
@@ -8100,6 +8168,10 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			}
 		}
 	}
+	for(const TallDoorCut& cut : tallDoorCuts)
+		for(quint16 meshId : cut.meshes)
+			if(meshId)
+				CutIntoDoor(*design, cut.mn, cut.mx, meshId, cut.door);
 	for(const DeckRoom& dr : deckRooms)
 		if(IsOpenToDeckBelowType(dr.type))
 		{

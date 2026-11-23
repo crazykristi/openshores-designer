@@ -3,8 +3,9 @@
 An offline ship and building designer for **Shores of Hazeron** and
 **OpenShores**. Draw a ship deck by deck with triangles, draw its rooms, doors,
 windows, ladders and stairs on the same triangles, paint it, and build a
-blueprint (`.SoH`) the game loads. It is linked against the game's own engine
-source, so every blueprint is checked by the engine's own report.
+blueprint (`.SoH`) the game loads. It is built with code from the Shores of
+Hazeron source release, so every blueprint is written and checked by the game
+engine's own code. The game does not need to be installed.
 
 ## Download
 

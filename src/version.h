@@ -9,7 +9,7 @@
 #define SHIPGEN_VERSION "0.3.8"
 // Where problems are reported (shown when the program finds something missing).
 #define SHIPGEN_ISSUES_URL "https://github.com/crazykristi/openshores-designer/issues"
-#define SHIPGEN_AUTHOR "Kristiana Moretti"
+#define SHIPGEN_AUTHOR "crazykristi"
 
 // The text of an About box: the program, version, author and when this copy
 // was built. Each program compiles it in its own files, which build.sh

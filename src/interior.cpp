@@ -217,6 +217,50 @@ bool JigCut(AuDesign& design, int jigType, const AuScFaceList& jigFaces, quint16
 	const bool ok = design.Parts().JigCutParts(AuId(0), sel, partsAdded, partsChanged, partsDeleted);
 	AuScFaceList::s_JigCutWithoutLining = false;
 
+	// The engine sometimes leaves the jig's own end faces in a room it cut:
+	// a panel across the whole opening, on the plane where the jig ends
+	// inside the room. A room is drawn from inside only, so the panel shows
+	// from one side and not the other: an opening between decks kept a
+	// floor seen from below (issue #3), a window between rooms showed a
+	// wall from one room (#4), and doors and stair openings the same. Faces
+	// of a room lying wholly inside the jig, on one of its two end planes
+	// across its thinnest side, are those panels; they are taken away.
+	if(ok)
+	{
+		const AuPoint jlo = jmn + AuPoint(.5, .5, .5), jhi = jmx - AuPoint(.5, .5, .5);
+		const AuPoint size = jhi - jlo;
+		const int thin = size.x <= size.y && size.x <= size.z ? 0 : size.y <= size.z ? 1 : 2;
+		auto coord = [](const AuPoint& p, int k) { return k == 0 ? p.x : k == 1 ? p.y : p.z; };
+		const double e = .02;
+		for(quint16 id : { hullId, roomId })
+		{
+			AuScPart* part = id ? design.Parts().value(id) : 0;
+			if(!part || part->Type() != AuScPart::Part_Room)
+				continue;
+			AuScFaceList faces, kept;
+			part->Faces(faces);
+			int dropped = 0;
+			for(const AuScFace* f : faces)
+			{
+				bool inside = f->VertexCount() >= 3, onLo = true, onHi = true;
+				for(int v = 0; v < f->VertexCount() && inside; ++v)
+				{
+					const AuPoint& q = f->Vertex(v);
+					inside = q.x >= jlo.x - e && q.x <= jhi.x + e && q.y >= jlo.y - e && q.y <= jhi.y + e &&
+							q.z >= jlo.z - e && q.z <= jhi.z + e;
+					onLo = onLo && fabs(coord(q, thin) - coord(jlo, thin)) < e;
+					onHi = onHi && fabs(coord(q, thin) - coord(jhi, thin)) < e;
+				}
+				if(inside && (onLo || onHi))
+					++dropped;
+				else
+					kept.AddFace(*f);
+			}
+			if(dropped && !kept.empty())
+				part->SetFaces(kept);
+		}
+	}
+
 	// On a curved hull the engine's lining of the hole comes out as many
 	// overlapping fragments. With the axis of the opening known, the lining
 	// is taken out of the hull and a clean frame is put round the opening.

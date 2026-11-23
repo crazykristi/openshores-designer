@@ -2168,6 +2168,39 @@ int cmdInspect(const QStringList& args)
 // The walk paths of a blueprint as networks: paths that meet end to end
 // (within a tenth of a foot) are one network. Each network with how many
 // paths it has, where it lies, and the rooms its points are in.
+// Every triangle of one part, corner by corner, with its game normal.
+int cmdTris(const QStringList& args)
+{
+	if(args.size() < 2)
+	{
+		err() << "usage: shipgen tris <design.SoH> <part id>\n";
+		return 2;
+	}
+	AuDesign* design = LoadForTool(args.first());
+	if(!design)
+	{
+		err() << "could not load: " << args.first() << "\n";
+		return 1;
+	}
+	const AuScPart* part = design->Parts().value(quint16(args.at(1).toUInt()));
+	if(!part)
+	{
+		err() << "no part " << args.at(1) << "\n";
+		return 1;
+	}
+	AuScFaceList faces;
+	part->Faces(faces);
+	AuScTriList tris;
+	faces.Triangles(tris);
+	for(const AuScTri& t : tris)
+	{
+		const AuPoint n = t.Normal();
+		auto pt = [](const AuPoint& p) { return QString("(%1 %2 %3)").arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2).arg(p.z, 0, 'f', 2); };
+		out() << pt(t.V0()) << " " << pt(t.V1()) << " " << pt(t.V2()) << "  n " << pt(n) << "\n";
+	}
+	return 0;
+}
+
 int cmdPathCheck(const QStringList& args)
 {
 	if(args.isEmpty())
@@ -3179,7 +3212,8 @@ void usage()
 	out() << "  shipgen inspect   <design.SoH>\n";
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
 	out() << "  shipgen path-check <design.SoH>  the walk paths as networks: how many, how big, which rooms\n";
-	out() << "  shipgen facing-check <design.SoH>  which way the hull triangles face, by the game's clockwise rule\n";
+	out() << "  shipgen tris     <design.SoH> <part>  every triangle of one part\n"
+		"  shipgen facing-check <design.SoH>  which way the hull triangles face, by the game's clockwise rule\n";
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";
 	out() << "  shipgen faces     <design.SoH> [<part>] [--where]  how the faces look: texture slot, paint, opacity, glow,\n"
@@ -3560,6 +3594,7 @@ int main(int argc, char* argv[])
 	if(command == "audit")				return cmdAudit(rest);
 	if(command == "facing-check")		return cmdFacingCheck(rest);
 	if(command == "path-check")			return cmdPathCheck(rest);
+	if(command == "tris")				return cmdTris(rest);
 	if(command == "resave")				return cmdResave(rest);
 	if(command == "decal")				return cmdDecal(rest);
 	if(command == "parts")				return cmdParts(rest);

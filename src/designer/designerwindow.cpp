@@ -43,6 +43,7 @@
 #include <QToolButton>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QSet>
@@ -72,6 +73,51 @@
 #include "preview.h"
 #include "shipgen.h"
 #include "version.h"
+
+// Metric unless the system's locale measures in US units: a guess at what
+// the user prefers, until they choose under View > Metric units.
+static bool LocaleIsMetric()
+{
+	return QLocale::system().measurementSystem() != QLocale::ImperialUSSystem;
+}
+
+static QString MetresText(double feet)
+{
+	const double m = feet * 0.3048;
+	return m < 10 ? QString::number(m, 'f', 1).replace(".0", "") : QString::number(qRound(m));
+}
+
+// The lengths in feet in a text shown to the user, in meters (lengths are
+// kept, and the build's report written, in feet, the game's own unit).
+static QString MetricText(QString t)
+{
+	static const QString num = "(\\d+(?:[.,]\\d+)?)";
+	auto feet = [](const QString& n) { QString c = n; c.remove(','); return c.toDouble(); };
+	// Where meters are already given beside the feet, only the meters.
+	t.replace(QRegularExpression(num + " ft \\(about " + num + " m\\)"), "\\2 m");
+	t.replace(QRegularExpression(" m \\(" + num + " ft\\)"), " m");
+	t.replace(QRegularExpression(", about " + num + " by " + num + " ft"), "");
+	QRegularExpression re(num + "(?: by " + num + ")? (sq ft|ft|feet|foot)\\b");
+	QString out;
+	int at = 0;
+	QRegularExpressionMatchIterator it = re.globalMatch(t);
+	while(it.hasNext())
+	{
+		const QRegularExpressionMatch m = it.next();
+		out += t.mid(at, m.capturedStart() - at);
+		if(m.captured(3) == "sq ft")
+			out += QString("%L1 m²").arg(qRound(feet(m.captured(1)) * 0.09290304));
+		else
+		{
+			out += MetresText(feet(m.captured(1)));
+			if(!m.captured(2).isEmpty())
+				out += " by " + MetresText(feet(m.captured(2)));
+			out += " m";
+		}
+		at = m.capturedEnd();
+	}
+	return out + t.mid(at);
+}
 
 // The room types of a spacecraft, in three groups by what the game does with
 // them, each with a tip saying what (ShipRoomUse). The game only reads a room's
@@ -483,9 +529,10 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 	QMenu* view = menuBar()->addMenu("&View");
 	QAction* metric = view->addAction("&Metric units");
 	metric->setCheckable(true);
-	metric->setChecked(QSettings().value("designer/metric", false).toBool());
+	metric->setChecked(QSettings().value("designer/metric", LocaleIsMetric()).toBool());
 	connect(metric, &QAction::toggled, this, &DesignerWindow::OnMetric);
 	m_metric = metric->isChecked();
+	QTimer::singleShot(0, this, [this]() { ApplyTextUnits(); });
 	view->addSeparator();
 	QAction* autoRedraw = view->addAction("Redraw the 3D view &while drawing");
 	autoRedraw->setCheckable(true);
@@ -621,7 +668,7 @@ DesignerWindow::DesignerWindow(QWidget* parent) : QMainWindow(parent)
 
 	connect(m_view, &PlanView::AboutToChange, this, &DesignerWindow::OnAboutToChange);
 	connect(m_view, &PlanView::PlanChanged, this, &DesignerWindow::OnPlanChanged);
-	connect(m_view, &PlanView::Hover, m_status, &QLabel::setText);
+	connect(m_view, &PlanView::Hover, this, [this](const QString& t) { m_status->setText(m_metric ? MetricText(t) : t); });
 	connect(m_steps, &QTabWidget::currentChanged, this, &DesignerWindow::OnStepChanged);
 	connect(m_deck, QOverload<int>::of(&QSpinBox::valueChanged), this, &DesignerWindow::OnDeckChanged);
 	connect(m_brush, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
@@ -1835,7 +1882,7 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_brushSize->setDecimals(2);
 	m_brushSize->setSingleStep(0.5);
 	m_brushSize->setSuffix(" ft");
-	m_brushSize->setValue(QSettings().value("designer/brushFeet", 4.0).toDouble());
+	m_brushSize->setValue(Shown(QSettings().value("designer/brushFeet", 4.0).toDouble()));
 	m_brushSize->setToolTip("Across the brush, where it meets the hull. Every face the brush touches is painted "
 			"whole, so the hull's own faces set how fine it can paint.");
 	brushForm->addRow("Size:", m_brushSize);
@@ -1853,9 +1900,11 @@ QWidget* DesignerWindow::MakePaintPage()
 	connect(m_brushTimer, &QTimer::timeout, this, &DesignerWindow::RefreshBrushedHull);
 	connect(m_brushOn, &QPushButton::toggled, this, &DesignerWindow::SetBrushOn);
 	auto brushChanged = [this]() {
-		QSettings().setValue("designer/brushFeet", m_brushSize->value());
+		if(m_updating)
+			return;
+		QSettings().setValue("designer/brushFeet", Feet(m_brushSize->value()));
 		if(m_brushOn->isChecked())
-			m_preview->SetBrush(true, m_brushSize->value(), m_brushShape->currentData().toBool());
+			m_preview->SetBrush(true, Feet(m_brushSize->value()), m_brushShape->currentData().toBool());
 	};
 	connect(m_brushShape, QOverload<int>::of(&QComboBox::currentIndexChanged), this, brushChanged);
 	connect(m_brushSize, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, brushChanged);
@@ -1876,7 +1925,7 @@ QWidget* DesignerWindow::MakePaintPage()
 		PlanStroke stroke;
 		stroke.paint = m_brushRubOut->isChecked() ? -1 : row;
 		stroke.square = m_brushShape->currentData().toBool();
-		stroke.size = m_brushSize->value();
+		stroke.size = Feet(m_brushSize->value());
 		m_plan.strokes << stroke;
 		m_stroking = true;
 	});
@@ -2017,7 +2066,7 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_texFeet->setDecimals(2);
 	m_texFeet->setSuffix(" ft");
 	m_texFeet->setKeyboardTracking(false);
-	m_texFeet->setToolTip("How many feet one repeat of the texture covers: smaller makes the pattern smaller.");
+	m_texFeet->setToolTip("How far one repeat of the texture reaches: smaller makes the pattern smaller.");
 	texForm->addRow("Size of one repeat:", m_texFeet);
 	m_texRotate = new QDoubleSpinBox;
 	m_texRotate->setRange(-180, 180);
@@ -2065,7 +2114,8 @@ QWidget* DesignerWindow::MakePaintPage()
 		EditTexture([wrap](PlanPaint& p) { p.wrap = wrap; });
 	});
 	connect(m_texFeet, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-		EditTexture([v](PlanPaint& p) { p.texFeet = v; });
+		const double feet = Feet(v);
+		EditTexture([feet](PlanPaint& p) { p.texFeet = feet; });
 	});
 	connect(m_texRotate, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
 		EditTexture([v](PlanPaint& p) { p.texRotate = v; });
@@ -2617,7 +2667,7 @@ void DesignerWindow::RefreshDecals()
 				from = i;
 		m_decalFrom->setCurrentIndex(from);
 		m_decalSides->setCurrentIndex(m_decalSides->findData(DecalSidesName(d.sides)));
-		m_decalWidth->setValue(d.width);
+		m_decalWidth->setValue(Shown(d.width));
 		m_decalRotate->setValue(d.rotate);
 		m_decalMirror->setChecked(d.mirror);
 		m_decalSelfLit->setValue(d.selfLit);
@@ -2644,7 +2694,7 @@ void DesignerWindow::DecalFormToPlan()
 		d.fromZ = kDecalSides[from].z;
 	}
 	DecalSidesFromName(m_decalSides->currentData().toString(), d.sides);
-	d.width = m_decalWidth->value();
+	d.width = Feet(m_decalWidth->value());
 	d.rotate = m_decalRotate->value();
 	d.mirror = m_decalMirror->isChecked();
 	d.selfLit = m_decalSelfLit->value();
@@ -2864,8 +2914,9 @@ void DesignerWindow::UpdateStairStyle()
 	const int n = m_plan.StairCells(kind, slope);
 	const double run = n * m_plan.cellFeet;
 	const double degrees = atan2(m_plan.deckFeet, run) * 180.0 / M_PI;
-	m_stairInfo->setText(QString("%1 cells long (%2 ft) and %3 wide, about %4 degrees, and a landing cell.")
-			.arg(n).arg(run, 0, 'f', 0).arg(m_stairWidth->value()).arg(degrees, 0, 'f', 0));
+	const QString info = QString("%1 cells long (%2 ft) and %3 wide, about %4 degrees, and a landing cell.")
+			.arg(n).arg(run, 0, 'f', 0).arg(m_stairWidth->value()).arg(degrees, 0, 'f', 0);
+	m_stairInfo->setText(m_metric ? MetricText(info) : info);
 }
 
 void DesignerWindow::RefreshRooms()
@@ -3405,7 +3456,7 @@ void DesignerWindow::RefreshBuilding()
 		it.value()->setValue(*BuildingCountField(b, it.key()));
 	m_bStackFields->setChecked(b.stackFields);
 	m_bBuildZone->setChecked(b.buildZone);
-	m_bLightRange->setValue(b.lightRange);
+	m_bLightRange->setValue(Shown(b.lightRange));
 	const QStringList warnings = BuildingRuleWarnings(b);
 	m_bWarnings->setText(warnings.isEmpty() ? QString() : "⚠ " + warnings.join("\n⚠ "));
 	m_bWarnings->setVisible(!warnings.isEmpty());
@@ -3425,7 +3476,7 @@ void DesignerWindow::OnBuildingChanged()
 		*BuildingCountField(b, it.key()) = it.value()->value();
 	b.stackFields = m_bStackFields->isChecked();
 	b.buildZone = m_bBuildZone->isChecked();
-	b.lightRange = m_bLightRange->value();
+	b.lightRange = Feet(m_bLightRange->value());
 	const QStringList warnings = BuildingRuleWarnings(b);
 	m_bWarnings->setText(warnings.isEmpty() ? QString() : "⚠ " + warnings.join("\n⚠ "));
 	m_bWarnings->setVisible(!warnings.isEmpty());
@@ -3458,6 +3509,39 @@ void DesignerWindow::OnMetric(bool metric)
 	m_updating = true;
 	RefreshAll();
 	m_updating = false;
+	ApplyTextUnits();
+}
+
+// The tooltips and labels in the unit chosen. Each keeps the text it was
+// given in feet, taken again whenever the widget was given a new one.
+void DesignerWindow::ApplyTextUnits()
+{
+	auto convert = [this](QObject* o, const char* key, const QString& now) -> QString {
+		const QByteArray shown = QByteArray(key) + "Shown", orig = QByteArray(key) + "Feet";
+		if(now != o->property(shown.constData()).toString())
+			o->setProperty(orig.constData(), now);
+		const QString base = o->property(orig.constData()).toString();
+		const QString text = m_metric ? MetricText(base) : base;
+		o->setProperty(shown.constData(), text);
+		return text;
+	};
+	for(QWidget* w : findChildren<QWidget*>())
+	{
+		if(!w->toolTip().isEmpty())
+			w->setToolTip(convert(w, "tip", w->toolTip()));
+		if(QLabel* label = qobject_cast<QLabel*>(w))
+			if(label != m_status && label != m_stairInfo && !label->text().isEmpty())
+				label->setText(convert(label, "text", label->text()));
+		if(QComboBox* combo = qobject_cast<QComboBox*>(w))
+			for(int i = 0; i < combo->count(); ++i)
+			{
+				const QString tip = combo->itemData(i, Qt::ToolTipRole).toString();
+				if(tip.isEmpty())
+					continue;
+				const QByteArray key = "item" + QByteArray::number(i);
+				combo->setItemData(i, convert(combo, key.constData(), tip), Qt::ToolTipRole);
+			}
+	}
 }
 
 // The suffixes, ranges and steps of the length boxes, in feet or meters.
@@ -3474,6 +3558,18 @@ void DesignerWindow::ApplyUnits()
 	// The emitter width is the view's own setting, not the plan's: kept in feet across the change.
 	const double emitterFeet = m_emitterSize->suffix() == " m" ? m_emitterSize->value() / 0.3048 : m_emitterSize->value();
 	const double markingFeet = m_markingSize->suffix() == " m" ? m_markingSize->value() / 0.3048 : m_markingSize->value();
+	const double brushFeet = m_brushSize->suffix() == " m" ? m_brushSize->value() / 0.3048 : m_brushSize->value();
+	// Kept in the plan, so set again from it after this; only their unit here.
+	const Box more[] = { { m_brushSize, .25, 200, .5 }, { m_texFeet, .25, 1000, .5 }, { m_decalWidth, .5, 2000, 1 },
+						 { m_bLightRange, 0, 2000, 5 } };
+	for(const Box& b : more)
+	{
+		b.box->setDecimals(2);
+		b.box->setRange(Shown(b.lo), Shown(b.hi));
+		b.box->setSingleStep(m_metric ? .1 : b.step);
+		b.box->setSuffix(m_metric ? " m" : " ft");
+	}
+	m_bLightRange->setSpecialValueText(m_metric ? "the game's own (14 m for a street light)" : "the game's own (45 ft for a street light)");
 	for(const Box& b : boxes)
 	{
 		b.box->setDecimals(m_metric ? 2 : 1);
@@ -3483,6 +3579,7 @@ void DesignerWindow::ApplyUnits()
 	}
 	m_emitterSize->setValue(Shown(emitterFeet));
 	m_markingSize->setValue(Shown(markingFeet));
+	m_brushSize->setValue(Shown(brushFeet));
 	m_updating = wasUpdating;
 	if(m_rooms && m_rooms->currentRow() >= 0)
 		OnRoomSelected(m_rooms->currentRow());		// The car height, in the new unit.
@@ -4346,7 +4443,7 @@ void DesignerWindow::RefreshTexture()
 	m_texWrap->setEnabled(textured);
 	m_texWrap->setCurrentIndex(qMax(0, m_texWrap->findData(p.wrap)));
 	m_texFeet->setEnabled(textured && p.wrap != "sphere");
-	m_texFeet->setValue(p.texFeet);
+	m_texFeet->setValue(Shown(p.texFeet));
 	m_texRotate->setEnabled(textured);
 	m_texRotate->setValue(p.texRotate);
 	m_texTint->setEnabled(textured);
@@ -4415,7 +4512,7 @@ void DesignerWindow::SetBrushOn(bool on)
 		m_preview->SetPicking(false);
 	if(on && m_preview->FreeFly())
 		m_preview->SetFreeFly(false);
-	m_preview->SetBrush(on, m_brushSize->value(), m_brushShape->currentData().toBool());
+	m_preview->SetBrush(on, Feet(m_brushSize->value()), m_brushShape->currentData().toBool());
 	if(on)
 	{
 		if(!m_hullShaped)
@@ -4709,9 +4806,11 @@ bool DesignerWindow::BuildNow()
 		top << "";
 		lines = top + lines;
 	}
-	m_reportText->setPlainText(lines.join("\n"));
+	m_reportText->setPlainText(m_metric ? MetricText(lines.join("\n")) : lines.join("\n"));
 	RefreshBerthBanners();
 	RefreshStats();
+	if(m_metric)
+		ApplyTextUnits();		// The stats and banners, written in feet.
 	return m_report.ok;
 }
 

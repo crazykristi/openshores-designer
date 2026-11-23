@@ -118,6 +118,7 @@ private slots:
 	void	OnNewBuilding();
 	void	OnNewFighterFromModel();
 	void	OnMetric(bool metric);
+	void	ApplyTextUnits();
 	void	OnOpen();
 	void	OnOpenBlueprint();
 	void	OnSave();

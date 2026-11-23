@@ -1537,6 +1537,8 @@ int cmdPlanFromModel(const QStringList& args)
 			options.flip = true;
 		else if(a == "--y-up")
 			options.yUp = true;
+		else if(a == "--slices-only")
+			;	// Handled once the plan is made.
 		else if(modelFile.isEmpty())
 			modelFile = a;
 		else if(planFile.isEmpty())
@@ -1552,7 +1554,7 @@ int cmdPlanFromModel(const QStringList& args)
 		err() << "usage: shipgen plan-from-model <model.stl|3ds|obj> <plan.json> [--length <ft>] [--threshold <0..1>]\n"
 				 "         [--decks <n>] [--slices <per deck>] [--method slices|solid] [--seal <ft>]\n"
 				 "         [--min-piece <triangles>] [--no-pinholes] [--grid-hull]\n"
-				 "         [--cell <ft>] [--deck <ft>] [--faces <n>] [--flip] [--y-up] [--fighter]\n";
+				 "         [--cell <ft>] [--deck <ft>] [--faces <n>] [--flip] [--y-up] [--fighter] [--slices-only]\n";
 		return 2;
 	}
 	TriPlan plan;
@@ -1582,6 +1584,11 @@ int cmdPlanFromModel(const QStringList& args)
 		plan.windowTopFeet = 3.5;
 		notes << "Fighter mode (experimental): draw the cockpit room, a hull door with a button, and a canopy "
 				 "(windows or ceiling windows that follow the hull).";
+	}
+	if(made && args.contains("--slices-only"))
+	{
+		plan.model = PlanModel();
+		notes << "Slices only: the model was let go; the hull is made from the drawn triangles alone.";
 	}
 	for(const QString& n : notes)
 		out() << n << "\n";
@@ -3240,7 +3247,7 @@ void usage()
 			 "                    [--clockwise | --anticlockwise] [--deck <n>]\n"
 			 "                                       turn a plan around, mirror it, turn it upside down, or a\n"
 			 "                                       quarter turn (seen from above), all of it or one deck\n";
-	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up] [--fighter]\n";
+	out() << "  shipgen plan-from-model <model> <plan.json> [--length <ft>] [--threshold <0..1>] [--flip] [--y-up] [--fighter] [--slices-only]\n";
 	out() << "                     a triangle plan with its hull filled in from a 3D model\n";
 	out() << "  shipgen plan-from-blueprint <design.SoH> <plan.json> [--cell <ft>] [--deck <ft>]\n";
 	out() << "                     a triangle plan from a blueprint: its hull, rooms, doors, ladders and lifts\n";

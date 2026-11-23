@@ -1,23 +1,53 @@
-# Shipgen Designer 0.3.7
+# Shipgen Designer 0.3.8
 
 The triangle designer for Shores of Hazeron and OpenShores: draw a ship deck
 by deck with triangles, draw its rooms, doors and windows on the same
 triangles, paint it, and build a blueprint the game loads.
 
-0.3.7 is the first full release, after four release candidates. Since
-0.3.7-beta-rc4-hf1 it adds expected stats for a chosen quality, a choice
-between a gravity and a rocket maneuver drive, a building's site, tall doors,
-walking room round curved hulls, surface effect previews and an MCP server so
-that an AI assistant can design in the open window, with fixes to the crew's
-walk paths, the blueprint size of big ships and the corner normals of the
-built parts. Everything from the betas is below.
+0.3.8 fixes openings between rooms that could only be seen through from one
+side, and tall hull doors; it adds a slice-only 3D model import and a guide
+to what a design needs to work in the game. The documentation has moved to
+the [wiki](https://github.com/crazykristi/openshores-designer/wiki).
 
 **Problems?** If something goes wrong, please either contact the author
 (`crazykristi` on GitHub) or report an issue at
 <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
 plan file (`.json`) and what you expected help most.
 
-## Bug fixes since rc4-hf1
+## Bug fixes since 0.3.7
+
+* **Openings between rooms showed a wall from one side** (issues #3, #4 and
+  #5). The engine's cut sometimes left a panel across the opening inside one
+  of the rooms, and since rooms are drawn from inside only, it showed from
+  one side and not the other. Rooms open to the deck below kept a floor and
+  ceiling between the decks, windows between rooms showed a wall from one
+  room, and open doors showed a wall behind them. Those panels are now taken
+  away. Build older blueprints again to get the fix.
+* **Tall hull doors**: from inside, the open door showed strips across it
+  where the decks meet, and the closed door was only drawn on its lowest
+  deck. The strips are cut away, and the closed door is drawn on every deck
+  it reaches.
+* **The sides of a hull doorway could be seen through**: between the room's
+  wall and the hull's surface the doorway had no walls, and the hull is drawn
+  from outside only. Each hull doorway is now lined out to the hull, like a
+  window's shaft.
+
+## New since 0.3.7
+
+* **Slice-only 3D model import**: *New spaceship from a 3D model* has *Keep
+  the model*. Untick it and the model is only sliced into decks and then let
+  go: the plan is drawn triangles alone, its hull shaped from them with far
+  fewer faces, and the plan no longer needs the model file. Also
+  `shipgen plan-from-model --slices-only`.
+* **What a design needs**: a guide to the rooms, stations, berths, ways in and
+  round, hull volume and the game's limits for ships, stations, fighters and
+  buildings, on the wiki page *Designing a valid blueprint*. AI assistants
+  read the same text with the new `design_rules` tool.
+* `shipgen tris <design.SoH> <part> [state]` lists every triangle of one part.
+* **The README is short now**, about the designer; the rest of the
+  documentation is on the wiki.
+
+## Bug fixes in 0.3.7 (since rc4-hf1)
 
 * **Crew could not walk between the pieces of a room.** A room drawn in
   separate pieces on one deck (cut in two by a ladder shaft, a lift or
@@ -51,7 +81,7 @@ plan file (`.json`) and what you expected help most.
   the build**; they are now made at the very end, when every part is in
   place.
 
-## New since rc4-hf1
+## New in 0.3.7
 
 * **Expected stats** (Build page): the game's own design report for a chosen
   quality, and the raw materials the build uses up, as a guide; the game can
@@ -84,7 +114,7 @@ plan file (`.json`) and what you expected help most.
   `shipgen inspect` now shows how much of the game's size limit each kind
   of part uses.
 
-## Experimental since rc4-hf1
+## Experimental in 0.3.7
 
 * **AI assistants in the designer (MCP).** `shipgen-designer --mcp` opens the
   designer as usual and is also an MCP server, so an AI app (Claude Desktop,
@@ -350,10 +380,10 @@ before relying on them, and tell us how they behave.
 **Linux:**
 
 ```
-chmod +x shipgen-designer-0.3.7-x86_64.AppImage
-./shipgen-designer-0.3.7-x86_64.AppImage                 # the designer
-./shipgen-designer-0.3.7-x86_64.AppImage gui             # shipgen-gui
-./shipgen-designer-0.3.7-x86_64.AppImage shipgen --help  # the command line
+chmod +x shipgen-designer-0.3.8-x86_64.AppImage
+./shipgen-designer-0.3.8-x86_64.AppImage                 # the designer
+./shipgen-designer-0.3.8-x86_64.AppImage gui             # shipgen-gui
+./shipgen-designer-0.3.8-x86_64.AppImage shipgen --help  # the command line
 ```
 
 Needs: 64-bit Linux from about 2022 on (built on Ubuntu 22.04: glibc 2.35
@@ -361,14 +391,14 @@ or newer, so Ubuntu 22.04, Debian 12, Fedora 36 and later), and OpenGL 3.3
 for the 3D view. Blueprints go in the game's design folder like any other.
 
 **Windows (experimental):** unpack
-`shipgen-designer-0.3.7-windows-x86_64.zip` and start
+`shipgen-designer-0.3.8-windows-x86_64.zip` and start
 `shipgen-designer.exe` in the folder (`shipgen-gui.exe`, `shipgen-mesh.exe`
 and `shipgen.exe` are beside it). 64-bit Windows 10 or 11. It is built on
 Linux and tried under Wine, so please report what goes wrong on Windows
 itself. Windows may warn about an unknown publisher (the programs are not
 signed): *More info*, then *Run anyway*.
 
-**macOS (experimental):** use `shipgen-designer-0.3.7-macos-arm64.dmg`
+**macOS (experimental):** use `shipgen-designer-0.3.8-macos-arm64.dmg`
 for Apple processors or `...-macos-x86_64.dmg` for Intel. The app is not signed
 with an Apple Developer account, so macOS blocks it the first time: try to open
 it, then choose *Open Anyway* under *System Settings > Privacy & Security*. The

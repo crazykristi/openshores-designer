@@ -47,6 +47,7 @@ PlanToolResult	RunPlanTool(TriPlan& plan, const QString& name, const QJsonObject
 // How the tools are meant to be used, for the AI: the axes, the units and the
 // usual order of work.
 QString			PlanToolsGuide();
+QString			PlanToolsDesignRules();		// What a design needs to work in the game (design_rules).
 
 // The colour the designer draws room 'index' in, so that rooms next to each
 // other can be told apart.

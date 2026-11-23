@@ -1,716 +1,86 @@
-# Shipgen: a ship designer for Shores of Hazeron and OpenShores
-
-Tools that make Shores of Hazeron blueprints (`.SoH`) offline, linked
-against the game's own engine source, so that every blueprint they write is
-checked by the engine's own report and opens in the game.
-
-The main program is the **triangle designer**: draw a ship deck by deck
-with triangles, draw its rooms, doors, windows, ladders and stairs on the
-same triangles, paint it, and build the blueprint. The
-long-term aim is an offline designer inside the OpenShores client.
-
-| Program | What it is for |
-|---|---|
-| `shipgen-designer` | **The main program.** The triangle designer. |
-| `shipgen-gui` | Secondary: the automatic generator as a wizard, turning a 3D model and a short brief into a ship or building with a full interior. |
-| `shipgen` | The command line: inspect, audit and validate blueprints, generate, thin models, build designer plans. |
-| `shipgen-mesh` | Load a model, thin it to a number of faces, tidy it up, save it. |
-
-**Download:** the releases on GitHub
-(<https://github.com/crazykristi/openshores-designer/releases>; the latest
-is [0.3.7](https://github.com/crazykristi/openshores-designer/releases/tag/v0.3.7),
-the first full release: everything from the 0.3.7 betas (buildings, decals,
-textured paint, stairs and ramps, a Crew step, turbolifts, landing spots,
-liveries, fighter mode and more), with expected stats, a choice of maneuver
-drive, tall doors, an MCP server so an AI assistant can design in the open
-window (experimental), and fixes to the crew's walk paths and the blueprint
-size of big ships. Problems:
-contact the author or open an issue at
-<https://github.com/crazykristi/openshores-designer/issues>) are an AppImage holding the designer, `shipgen-gui` and the
-command line, a Windows zip and Mac dmgs; see *Release: the AppImage* below.
-
-The generator from the command line, for example:
-
-```
-shipgen generate --model ship.3ds --brief frigate.json --out designs/
-```
-
----
-
-## What the generator does
-
-The rest of this page is mostly about the generator (`shipgen`,
-`shipgen-gui`); the designer explains itself in its window, step by step.
-
-| Input | What happens |
-|---|---|
-| `--model ship.3ds` / `ship.stl` | The model is imported and becomes the hull of the design. The option can be given more than once for a model that is in several files. |
-| `--base none\|rectangle\|circle\|hexagon` | Start from a closed primitive instead of a model. Models can be put on it, or it can be the whole hull. |
-| `--base-size <w>x<d>` | The footprint of the base in feet, for example `240x120`. |
-| `--base-height <feet>` | How tall the base solid is. |
-| `--base-separate` / `--base-together` | With a base: place every model file as its own object in a grid, or treat the files as parts of one model. |
-| `--hull design.SoH` | The hull of an existing design is reused instead of importing a model. |
-| `--texture <file.png\|#rrggbb>` | A texture for the hull. Give it more than once to paint a model that is in parts. Plain colours such as `#3a6ea5` become a painted panel. |
-| `--paint by-face\|planar\|cylindrical\|spherical\|keep` | How the textures are wrapped onto the hull. The default, `by-face`, keeps the texture the same size on every face. |
-| `--paint-scale <feet>` | How many feet one repeat of the texture covers. Smaller makes the pattern finer. |
-| `--paint-per-part` / `--paint-single` | Give each hull part the next texture (the default), or put the first texture on all of them. |
-| `--brief brief.json` | The ship's purpose and the rooms and stations it must have. |
-| `--layout decks\|spine\|blocks\|auto` | Which layout strategies to run. |
-| `--fit <feet>` | Scale the model so that its largest side is this many feet. Handy for models that are in millimetres. |
-| `--faces <n>` | How many faces the model may have at most. See below. |
-| `--preset <name>` | Put the model into one of the named looks. See below. |
-| `--taper <n>` | How wide the model is at the top, as a part of how wide it is at the bottom. |
-| `--taper-bottom <n>` | How wide the model is at the bottom. |
-| `--twist <degrees>` | How far the model turns about its axis from the bottom to the top. |
-| `--repeat <n>` | How many copies of the model are put around a circle. |
-| `--repeat-radius <n>` | How far apart the copies are, as a part of the width of the model. |
-| `--stack <n>` | How many copies of the model are put on top of each other. |
-| `--noise <n>` | How much the surface is pushed out and in. |
-| `--stretch <n>` | How tall the model is. |
-| `--seed <n>` | The seed for the roughness. The same seed always gives the same shape. |
-| `--vary <n>` | Make this many blueprints that are all the same look but slightly different. |
-| `--no-repair` | Do not close the holes in the model or put the windings right. |
-
-There is another program as well:
-
-```
-shipgen-mesh                     # the mesh tool
-shipgen mesh-info --model top.stl
-```
-
-It loads a **stl**, **3ds** or **obj** model, takes it down to a number of
-faces you choose, and shows you what is left so that you can judge whether the
-shape has survived. It can save the result as a binary stl or an obj file.
-
-For every layout strategy the tool produces one `.SoH` file, so a single run
-gives you several viable internal geometries to choose from:
-
-* **decks** — horizontal decks stacked on top of each other, rooms side by side
-  along the length of the ship.
-* **spine** — a corridor down the middle of the ship with rooms alternating
-  along the port and starboard sides.
-* **blocks** — rooms packed into a two dimensional grid inside each deck.
-
-The tool prints what it managed to fit, what it had to leave out, and what the
-engine's own report says about the result.
-
----
-
-## Commands
-
-```
-shipgen templates                       list the ship templates
-shipgen brief <template> <file.json>    write a starting brief
-shipgen generate  --model <file.3ds|file.stl|file.obj> [--model <file> ...] | --hull <design.SoH>
-                   --brief <file.json> [--out <dir>]
-                   [--texture <file.png|#rrggbb>]... [--paint by-face|planar|cylindrical|spherical|keep]
-                   [--paint-scale <feet>] [--paint-per-part|--paint-single]
-                   [--name <name>] [--layout decks|spine|blocks|auto]
-                   [--scale <n>] [--fit <feet>] [--wall <feet>] [--deck <feet>] [--decimate <feet>]
-                   [--faces <n>] [--base <shape>] [--base-size <w>x<d>] [--base-height <feet>]
-shipgen inspect  <design.SoH>           show what is inside a design
-shipgen audit    <design.SoH>           exact check: is the hull solid and is every room inside it
-shipgen validate <design.SoH>           run the engine report on a design
-shipgen stats    <design.SoH> [--q N]   expected stats at a quality, berth warnings and materials (a guide only)
-shipgen plan-tool <plan.json> <tool> [<json arguments>] [--new]
-                                        one of the AI's plan tools on a plan file (--list: the tools)
-shipgen generate-building --brief <file.json> [--out <dir>]
-                   [--model <file>] [--fit <feet>] [--faces <n>]
-                   [--texture <file.png|#rrggbb>]... [--paint <mode>] [--paint-scale <feet>]
-                   [--base <shape>] [--base-size <w>x<d>] [--base-height <feet>]
-shipgen building-brief <template> <file.json>
-```
-
-`--scale` means *feet per model unit* for a 3ds file and a plain multiplier for
-an stl file. `--wall` is how much hull to leave between the interior and the
-hull surface, in feet. `--deck` is the structure thickness between decks.
-`--decimate` thins the imported model out by snapping its vertices onto a grid
-of that many feet.
-
-The engine refuses designs that are bigger than 28 MB, and a building 14 MB, so
-a very detailed model has to be thinned out. The tool does that by itself when
-it has to.
-
-**The face budget.** The game copes with up to about 15,000 faces in a
-blueprint. Around 5,000 is as much as it is comfortable with and 2,000 is
-comfortable indeed. A model that comes in with half a million triangles is
-thinned out to fit, and the tool says how many faces it ended up with. The
-budget is set with `--faces`; it is 5,000 by default.
-
-**Changing the shape of a model.** A model from a 3D print site is one shape.
-The same model can be made into a different shape by moving its vertices
-around, which keeps the material and the look of the original while changing
-the silhouette. That is how one model gives a set of buildings that look like
-they belong together. The graphical tool has a panel for it with a list of
-named looks and the numbers behind them; the command line has the same
-numbers as options.
-
-| Look | What it gives |
-|---|---|
-| As it is | The model as it came. |
-| Spire | A slender spire. |
-| Obelisk | A very slim tower. |
-| Column | Almost the same, a little slimmer at the top. |
-| Flared | Wide at the top and narrow at the bottom. |
-| Spiral | A twisted crystal. |
-| Spiral cluster | Three twisted spires around a circle. |
-| Cathedral | Four spires around a circle. |
-| Ring | Six spires in a wide ring. |
-| Tower | Three spires on top of each other, each one smaller. |
-| Rough crystal | The surface pushed out and in. |
-| Wide hall | A low, wide building. |
-
-`--vary` makes a set of blueprints that are the same look with slightly
-different proportions, so a set of buildings can be offered to choose from.
-The numbers behind a look can be changed by hand, in the tool or on the
-command line.
-
-### Painting a model
-
-A blueprint uses the engine's own texture palette. A face does not carry an
-image of its own; it carries a **slot number**, and the palette holds the
-image for that slot. The engine has 14 usable user slots, so a model can wear
-that many different textures.
-
-The tool fills those slots for you and works out **texture coordinates** for
-every hull face, which is the part that is slow and fiddly by hand:
-
-| Option | What it does |
-|---|---|
-| `--texture <file>` | Adds an image to the next palette slot. A PNG, JPEG, BMP or TGA works. |
-| `--texture '#rrggbb'` | Adds a plain colour instead of an image. It becomes a small painted panel tile rather than a flat wash. |
-| `--paint by-face` | Lays every face flat on its own and aligns it to the longest axis, so the texture is the same size everywhere and nothing is stretched. This is the default, and it is the one to use when the model is not a simple shape. |
-| `--paint planar` | One flat projection, from above. Good for decks and sites. |
-| `--paint cylindrical` | Wraps around the model's long axis. Good for fuselages and towers. |
-| `--paint spherical` | Wraps around a ball. Good for round hulls. |
-| `--paint keep` | Leaves the coordinates that are already there and only sets the slot. |
-| `--paint-scale <feet>` | How many feet one repeat of the texture covers. Smaller is finer. |
-| `--paint-per-part` / `--paint-single` | One texture per hull part (default), or the first texture on every part. |
-
-The useful unit is the **hull part**, not the face. A model that is already in
-parts — the Aetherite is a base, a ring and a top — gets a different texture
-for each part, so the ring can be one colour and the top another. A model that
-is one piece gets one texture; the tool says so and leaves the others unused
-rather than pretending to have used them.
-
-The graphical tool has the same controls in a **Paint** panel on the hull page:
-a removable list of textures, **Add a colour...**, the wrapping mode, the
-texture size and the per-part checkbox. The 3D preview shows the painted
-result, with the hull see-through so that the rooms remain visible.
-
-`shipgen inspect design.SoH` reports the palette and which slots each hull part
-uses, and how many of its vertices have texture coordinates. A palette entry on
-its own does nothing; the faces have to be given the slot and the coordinates,
-and both are checked.
-
-### Taking a model down to a number of faces
-
-A model from a 3D print site has half a million triangles, and the game only
-copes with about 15,000 faces. The **mesh tool** does the taking down:
-
-```
-shipgen-mesh                         # open it and pick a model
-shipgen reduce --model top.stl --faces 2000 --out top_small.stl
-```
-
-There are two ways of doing it, and the tool shows both so they can be
-compared:
-
-| Method | What it does | How it comes out |
-|---|---|---|
-| **Quadric error** | The edges are collapsed one at a time, cheapest first, and each corner is put where the surface around it wants it to be. The edge of the model is held in place. | Slow, but the shape survives. On the Aetherite, 670,000 faces become 2,000 with **98.7% of the volume** and a surface that grows by 5%. |
-| **Clustering** | The corners are snapped onto a grid and the triangles that go flat are dropped. | Very quick, but the surface goes blocky. The same model comes out with **47% more surface**. |
-
-The tool shows the volume and the surface area before and after, so the damage
-can be seen rather than guessed at.
-
-The graphical tool and the blueprint generator use the quadric method too, so
-the shells they make keep their shape.
-
-### Tidying a model up
-
-Models that come from the internet are often in a mess, and the mesh tool can
-put them right. **Every one of your models has triangles that wind the wrong
-way round** — it is what makes parts of a model look inside out — and some of
-them have the same triangle twice or triangles with no area at all.
-
-| Button | What it does |
-|---|---|
-| **Clean up** | Takes away the triangles that have no area and the ones that are there twice. |
-| **Close the holes** | Puts a lid over every hole, so that the model is solid from the outside. |
-| **Fix windings** | Turns the triangles that wind the wrong way round the other way round, so the model is solid from the outside. |
-| **Put on the ground** | Puts the bottom of the model on the ground and the middle of it in the middle, which is where the blueprint generator puts it. |
-| **Turn over** | Mirrors the model, for when it has to face the other way. |
-| **Smooth shading** | Gives every corner the average of the normals around it, so the model looks smooth rather than faceted. It changes the lighting, not the shape. |
-
-**The model has to be closed.** A model that has holes in it cannot be
-measured, and the game cannot tell what is inside it, so the volume comes out
-wrong and the rooms do not fit. The blueprint generator therefore puts the
-model right before it uses it: it turns the triangles that wind the wrong way
-round, and it puts a lid over the holes. It says what it found:
-
-```
-note : the model had triangles that were the wrong way round, so the shape was
-       not solid from the outside. They have been put right.
-note : the model had 555 hole(s) in it, so the volume could not be measured
-       properly. Most of them have been closed, but 277 are still open where
-       the model is pinched.
-```
-
-The repair can be turned off with `--no-repair` on the command line, or with
-the "Put the model right" box in the graphical tool.
-
-**Where a model is pinched** — where two sheets of the surface meet at a single
-corner — the hole cannot be closed cleanly. Closing those would mean putting a
-thin wall right across the model, which would make the volume wrong in a
-different way, so they are left open and reported. A model that is closed all
-the way round is best made in a modeller rather than here.
-
-The panel on the left also says what it found: the size of the model, how many
-corners and edges it has, how many holes it has, how much junk, and whether
-the triangles all wind the same way round. `shipgen mesh-info` says the same
-thing from the command line.
-
-### A set of buildings
-
-The same model can be made into a set of buildings that all have the same look
-but are for different things: a capitol, an arena, an office block. The
-graphical tool has a table for it on the building page; the command line
-reads a small JSON file.
-
-```
-shipgen set-brief      set.json          # writes an example to look at
-shipgen generate-set   --set set.json [--out dir]
-```
-
-```json
-{
-    "name": "Aetherite Buildings",
-    "fit": 397,
-    "faces": 5000,
-    "model": [ "bottom.stl", "ring.stl", "top.stl" ],
-    "buildings": [
-        { "template": "capitol",     "shape": "cathedral", "name": "Crystal Capitol" },
-        { "template": "arena",       "shape": "spiral",    "name": "Spiral Arena" },
-        { "template": "office_block", "shape": "tower",    "name": "Crystal Tower",
-          "variations": 2 }
-    ]
-}
-```
-
-`model` and `fit` can be left out of a building to use the ones at the top.
-`variations` makes more than one version of that building.
-
----
-
-## The brief
-
-A brief is a small JSON file. It can start from a template and then be edited
-freely.
-
-```json
-{
-    "name": "Ironclad",
-    "template": "military_frigate",
-    "crew": 60,
-    "rooms": [
-        { "type": "bridge", "label": "Bridge", "count": 1, "size": [44, 34, 13] },
-        { "type": "engineering", "label": "Engineering", "count": 2, "size": [54, 34, 15] }
-    ],
-    "stations": [
-        { "type": "helm", "count": 1, "room": "bridge" },
-        { "type": "engineer", "count": 2, "room": "engineering" }
-    ],
-    "berths": { "capt": 1, "officer": 6, "crew": 54, "passenger": 0, "troop": 0 },
-    "modules": { "powerPlant": 120, "maneuverDrive": 90 }
-}
-```
-
-* Room `size` is `[length, beam, height]` in **feet** (design units).
-* `priority` (1 is most important) decides which rooms are dropped when the
-  hull is too small for all of them. It defaults from the room type.
-* Station `room` names the room type the station belongs in. If it is missing,
-  the station goes into any room that is free.
-* `modules` are hull volume allocations in **cubic meters**. Leave them out and
-  the tool works them out from the size of the hull.
-
-### Templates
-
-Spacecraft: `military_frigate`, `cargo_hauler`, `science_lab`,
-`colony_transport`, `patrol_cutter`, `shuttle`.
-
-Buildings: `office_block`, `residential`, `barracks`, `command_post`,
-`warehouse`, `factory`, `biodome`.
-
-## Buildings
-
-A building blueprint is a **shell**, a **site**, the **hull volume shared out
-between the systems**, some **parking** and the **industry** it serves. An
-interior is optional: a monument made from a model has no rooms at all.
-
-That is the shape the game wants, and it is the shape of the reference
-blueprint in `testdata/aetherite_capitol_reference.SoH`: the Aetherite model as
-three hull parts, a site, five ground vehicle parking spots, two space vehicle
-landing pads, fourteen offices, an auditorium and the Capitol industry, with
-no interior rooms at all.
-
-The brief is the same kind of JSON file:
-
-```json
-{
-    "name": "Aetherite Capitol",
-    "industry": "capitol",
-    "groundParking": 5,
-    "spaceParking": 2,
-    "spacecraftParking": 0,
-    "volumes": {
-        "offices": 500, "store": 500, "hold": 500, "auditorium": 2000
-    }
-}
-```
-
-The volumes are in cubic metres and are used as they are asked for. Whatever is
-left of the hull volume goes to the structure, so the systems always add up to
-the size of the building. If the brief asks for more than the building can
-hold, it is scaled down and the tool says so.
-
-The game keeps its industry table in its database, which a standalone tool
-cannot reach, so the tool installs a small stand-in table to work out whether
-a building is useful for anything. When the building cannot serve the
-industry it was given, the tool says so.
-
-Building templates: `capitol`, `arena`, `command_post`, `office_block`,
-`residential`, `barracks`, `warehouse`, `factory`, `biodome`.
-
-## Buildings made from a model
-
-A building can be made from a 3D model as well. The model becomes the shell of
-the building and the generator finds the room inside it:
+# Shipgen Designer
+
+An offline ship and building designer for **Shores of Hazeron** and
+**OpenShores**. Draw a ship deck by deck with triangles, draw its rooms, doors,
+windows, ladders and stairs on the same triangles, paint it, and build a
+blueprint (`.SoH`) the game loads. It is linked against the game's own engine
+source, so every blueprint is checked by the engine's own report.
+
+## Download
+
+Get the latest release from
+<https://github.com/crazykristi/openshores-designer/releases>:
+
+* **Linux:** `shipgen-designer-<version>-x86_64.AppImage`. Make it executable
+  and run it. It needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36
+  and later) and OpenGL 3.3.
+* **Windows (experimental):** unpack `...-windows-x86_64.zip` and start
+  `shipgen-designer.exe`.
+* **macOS (experimental):** `...-macos-arm64.dmg` (Apple processors) or
+  `...-macos-x86_64.dmg` (Intel). The app is not signed: open it once, then
+  choose *Open Anyway* under *System Settings > Privacy & Security*.
+
+The designer can update itself: *Help > Check for a new version...*
+
+## Quick start
+
+1. *File > New spaceship...* (or *New building...*, or *New spaceship from a
+   3D model...*).
+2. **Hull:** draw each deck's outline with triangles.
+3. **Rooms:** draw the rooms, then the doors (at least one to the outside),
+   windows, ladders and stairs.
+4. **Crew** (optional): place stations, berths and pads yourself; whatever you
+   leave out is put in from the ship's template.
+5. **Paint:** colours, the game's textures, a finish, decals.
+6. **Build:** check the report and the expected stats, then save the
+   blueprint into the game's design folder.
+
+See [Designing a valid blueprint](https://github.com/crazykristi/openshores-designer/wiki/Designing-a-valid-blueprint)
+for what a design needs to work in the game: rooms, stations, berths, hull
+volume and the game's limits.
+
+## What it does
+
+* **Hulls** from triangles on a grid, shaped smooth, angular or classic within
+  a face budget, or from a **3D model** (STL, OBJ, 3DS, FBX, glTF and more)
+  used as the hull or only sliced into decks.
+* **Rooms** of the game's types, doors (also tall and in floors), hull doors
+  with a ramp or ladder, windows, ladders, stairs, ramps, turbolifts and
+  zero-G shafts. Walk paths for the crew are made for you.
+* **Furnishing** from a template: stations, berths and systems sized to the
+  hull, with a choice of FTL and maneuver drive.
+* **Paint**: plain or empire colours, the game's textures, finishes, surface
+  effects, a brush in the 3D view and decals.
+* **Buildings**, space stations and fighters (experimental) as well as ships.
+* **AI assistants** (experimental): `shipgen-designer --mcp` lets an AI app
+  such as Claude Desktop or Claude Code design in the open window while you
+  watch. See [Designing with an AI assistant](https://github.com/crazykristi/openshores-designer/wiki/Designing-with-an-AI-assistant).
+
+The release also contains `shipgen` (the command line: inspect, audit and
+check blueprints, build plans), `shipgen-gui` (an automatic generator) and
+`shipgen-mesh` (thin a 3D model).
+
+## More
+
+* [The wiki](https://github.com/crazykristi/openshores-designer/wiki): the
+  command line, buildings, the generator, notes and limits, and building from
+  source.
+* [Release notes](RELEASE_NOTES.md)
+* **Problems?** Open an issue at
+  <https://github.com/crazykristi/openshores-designer/issues>. A screenshot, the
+  plan file (`.json`) and what you expected help most.
+
+## Building from source
 
 ```bash
-shipgen generate-building \
-    --model aetherite_bottom.stl --model aetherite_ring.stl --model aetherite_top.stl \
-    --fit 120 --brief capitol.json --out designs/
+./build.sh      # Qt 5 and a C++ compiler; programs in build/bin/
+./test.sh       # should end "... 0 with errors."
 ```
 
-Models that come from a 3D print site are solid objects rather than hollow
-shells, so there is no interior to speak of, and a building does not need one.
-The model becomes the shell, the site is drawn around it, the parking goes in
-front of it and the hull volume is shared out between the systems.
+Details are on the wiki page
+[Building from source](https://github.com/crazykristi/openshores-designer/wiki/Building-from-source).
 
-The Aetherite is three files that belong together, so `--model` is given
-three times. They are in millimetres, so `--fit` scales the whole assembly.
-The three parts keep the positions they have in relation to each other.
+## Licence
 
-The models in `testdata/models` come from the zip files in your `3d models`
-folder. `testdata/extract_models.sh` takes them out and gives them sensible
-names. `test.sh` also reads every blueprint in
-`~/Documents/designs/examplebuildings`, if that folder exists, so that real
-building files are exercised as well.
-
-## A building from a base shape
-
-A building does not need a model at all. Give it a primitive instead:
-
-```bash
-shipgen generate-building \
-    --base hexagon --base-size 160x140 --base-height 28 \
-    --brief office_block.json --out designs/
-```
-
-The base is a closed solid, so the engine sees a volume and the building is
-valid on its own. Models can be added to it one at a time:
-
-```bash
-shipgen generate-building \
-    --base circle --base-size 400x400 --base-height 8 \
-    --model statue.stl --model fountain.stl --fit 120 \
-    --brief arena.json --out designs/
-```
-
-With a base, every model file is a separate object and they are laid out in a
-grid that follows the shape of the base. Without a base, the files are parts
-of one model and the first file is the anchor that the others keep their
-places around. `--base-together` asks for that parts behaviour even when a base
-is given.
-
-In the GUI, the primitive base is the first thing on the building page. The
-model list builds up as files are added, and every row can be removed again.
-
-The mesh tool now has working **Simplify** and **Reset** buttons. Removing a
-row from its model list removes that model from the assembly as well, and the
-remaining models are put together again.
-
----
-
-## Building
-
-The tool needs a C++ compiler and Qt 5 (Core, Gui, Widgets, Network, Sql and
-OpenGL headers). It builds the headless part of the Shores of Hazeron engine
-from source: `AuUtil`, `AuMath`, `AuGL`, `AuGlobal` and `AuData`. The game
-client, the servers and the database are **not** needed.
-
-```bash
-./build.sh            # build everything
-./build.sh clean      # remove the build directory
-./build.sh -j8        # build with 8 parallel jobs
-```
-
-`build.sh` downloads the engine into `third_party/soh` if it is not there yet
-and writes the command line tool, the graphical tool and the mesh tool to
-`build/bin/`.
-
-The toolchain used on this machine lives in `~/.local/hazeron-toolchain`; set
-`TOOLCHAIN` to point somewhere else if needed. The Qt headers, `moc` and a
-C++ compiler are all that is required — nothing needs to be installed system
-wide.
-
-### Windows
-
-The graphical tool and the mesh tool build on Windows with MSYS2, MinGW-w64
-and Qt 5. The same `build.sh` detects the MSYS2 shell and writes
-`build-windows/bin/*.exe`; a separate deployment script copies the Qt,
-OpenAL and MinGW DLLs into a folder that can be moved to another PC.
-
-`build-windows.ps1` runs `build.sh` from PowerShell, and
-`deploy-windows.sh` collects the DLLs.
-
-### macOS
-
-Since 0.3.5-alpha (a contribution from yamamushi, pull request #1) the
-tools build natively on macOS with Apple's `clang++` and Qt 5 from
-Homebrew:
-
-```bash
-brew install qt@5
-./build.sh          # build/bin/shipgen, shipgen-gui, shipgen-designer, ...
-./test.sh           # the GUI tests run natively (Cocoa), no X server needed
-```
-
-`build.sh` finds Qt through `$(brew --prefix qt@5)/bin/qmake` (set `QMAKE`
-to use another one) and refuses Qt 6. The designer asks for a desktop
-OpenGL 3.3 context, as on Windows.
-
-`packaging/build-macos-app.sh` packs that build as
-`build/shipgen-designer-<version>-macos-<arm64|x86_64>.dmg`, with Qt inside the
-app. `.github/workflows/macos.yml` does this on GitHub's Macs, for Apple and
-Intel processors, and adds the dmg to the release.
-The app is signed ad hoc, not by a paid Apple Developer account, so macOS asks
-the first time it is opened (`packaging/macos-readme.txt`).
-
----
-
-## Release: the AppImage
-
-Releases are an AppImage of the triangle designer that also holds
-`shipgen-gui` and the command line:
-
-```
-./build.sh && ./package-appimage.sh      # build/shipgen-designer-<version>-x86_64.AppImage
-./shipgen-designer-0.3.7-x86_64.AppImage                # the triangle designer
-./shipgen-designer-0.3.7-x86_64.AppImage gui            # shipgen-gui
-./shipgen-designer-0.3.7-x86_64.AppImage shipgen <command> ...
-```
-
-The version is in `src/version.h`.
-It bundles Qt 5 with its X11 and Wayland plugins, OpenAL, Assimp and the
-other libraries, but not the C library, the OpenGL drivers, X11/xcb, the
-Wayland libraries or the font libraries, which come from the system (the
-AppImage project's rules; Mesa's OpenGL driver needs a Wayland library as new
-as itself). When one of those is missing, the AppImage says which before it
-starts, with where to report it, and lets the user go on at their own risk
-(`SHIPGEN_SKIP_CHECK=1` skips the check). The programs themselves warn on
-start when the 3D view will not work (no OpenGL 3.3). It
-runs on systems with a glibc at least as new as the one it was built on,
-so the release is built on Ubuntu 22.04 in a container:
-`packaging/build-appimage-portable.sh` (glibc 2.35 and newer). For
-Windows, `packaging/build-windows-cross.sh` cross-builds a zip of the
-programs on Linux. The script
-downloads `appimagetool` into `build/tools/` the first time;
-`APPDIR_ONLY=1 ./package-appimage.sh` makes only the folder
-`build/AppDir`, which runs as `build/AppDir/AppRun`.
-
-## Designing with an AI assistant (MCP)
-
-The designer can let an AI assistant help design, through the Model Context
-Protocol (MCP), which Claude Desktop, Claude Code and other AI apps use.
-Started with `--mcp`, the designer opens its window as usual and takes
-the AI's requests on its standard input and output. The AI app starts it
-itself; add it to the app's MCP servers, for example in Claude Desktop's
-`claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "shipgen": {
-      "command": "/path/to/shipgen-designer-x86_64.AppImage",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
-
-(on Windows the `command` is the path to `shipgen-designer.exe`, with
-its backslashes doubled), or in Claude Code:
-`claude mcp add shipgen -- /path/to/shipgen-designer --mcp`.
-
-The AI gets simple tools that work in whole cells and rooms by name, not
-triangles: draw a deck's hull outline, add a room of a type and size, put a
-door between two rooms (or to the outside), join decks with a ladder or
-stairs, place stations and berths, and check the plan for rooms nobody can
-reach. It can see a deck as a text map or a picture, build the blueprint and
-read its report, work out the expected stats, and save the plan and the
-blueprint. Every change shows in the window straight away and is one step
-of the designer's undo, so any of it can be taken back.
-
-Files are read and written in one folder only: `Shipgen designs` in your
-documents, or the folder given with `--mcp-folder <folder>`. The expected
-stats are a guide; check the design in the game before building it.
-
-## The graphical tool
-
-`build/bin/shipgen-gui` has a main window with the source files on the left,
-a 3D preview in the middle, the validation report on the right and a list of
-the parts in the blueprint along the bottom. *Generate* opens the wizard:
-
-* **Hull** - the ship model, or an existing blueprint to take the hull from,
-  the scale and how much to simplify the model, and the **Paint** panel for
-  textures or colours.
-* **Purpose** - the type of ship, its name, its crew and a description.
-* **Rooms** - a table of the rooms it has to have, with their sizes in feet.
-* **Stations** - the stations that have to be staffed and which room they
-  belong in.
-* **Crew and systems** - the accommodation and the hull volume per system.
-* **Layout** - which layouts to produce and how thick the walls and decks are.
-
-The same wizard with different pages makes a building blueprint.
-
-The preview draws the hull and the site see through so that the interior can
-be seen, and it shows the palette textures on the hull. Drag to turn the
-model, use the wheel to zoom.
-
-The model is picked with a **list**, not a single box. A model is often in more
-than one file — the Aetherite is in three — so the picker takes several files
-at once and keeps them in a list, and any of them can be taken away again
-with **Remove**, or all of them with **Clear**. The list of models is shown in
-the Project panel on the left, one row for each file.
-
-## Notes and limits
-
-* The engine stores a design as a binary blob: a byte of file type, a byte of
-  version and then a zlib compressed, XOR encrypted `QDataStream`. There is no
-  text format, so `shipgen` speaks that format directly.
-* Textures are limited by the engine to **256 × 256** pixels, and the design
-  palette has **14 user slots** (the material slot in the middle belongs to the
-  engine). The tool puts images in the user slots and gives the hull faces the
-  matching slot and coordinates. See **Painting a model** above.
-* **3ds**, **stl** and **obj** models can be imported, and, when the program
-  was built with the Assimp library (build.sh finds it with pkg-config and
-  says so; `dnf install assimp-devel`, `apt install libassimp-dev`,
-  `brew install assimp`, MSYS2 `mingw-w64-x86_64-assimp`), **FBX**, **glTF**
-  (gltf, glb), **Collada** (dae), **PLY**, blend, lwo, x3d, off and ac too.
-  A model in parts is put together the way its file places them. FBX and
-  glTF models usually have y up: tick *y is up* (`--y-up`). The mesh tool reads the
-  texture coordinates of an obj file and writes them back out; the blueprint
-  importer keeps its own coordinates until the painter replaces them.
-* Room sizes are scaled down automatically when the hull is too small, and
-  rooms are moved around inside the hull until every sampled corner, edge and
-  face is inside **one** hull part. Rooms that cannot be made to fit, or that
-  would overlap another room, are moved or left out and reported. The test
-  suite checks every generated ship for rooms outside the hull and for rooms
-  that share space.
-* **`shipgen audit` is the exact check.** It builds a closed triangle solid
-  for each hull part and tests each room box against it, rather than measuring
-  a silhouette. `shipgen inspect` prints the same exact room-fit lines, the
-  solidity of each hull part, rooms outside the hull, rooms that could not be
-  checked, and rooms without a door. A hull must be a **closed solid** to be
-  used as a volume. An open or non-manifold source design is refused; pass
-  `--allow-open-hull` to try `SolidifyMesh()` and fall back to the silhouette
-  with a warning, which is not verified the same way.
-* A generated spacecraft gets doors between rooms that share a wall (enough
-  of them to join every room to every other), and one hull door. Each room
-  has a constant room void; each door gets a small doorway void of its own,
-  tied to its open state, and a hull door a hull void as well. A room's own
-  void is never tied to a door: the engine treats a tied void as one that
-  comes and goes with the door, so the room would only exist while the door
-  was open. Blueprints generated before 30 October 2026 have exactly that
-  fault; generate them again. The
-  building generator adds its entrance door the same way. `shipgen inspect` lists every
-  door and the voids associated with it, so an unassociated door is easy to
-  spot. On a deep hull the layout stays in the horizontal band with the most
-  solid interior, and each room is snapped flush to a neighbour, so tall and
-  narrow hulls still get connected rooms.
-* The 3D preview needs OpenGL 3.3. Without it the rest of the graphical tool
-  still works, it just cannot show the model. The preview draws the palette
-  textures; a face with no texture coordinates is drawn without one.
-* The room and station pickers only offer the names the game itself uses. The
-  spacecraft room names come straight from the engine's own room type list, so
-  they always match.
-* Crew walk paths go from each room's middle to its doorway, through the
-  doorway (only while the door is open), and on to the next room's middle.
-
----
-
-## Testing
-
-```bash
-./test.sh
-```
-
-Runs the generator over every template and every hull it can find and checks
-each design it produces with the engine's report. Every generated design is
-also run through `shipgen audit`, which checks that the hull is a closed solid
-and every room box is genuinely inside it. The suite inspects every generated
-ship for rooms outside the hull, rooms that share space, and doors without the
-voids that make them open; paints a single hull and a model in parts and checks
-the texture coordinates; and starts both graphical tools, drawing the 3D
-preview under Xvfb when it is available. It also builds designer plans
-(doors, windows, ladders, stairs, ramps, bay doors, joined windows, the
-sloped hull) and checks the results. A last run on this machine passed 372
-checks over 126 blueprints with no errors (373 at 0.3.1-alpha).
-
----
-
-## Layout of the source
-
-```
-src/shipgen.h     the brief, the room and station model
-src/brief.cpp     templates, brief parsing and writing
-src/generate.h    the hull analysis and the layout generator interface
-src/generate.cpp  hull analysis, room placement, doors, part building, validation
-src/paint.h       the painting options and the public paint API
-src/paint.cpp     texture loading, colour tiles, palette slots, UV projection
-src/logging.h     the shared message handler
-src/logging.cpp   drops the engine's non-applicable obstruction warning
-src/base.h        the primitive base shapes
-src/base.cpp      closed rectangle, circle and hexagon solids
-src/building.h    the building brief and the building generator interface
-src/building.cpp  building templates, the building generator, the industry
-                  table and the building validation
-src/interior.*    rooms, doors, doorway and hull voids, ladders, walk paths
-src/sohfile.*     reading blueprints from newer game builds
-src/triplan.*     the designer's triangle plan
-src/planbuild.*   a triangle plan into a blueprint
-src/decal.*       images laid onto the hull (the game's Decal part)
-src/windowleak.*  covers the hull seen from inside through windows
-src/audit.*       the exact solid and containment tests
-src/mesh.*, src/shape.*, src/names.*   models, shapes, the game's names
-src/main.cpp      the command line interface
-src/gui/          the graphical tool
-    mainwindow.*    the main window, the docks and the file list
-    wizard.*        the generation wizard and its pages
-    preview.*       the 3D preview (also used by the mesh tool and the designer)
-src/meshapp/      the mesh tool
-src/designer/     the triangle designer
-src/version.h     the release version (SHIPGEN_VERSION)
-tests/*.cpp       small probe programs (build_probe.sh builds one): how the
-                  engine's primitives behave, part vertices and normals,
-                  points inside a hull
-build.sh          builds the engine libraries, the CLI and the three Qt tools
-package-appimage.sh  packs the designer, shipgen-gui and the CLI into an AppImage
-packaging/        the AppImage's icon
-RELEASE_NOTES.md  the notes of the current release
-build-windows.ps1 convenience wrapper that runs build.sh in MSYS2
-deploy-windows.sh collects the Qt/OpenAL/MinGW DLLs for a Windows folder
-test.sh           runs the generator over a matrix of templates and hulls
-```
+Includes source from Shores of Hazeron, copyright Hazeron Freehold LLC, under
+the Shores of Hazeron licence (`third_party/soh/LICENSE`). Releases are free.

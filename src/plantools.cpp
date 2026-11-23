@@ -144,6 +144,9 @@ QJsonArray PlanToolDefinitions()
 		QJsonObject p;
 		p["what"] = Choice({ "room_types", "station_types", "berth_kinds", "ship_templates", "building_templates",
 							 "ftl_drives", "maneuver_drives", "fire_control", "textures", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
+		tools << Tool("design_rules", "What a ship, station, fighter or building needs to work in the game: rooms, "
+					  "stations, berths, ways in and round, hull volume and the game's limits. Read it before designing.",
+					  QJsonObject());
 		tools << Tool("list_choices", "The names the other tools take: room types, station types, berth kinds, ship and "
 					  "building templates, FTL drives, hull styles and the ship systems whose volumes can be set.", p);
 	}
@@ -417,10 +420,46 @@ bool IsPlanTool(const QString& name)
 	return names.contains(name);
 }
 
+QString PlanToolsDesignRules()
+{
+	return
+		"What a design needs to work in Shores of Hazeron / OpenShores\n"
+		"\n"
+		"Every ship\n"
+		"- A Bridge room: the helm (and the command and navigator stations) go there. The build puts the template's stations in by itself; place them by hand only to choose where.\n"
+		"- An Engine Room: the engineer's station, and the maintenance consoles (service panels), which go only into an engine room, on a stretch of wall with no door or window. A ship without an engine room gets none.\n"
+		"- Room types decide the other stations: Sick Bay gets the medic, Transporter Room the transporter, Sensor Room the sensors, Shield Room the shields, Weapon Bay the fire control.\n"
+		"- Berths: at least one crew berth for every crew station, or those stations may stay empty. A troop berth for every turret or guard post. A captain berth (for your avatar) and an officer berth on ships that need them. With no berths at all the game says nothing, but no one can live aboard. Cabins (Crew Cabin, Officer Cabin, Stateroom, Barracks) hold the berths.\n"
+		"- A way in: at least one hull door. A door above the ground gets a way down (a ramp where one fits, else a ladder); choose \"none\" only for a docking door.\n"
+		"- A way round for the crew: they walk and climb ladders and stairs, and never ride a turbo lift. Every deck needs ladders or stairs to the rest of the ship as well as a lift stop, and a room drawn in separate pieces on one deck needs its own way in for each piece. A zero-G shaft needs a ladder in it. The build warns about rooms the crew cannot reach.\n"
+		"\n"
+		"Hull volume\n"
+		"- The build sizes the systems from the hull: power plant, maneuver drive, fuel, armor, shields, sensors, life support and a capacitor big enough for a minute of the idle power. The structure (skeleton) takes the rest.\n"
+		"- Every ship gets a cargo hold of at least 2 % of the hull. FTL drives and weapon bays take volume of their own.\n"
+		"- System volumes can be set by hand (Ship page; set_settings); the structure makes up the difference.\n"
+		"- Small craft without an engineer station keep their power plant and drive under 100 cubic meters, so the game's power warnings stay away.\n"
+		"- Expected stats (Build page; expected_stats) show the game's own report for a chosen quality. They are a guide: check the design in the game before building it.\n"
+		"\n"
+		"Limits the game sets\n"
+		"- A blueprint may use at most 28,000,000 bytes of the game's memory (shipgen inspect shows the use). Hull faces, rooms and big textures count most.\n"
+		"- Too big for the ground build size limit: the ship must be built in space.\n"
+		"- The hull must be one closed surface. 5,000 faces is the default budget; the engine copes with about 15,000.\n"
+		"- The plan grid is at most 400 cells a side (about 610 m at 5 ft cells).\n"
+		"\n"
+		"Space stations: built in space, no FTL drive.\n"
+		"\n"
+		"Fighters (experimental): a Bridge as the cockpit with the pilot's seat, a hull door on its side, and a canopy (windows or ceiling windows that follow the hull). No FTL drive.\n"
+		"\n"
+		"Buildings\n"
+		"- Draw the building's site (an area kind): the game's build plot. Generated parking goes inside it; anything outside it stops the build.\n"
+		"- The industry and template decide the stations and volumes. A military weapons base gets a fire control station for every weapon bay; a shield base gets its shields and a shield station.\n"
+		"- Parks are ground only; platforms have no rooms and get a build zone.\n";
+}
+
 QString PlanToolsGuide()
 {
 	return
-		"Shipgen designer: design Shores of Hazeron ships and buildings.\n"
+		"Shipgen designer: design Shores of Hazeron ships and buildings. Read design_rules first.\n"
 		"The plan is a grid of square cells seen from above, one grid per deck. x runs aft (0) to fore, y starboard (0) "
 		"to port, decks are numbered from 1 at the bottom. Rooms are rectangles of whole cells; rooms that touch share a "
 		"wall.\n"
@@ -2851,6 +2890,10 @@ PlanToolResult RunPlanTool(TriPlan& plan, const QString& name, const QJsonObject
 			const int deck = DeckArg(plan, args);
 			res.text = DeckMap(plan, deck, BoolArg(args, "full", false));
 			res.deck = deck;
+		}
+		else if(name == "design_rules")
+		{
+			res.text = PlanToolsDesignRules();
 		}
 		else if(name == "list_choices")
 			res.text = Choices(plan, StrArg(args, "what"));

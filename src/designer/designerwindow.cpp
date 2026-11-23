@@ -3606,6 +3606,12 @@ void DesignerWindow::NewFromModel(bool fighter)
 	form->addRow(flip);
 	QCheckBox* yUp = new QCheckBox("The model was made with y up");
 	form->addRow(yUp);
+	QCheckBox* keepModel = new QCheckBox("Keep the model (its own surface can be the hull)");
+	keepModel->setChecked(true);
+	keepModel->setToolTip("Unticked: the model is only sliced into decks and then let go. The plan is drawn triangles "
+						  "alone, its hull shaped from them (smooth, angular or classic), with far fewer faces, and the "
+						  "plan no longer needs the model file.");
+	form->addRow(keepModel);
 	QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
 	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
 	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -3620,7 +3626,15 @@ void DesignerWindow::NewFromModel(bool fighter)
 	options.threshold = threshold->value();
 	options.flip = flip->isChecked();
 	options.yUp = yUp->isChecked();
-	ImportModel(modelFile, options, true, fighter);
+	if(ImportModel(modelFile, options, true, fighter) && !keepModel->isChecked())
+	{
+		// Slices only: the plan keeps the drawn triangles and lets go of the model.
+		m_plan.model = PlanModel();
+		m_hullShaped = false;
+		RefreshAll();
+		PlanEdited();
+		m_status->setText("Sliced the model into decks; the plan's hull is now made from the drawn triangles alone.");
+	}
 }
 
 bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell, bool fighter)

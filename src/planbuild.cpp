@@ -7076,6 +7076,51 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			continue;
 		}
 		++report.doors;
+		// The way from the room's wall out to the hull: lined, like a
+		// window's shaft. The hull is drawn from outside only, so without
+		// it the doorway's sides were seen through.
+		{
+			const double along0 = xWall ? mn.y : mn.x, along1 = xWall ? mx.y : mx.x;
+			const AuPoint inward = outward * -1.0;
+			auto at = [&](double out, double along, double z) {
+				return xWall ? AuPoint(roomWall + sgn * out, along, z) : AuPoint(along, roomWall + sgn * out, z);
+			};
+			// How far out the hull is along a corner line of the doorway.
+			auto reach = [&](double along, double z) {
+				const AuPoint eye = at(.05, along, z);
+				AuPoint hit = eye + outward * 80.0;
+				return hullFaces.Sight(eye, hit) ? qMax(.05, (hit - eye).Dot(outward) + .03) : fabs(surface - roomWall);
+			};
+			const double e = .05;
+			const double a0 = along0 + e, a1 = along1 - e, zb = mn.z + e, zt = mx.z - e;
+			const double r00 = reach(a0, zb), r10 = reach(a1, zb), r11 = reach(a1, zt), r01 = reach(a0, zt);
+			if(qMax(qMax(r00, r10), qMax(r11, r01)) > .4)
+			{
+				const AuPoint centre = (at(0, along0, mn.z) + at(0, along1, mx.z)) * .5 + outward * .3;
+				AuScFaceList lining;
+				auto quad = [&](AuPoint p0, AuPoint p1, AuPoint p2, AuPoint p3) {
+					// Seen from inside the doorway: the game draws a face from
+					// the side its corners go round clockwise.
+					const AuPoint mid = (p0 + p1 + p2 + p3) / 4.0;
+					if((p2 - p0).Cross(p1 - p0).Dot(centre - mid) < 0)
+						std::swap(p1, p3);
+					AuPoint n = (p2 - p0).Cross(p1 - p0);
+					n.Unit();
+					lining.AddFace(AuScFaceQuad(AuScPoint(p0, 0, 0, n), AuScPoint(p1, 0, 1, n), AuScPoint(p2, 1, 1, n),
+							AuScPoint(p3, 1, 0, n)));
+				};
+				quad(at(0, along0, mn.z), at(r00, along0, mn.z), at(r01, along0, mx.z), at(0, along0, mx.z));
+				quad(at(0, along1, mn.z), at(r10, along1, mn.z), at(r11, along1, mx.z), at(0, along1, mx.z));
+				quad(at(0, along0, mx.z), at(r01, along0, mx.z), at(r11, along1, mx.z), at(0, along1, mx.z));
+				quad(at(0, along0, mn.z), at(r00, along0, mn.z), at(r10, along1, mn.z), at(0, along1, mn.z));
+				Q_UNUSED(inward);
+				AuScMesh mesh;
+				mesh.AddFaces(lining);
+				mesh.SetGroupName(room->group);
+				if(mesh.IsValid())
+					design->Parts().AddPart(mesh);
+			}
+		}
 		// A tall hull door: the room's outer wall on each deck above is cut
 		// open too (the hull and the lowest wall make the door itself).
 		for(int i = 1; i <= decksUp; ++i)

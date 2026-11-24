@@ -357,6 +357,12 @@ private:
 	QComboBox*		m_texKind = 0;		// Plain paint, a game texture, an image of one's own.
 	QComboBox*		m_texLib = 0;
 	QPushButton*	m_texFile = 0;
+	QComboBox*		m_procKind = 0;
+	QPushButton*	m_procColour[3] = { 0, 0, 0 };
+	QDoubleSpinBox*	m_procWear = 0;
+	QDoubleSpinBox*	m_procLit = 0;
+	QSpinBox*		m_procSeed = 0;
+	QLabel*			m_procPreview = 0;
 	QComboBox*		m_texWrap = 0;
 	QDoubleSpinBox*	m_texFeet = 0;
 	QDoubleSpinBox*	m_texRotate = 0;

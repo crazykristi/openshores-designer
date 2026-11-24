@@ -9,6 +9,8 @@
 #ifndef SHIPGEN_STYLEGUIDE_H
 #define SHIPGEN_STYLEGUIDE_H
 
+#include <QJsonObject>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -19,5 +21,9 @@ QStringList	StyleGuideStyles();		// The style keys, such as "Cozy_neon".
 // numbers, template and recipe; with a style, its palette and how to lay it
 // on. Empty 'error' when it worked.
 QString		StyleGuideText(const QString& shape, const QString& style, QString& error);
+
+// A style's palette as set_paint arguments (the first is the base coat),
+// and how to lay it on.
+QList<QJsonObject> StyleGuidePalette(const QString& style, QString* layOn = 0);
 
 #endif

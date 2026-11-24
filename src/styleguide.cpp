@@ -313,7 +313,7 @@ const Style kStyles[] = {
 	  "a little from deck to deck. Shell base, bone bands, a soft glow band.", "" },
 };
 
-QString PaintArgs(const Paint& p)
+QJsonObject PaintObject(const Paint& p)
 {
 	QJsonObject o;
 	o["name"] = QString::fromLatin1(p.name);
@@ -345,7 +345,12 @@ QString PaintArgs(const Paint& p)
 		o["selfLit"] = p.selfLit;
 	if(p.glow)
 		o["glow"] = QString::fromLatin1(p.glow);
-	return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+	return o;
+}
+
+QString PaintArgs(const Paint& p)
+{
+	return QString::fromUtf8(QJsonDocument(PaintObject(p)).toJson(QJsonDocument::Compact));
 }
 
 } // namespace
@@ -437,4 +442,18 @@ QString StyleGuideText(const QString& shape, const QString& style, QString& erro
 			out << QString("Not possible with the tools yet: %1").arg(found->notYet);
 	}
 	return out.join("\n");
+}
+
+QList<QJsonObject> StyleGuidePalette(const QString& style, QString* layOn)
+{
+	QList<QJsonObject> paints;
+	for(const Style& st : kStyles)
+		if(style.compare(st.key, Qt::CaseInsensitive) == 0)
+		{
+			for(int i = 0; i < st.count; ++i)
+				paints << PaintObject(st.paints[i]);
+			if(layOn)
+				*layOn = QString::fromLatin1(st.layOn);
+		}
+	return paints;
 }

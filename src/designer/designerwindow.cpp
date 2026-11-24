@@ -70,6 +70,7 @@
 #include "plantools.h"
 #include "paint.h"
 #include "proctex.h"
+#include "styleguide.h"
 #include "planview.h"
 #include "stats.h"
 #include "preview.h"
@@ -1848,6 +1849,32 @@ QWidget* DesignerWindow::MakePaintPage()
 	buttons->addWidget(empire);
 	buttons->addWidget(remove);
 	layout->addLayout(buttons);
+	QPushButton* style = new QPushButton("Apply a style...");
+	style->setToolTip("Adds the palette of a style (cozy neon, brutalist, art deco and more) to this one: the base "
+					  "coat and the colours to paint bands, trim, windows and neon with, most of them textures made "
+					  "for the design.");
+	layout->addWidget(style);
+	connect(style, &QPushButton::clicked, this, [this]() {
+		bool ok = false;
+		const QString key = QInputDialog::getItem(this, "Apply a style", "Style:", StyleGuideStyles(), 0, false, &ok);
+		if(!ok)
+			return;
+		QString layOn;
+		const QList<QJsonObject> paints = StyleGuidePalette(key, &layOn);
+		TriPlan plan = m_plan;
+		for(const QJsonObject& args : paints)
+		{
+			const PlanToolResult res = RunPlanTool(plan, "set_paint", args);
+			if(!res.ok)
+			{
+				QMessageBox::warning(this, "Apply a style", res.text);
+				return;
+			}
+		}
+		ApplyAiChange(plan, false, false, -1, QString("Applied the style %1.").arg(key));
+		QMessageBox::information(this, "Apply a style", QString("The palette of %1 is added; its first colour is "
+				"now the base coat. Paint the rest on with the paint tools:\n\n%2").arg(key, layOn));
+	});
 	m_livery = new QCheckBox("Livery: keep this colour's edges sharp");
 	m_livery->setToolTip("For a painted pattern, stripe or insignia that has to stay clear. On a hull shaped from a "
 						 "model, or an angular hull, the hull is cut along the outline drawn in this colour, so the "
@@ -2031,6 +2058,7 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_texKind->addItem("None (plain paint)", "none");
 	m_texKind->addItem("A texture of the game's", "game");
 	m_texKind->addItem("An image of my own", "file");
+	m_texKind->addItem("Made for the design (procedural)", "proc");
 	m_texKind->setToolTip("Paint the hull in this colour with a texture instead: one from the game's library, or an "
 			"image file of your own (the game holds at most 256 pixels a side; bigger ones are made smaller). Each "
 			"texture takes one of the 15 places in the ship's palette of textures, shared with rooms, doors and "
@@ -2048,6 +2076,40 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_texFile->setToolTip("An image file of your own (PNG, JPG, ...). It repeats over the hull, so one that tiles "
 			"without seams looks best.");
 	texForm->addRow("Image:", m_texFile);
+	// A procedural texture: made from a kind, colours, wear and a seed.
+	m_procKind = new QComboBox;
+	for(const QString& k : ProcTexKinds())
+		m_procKind->addItem(k, k);
+	m_procKind->setToolTip("What the texture shows. windows, strip_windows and neon_strip are one storey each: lay "
+			"them on with the Facade wrap, so each deck gets one row.");
+	texForm->addRow("Made of:", m_procKind);
+	QHBoxLayout* procColours = new QHBoxLayout;
+	for(int i = 0; i < 3; ++i)
+	{
+		m_procColour[i] = new QPushButton;
+		m_procColour[i]->setToolTip(i == 0 ? "The main colour (the bricks, the concrete, the wall between windows)."
+				: i == 1 ? "The second colour (mortar, seams, window frames, the wall behind a neon strip)."
+				: "The third colour (the glass of windows).");
+		procColours->addWidget(m_procColour[i]);
+	}
+	texForm->addRow("Its colours:", procColours);
+	m_procWear = new QDoubleSpinBox;
+	m_procWear->setRange(0, 1);
+	m_procWear->setSingleStep(.1);
+	m_procWear->setToolTip("0 clean to 1 grimy: stains and rain streaks.");
+	texForm->addRow("Wear:", m_procWear);
+	m_procLit = new QDoubleSpinBox;
+	m_procLit->setRange(0, 1);
+	m_procLit->setSingleStep(.1);
+	m_procLit->setToolTip("Windows: the share lit from inside.");
+	texForm->addRow("Lit windows:", m_procLit);
+	m_procSeed = new QSpinBox;
+	m_procSeed->setRange(1, 9999);
+	m_procSeed->setToolTip("Another number gives another pattern of the same kind.");
+	texForm->addRow("Seed:", m_procSeed);
+	m_procPreview = new QLabel;
+	m_procPreview->setFixedSize(96, 96);
+	texForm->addRow("Looks like:", m_procPreview);
 	m_texWrap = new QComboBox;
 	m_texWrap->addItem("Per face (no stretching)", "face");
 	m_texWrap->addItem("Flat, from above", "top");
@@ -2082,8 +2144,76 @@ QWidget* DesignerWindow::MakePaintPage()
 			"100 % only the colour. The game mixes them this way.");
 	texForm->addRow("Colour over it:", m_texTint);
 	layout->addWidget(texture);
-	connect(m_texKind, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+	// A change to the procedural texture: made again from its recipe.
+	auto editProc = [this](const std::function<void(ProcTex&)>& change) {
+		const int row = m_palette->currentRow();
+		if(m_updating || row < 0 || row >= m_plan.palette.size())
+			return;
+		ProcTex tex;
+		QString unused;
+		if(!ParseProcTex(m_plan.palette.at(row).texFile, tex, unused))
+			DefaultProcTex(m_procKind->currentData().toString(), tex);
+		change(tex);
+		const QString spec = ProcTexSpec(tex);
+		const bool storey = tex.kind == "windows" || tex.kind == "strip_windows" || tex.kind == "neon_strip";
+		EditTexture([spec, storey](PlanPaint& p) {
+			const bool wasProc = IsProcTexSpec(p.texFile);
+			p.texLib = -1;
+			p.texFile = spec;
+			if(!wasProc)
+			{
+				p.tint = 0;			// The colours are in the texture.
+				if(storey)
+					p.wrap = "facade";
+			}
+		});
+	};
+	connect(m_procKind, QOverload<int>::of(&QComboBox::activated), this, [this, editProc]() {
+		const QString kind = m_procKind->currentData().toString();
+		editProc([kind](ProcTex& t) {
+			ProcTex fresh;
+			DefaultProcTex(kind, fresh);
+			fresh.wear = t.wear;
+			fresh.seed = t.seed;
+			fresh.lit = t.lit;
+			t = fresh;
+		});
+	});
+	for(int i = 0; i < 3; ++i)
+		connect(m_procColour[i], &QPushButton::clicked, this, [this, i, editProc]() {
+			ProcTex tex;
+			QString unused;
+			const int row = m_palette->currentRow();
+			if(row < 0 || row >= m_plan.palette.size() || !ParseProcTex(m_plan.palette.at(row).texFile, tex, unused))
+				return;
+			const QColor now = i == 0 ? tex.colour : i == 1 ? tex.colour2 : tex.colour3;
+			const QColor c = QColorDialog::getColor(now, this, "A colour of the texture");
+			if(c.isValid())
+				editProc([i, c](ProcTex& t) { (i == 0 ? t.colour : i == 1 ? t.colour2 : t.colour3) = c; });
+		});
+	connect(m_procWear, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [editProc](double v) {
+		editProc([v](ProcTex& t) { t.wear = v; });
+	});
+	connect(m_procLit, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [editProc](double v) {
+		editProc([v](ProcTex& t) { t.lit = v; });
+	});
+	connect(m_procSeed, QOverload<int>::of(&QSpinBox::valueChanged), this, [editProc](int v) {
+		editProc([v](ProcTex& t) { t.seed = v; });
+	});
+	connect(m_texKind, QOverload<int>::of(&QComboBox::activated), this, [this, editProc]() {
 		const QString kind = m_texKind->currentData().toString();
+		if(kind == "proc")
+		{
+			const int row = m_palette->currentRow();
+			const QColor main = row >= 0 && row < m_plan.palette.size() ? m_plan.palette.at(row).colour : QColor();
+			const QString k = m_procKind->currentData().toString();
+			editProc([k, main](ProcTex& t) {
+				DefaultProcTex(k, t);
+				if(main.isValid() && main != Qt::white && main != Qt::black)
+					t.colour = main;
+			});
+			return;
+		}
 		if(kind == "file")
 		{
 			const QString file = QFileDialog::getOpenFileName(this, "An image for the texture", QString(),
@@ -4462,13 +4592,32 @@ void DesignerWindow::RefreshTexture()
 	const PlanPaint p = valid ? m_plan.palette.at(row) : PlanPaint();
 	const bool was = m_updating;
 	m_updating = true;
-	const QString kind = p.texLib >= 0 ? "game" : (!p.texFile.isEmpty() ? "file" : "none");
+	const bool proc = IsProcTexSpec(p.texFile);
+	const QString kind = p.texLib >= 0 ? "game" : proc ? "proc" : (!p.texFile.isEmpty() ? "file" : "none");
+	ProcTex tex;
+	QString unused;
+	if(!proc || !ParseProcTex(p.texFile, tex, unused))
+		DefaultProcTex(m_procKind->currentData().toString(), tex);
+	for(QWidget* w : std::initializer_list<QWidget*>{ m_procKind, m_procColour[0], m_procColour[1], m_procColour[2],
+			m_procWear, m_procLit, m_procSeed })
+		w->setEnabled(valid && proc);
+	m_procKind->setCurrentIndex(qMax(0, m_procKind->findData(tex.kind)));
+	const QColor colours[3] = { tex.colour, tex.colour2, tex.colour3 };
+	for(int i = 0; i < 3; ++i)
+	{
+		m_procColour[i]->setIcon(Swatch(colours[i]));
+		m_procColour[i]->setText(colours[i].name());
+	}
+	m_procWear->setValue(tex.wear);
+	m_procLit->setValue(tex.lit);
+	m_procSeed->setValue(tex.seed);
+	m_procPreview->setPixmap(proc ? QPixmap::fromImage(MakeProcTex(tex, 96)) : QPixmap());
 	m_texKind->setEnabled(valid);
 	m_texKind->setCurrentIndex(qMax(0, m_texKind->findData(kind)));
 	m_texLib->setEnabled(valid && kind == "game");
 	if(p.texLib >= 0)
 		m_texLib->setCurrentIndex(qMax(0, m_texLib->findData(p.texLib)));
-	m_texFile->setEnabled(valid && kind != "game");
+	m_texFile->setEnabled(valid && kind != "game" && kind != "proc");
 	m_texFile->setText(kind == "file" ? QFileInfo(p.texFile).fileName() : QString("Choose an image..."));
 	m_texFile->setToolTip(kind == "file" ? p.texFile : QString("An image file of your own (PNG, JPG, ...). It "
 			"repeats over the hull, so one that tiles without seams looks best."));

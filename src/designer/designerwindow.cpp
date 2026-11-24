@@ -3725,13 +3725,34 @@ void DesignerWindow::NewFromModel(bool fighter)
 	options.yUp = yUp->isChecked();
 	if(ImportModel(modelFile, options, true, fighter) && !keepModel->isChecked())
 	{
-		// Slices only: the plan keeps the drawn triangles and lets go of the model.
-		m_plan.model = PlanModel();
-		m_hullShaped = false;
-		RefreshAll();
-		PlanEdited();
+		LetGoOfModel();
 		m_status->setText("Sliced the model into decks; the plan's hull is now made from the drawn triangles alone.");
 	}
+}
+
+// Slices only: the plan keeps the drawn triangles and lets go of the model.
+void DesignerWindow::LetGoOfModel()
+{
+	m_plan.model = PlanModel();
+	m_hullShaped = false;
+	RefreshAll();
+	PlanEdited();
+}
+
+// The AI's import_model: as the menu's, with no questions asked; 'notes'
+// gets what the import says about the model (closed or not, a better length).
+bool DesignerWindow::AiImportModel(const QString& modelFile, const PlanFromModelOptions& options, bool fighter,
+								   bool keepModel, QString& notes, QString& error)
+{
+	if(!ImportModel(modelFile, options, false, fighter))
+	{
+		error = m_status->text();
+		return false;
+	}
+	notes = m_status->text();
+	if(!keepModel)
+		LetGoOfModel();
+	return true;
 }
 
 bool DesignerWindow::ImportModel(const QString& modelFile, PlanFromModelOptions options, bool tell, bool fighter)

@@ -25,6 +25,7 @@
 #endif
 
 #include "designerwindow.h"
+#include "mesh.h"
 #include "plantools.h"
 #include "version.h"
 
@@ -59,6 +60,13 @@ QJsonObject Prop(const char* type, const QString& description)
 	QJsonObject o;
 	o["type"] = QString::fromLatin1(type);
 	o["description"] = description;
+	return o;
+}
+
+QJsonObject Choice(const QStringList& values, const QString& description)
+{
+	QJsonObject o = Prop("string", description);
+	o["enum"] = QJsonArray::fromStringList(values);
 	return o;
 }
 
@@ -283,7 +291,27 @@ QJsonArray McpServer::ToolDefinitions() const
 					  "report. The player imports it in the game's design window.", p, { "file" });
 	}
 	{
-		tools << Tool("list_files", "The plans and blueprints in the designs folder.");
+		tools << Tool("list_files", "The plans, blueprints and 3D models in the designs folder.");
+	}
+	{
+		QJsonObject p;
+		p["file"] = Prop("string", "A 3D model in the designs folder (list_files shows them): " + ModelSuffixes().join(", ") + ".");
+		p["lengthFeet"] = Prop("number", "Ships: how long the ship is made, in feet, fore to aft (150 if left out and no decks "
+							   "given). The model is scaled to it and sliced into decks.");
+		p["decks"] = Prop("integer", "Ships: how many decks high the model is made instead; its length follows from it.");
+		p["kind"] = Choice({ "ship", "fighter" }, "ship (the default) or fighter: a small craft at the model's real size, "
+						   "with 2.5 ft cells (experimental).");
+		p["keepModel"] = Prop("boolean", "true (the default): the plan keeps the model, and its own surface can be the hull. "
+							  "false: the model only gives the decks' outlines and is let go; the hull is shaped from the "
+							  "drawn cells, with far fewer faces.");
+		p["flip"] = Prop("boolean", "The model's other end is the fore (the ship faces the wrong way otherwise).");
+		p["yUp"] = Prop("boolean", "The model was made with y up (many .obj and .gltf files are), not z up.");
+		p["threshold"] = Prop("number", "How much of a cell has to be inside the model to be hull, 0.05 to 1 (0.5 if left "
+							  "out): lower for a fuller hull, higher for a slimmer one.");
+		tools << Tool("import_model", "Starts a new plan from a 3D model, as the designer's New spaceship from a 3D model: "
+					  "the model is sliced into decks and each deck's hull cells are drawn from it. Then draw the rooms, "
+					  "doors and the rest on them. Replaces the plan open now (undo takes it back). Look at the result with "
+					  "picture, and at the notes: a model that is not closed, or too small for its rooms, says so.", p, { "file" });
 	}
 	{
 		QJsonObject p;
@@ -387,15 +415,48 @@ QJsonObject McpServer::CallTool(const QString& name, const QJsonObject& args)
 		return ToolResult(QString("Saved the blueprint as %1. The player loads it in the game's design window, and should check "
 								  "it there before building.\n\n%2").arg(path, report));
 	}
+	if(name == "import_model")
+	{
+		const QString path = FilePath(args["file"].toString(), QString(), error);
+		if(path.isEmpty())
+			return ToolResult(error, true);
+		if(!ModelSuffixes().contains(QFileInfo(path).suffix().toLower()))
+			return ToolResult("That is not a 3D model the designer reads: " + ModelSuffixes().join(", ") + ".", true);
+		if(!QFileInfo::exists(path))
+			return ToolResult(QString("There is no %1; list_files has the models there are.").arg(path), true);
+		PlanFromModelOptions options;
+		const bool fighter = args["kind"].toString() == "fighter";
+		if(args.contains("lengthFeet"))
+			options.lengthFeet = qBound(10.0, args["lengthFeet"].toDouble(), 20000.0);
+		if(args.contains("decks"))
+			options.decks = qBound(1, args["decks"].toInt(), 200);
+		if(args.contains("threshold"))
+			options.threshold = qBound(.05, args["threshold"].toDouble(), 1.0);
+		options.flip = args["flip"].toBool();
+		options.yUp = args["yUp"].toBool();
+		options.cellFeet = 0;		// The plan's own.
+		const bool keepModel = args.contains("keepModel") ? args["keepModel"].toBool() : true;
+		QString notes;
+		if(!m_window->AiImportModel(path, options, fighter, keepModel, notes, error))
+			return ToolResult(error.isEmpty() ? QString("The model could not be read.") : error, true);
+		TriPlan plan = m_window->Plan();
+		return ToolResult(QString("Made a new plan from %1%2.\n%3\n\n%4").arg(QFileInfo(path).fileName(),
+				keepModel ? QString() : QString(" (sliced only; the model was let go)"), notes,
+				RunPlanTool(plan, "get_plan", QJsonObject()).text));
+	}
 	if(name == "list_files")
 	{
 		QStringList lines;
 		QDir dir(m_folder);
-		for(const QFileInfo& f : dir.entryInfoList(QStringList() << "*.json" << "*.SoH" << "*.soh", QDir::Files, QDir::Time))
+		QStringList patterns;
+		patterns << "*.json" << "*.SoH" << "*.soh";
+		for(const QString& suffix : ModelSuffixes())
+			patterns << "*." + suffix << "*." + suffix.toUpper();
+		for(const QFileInfo& f : dir.entryInfoList(patterns, QDir::Files, QDir::Time))
 			lines << QString("%1  (%2 KB, %3)").arg(f.fileName()).arg((f.size() + 1023) / 1024)
 					.arg(f.lastModified().toString("yyyy-MM-dd hh:mm"));
 		return ToolResult(QString("The designs folder is %1.\n").arg(m_folder)
-				+ (lines.isEmpty() ? QString("It has no plans or blueprints yet.") : lines.join("\n")));
+				+ (lines.isEmpty() ? QString("It has no plans, blueprints or models yet.") : lines.join("\n")));
 	}
 	if(name == "picture")
 	{

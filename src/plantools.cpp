@@ -479,7 +479,7 @@ QString PlanToolsGuide()
 		"The plan is a grid of square cells seen from above, one grid per deck. x runs aft (0) to fore, y starboard (0) "
 		"to port, decks are numbered from 1 at the bottom. Rooms are rectangles of whole cells; rooms that touch share a "
 		"wall.\n"
-		"Usual order: get_plan (or new_plan) -> draw_hull for each deck's outline -> add_room -> add_door between rooms and "
+		"Usual order: get_plan (or new_plan) -> draw_hull for each deck's outline (or import_model, which draws every deck from a 3D model in the designs folder) -> add_room -> add_door between rooms and "
 		"at least one to \"outside\" -> connect_decks (ladders, stairs) -> optionally add_station and add_berths (the "
 		"build puts in the template's stations and berths by itself) -> check_plan -> build -> expected_stats -> "
 		"save_plan and save_blueprint. Look with show_deck often, and with picture.\n"

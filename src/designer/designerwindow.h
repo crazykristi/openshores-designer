@@ -101,6 +101,8 @@ public:
 	QString	AiStats(int quality);
 	bool	AiSavePlan(const QString& fileName, QString& error);
 	bool	AiOpenPlan(const QString& fileName, QString& error);
+	bool	AiImportModel(const QString& modelFile, const PlanFromModelOptions& options, bool fighter, bool keepModel,
+						  QString& notes, QString& error);
 	// Builds and saves the blueprint, even when the engine has errors (they
 	// are in 'report').
 	bool	AiSaveBlueprint(const QString& fileName, QString& report, QString& error);
@@ -119,6 +121,7 @@ private slots:
 	void	OnNewFighterFromModel();
 	void	OnMetric(bool metric);
 	void	ApplyTextUnits();
+	void	LetGoOfModel();
 	void	OnOpen();
 	void	OnOpenBlueprint();
 	void	OnSave();

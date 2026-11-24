@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "shipgen": {
+        "type": "local",
+        "command": ["/path/to/shipgen-designer-x86_64.AppImage", "--mcp", "--mcp-folder", "designs"],
+        "codemode": false,
+        "timeout": { "startup": 60000 }
+      }
+    }
+  },
+  "default_agent": "shipgen"
+}

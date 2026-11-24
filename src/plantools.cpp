@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "plantools.h"
+#include "styleguide.h"
 
 #include <QFile>
 #include <QHash>
@@ -144,6 +145,16 @@ QJsonArray PlanToolDefinitions()
 		QJsonObject p;
 		p["what"] = Choice({ "room_types", "station_types", "berth_kinds", "ship_templates", "building_templates",
 							 "ftl_drives", "maneuver_drives", "fire_control", "textures", "hull_styles", "system_volumes", "all" }, "Which list; all of them without it.");
+		{
+			QJsonObject p;
+			p["shape"] = Choice(StyleGuideShapes(), "A kind of building by its look, such as Office_tower or Spire: its decks "
+								"and footprint in cells, the game's template closest to it, and how to draw it with the tools.");
+			p["style"] = Choice(StyleGuideStyles(), "A visual style, such as Cozy_neon or Brutalist_Neo-brutalist: a palette "
+								"as ready set_paint arguments and how to lay it on with paint_hull.");
+			tools << Tool("style_guide", "Shapes and styles for buildings (and ideas for ships): call it with neither to "
+						  "list them, then with a shape and a style for the numbers, the tool calls and the palette. Use it "
+						  "when the player asks for a kind of building or a look in words.", p);
+		}
 		tools << Tool("design_rules", "What a ship, station, fighter or building needs to work in the game: rooms, "
 					  "stations, berths, ways in and round, hull volume and the game's limits. Read it before designing.",
 					  QJsonObject());
@@ -467,6 +478,7 @@ QString PlanToolsDesignRules()
 		"Fighters (experimental): a Bridge as the cockpit with the pilot's seat, a hull door on its side, and a canopy (windows or ceiling windows that follow the hull). No FTL drive.\n"
 		"\n"
 		"Buildings\n"
+		"- For a kind of building or a look asked for in words (an office tower, a spire, cozy neon), style_guide gives the decks, footprint, template, how to draw it and a palette.\n"
 		"- Draw the building's site (an area kind): the game's build plot. Generated parking goes inside it; anything outside it stops the build.\n"
 		"- The industry and template decide the stations and volumes. A military weapons base gets a fire control station for every weapon bay; a shield base gets its shields and a shield station.\n"
 		"- Parks are ground only; platforms have no rooms and get a build zone.\n";
@@ -553,6 +565,10 @@ bool BoolArg(const QJsonObject& args, const char* key, bool fallback)
 QString StrArg(const QJsonObject& args, const char* key, const QString& fallback = QString())
 {
 	const QJsonValue v = args.value(QLatin1String(key));
+	// A number where a name or number is asked for (a texture, a palette
+	// entry): smaller models send 34 for "34".
+	if(v.isDouble())
+		return QString::number(v.toDouble(), 'g', 10);
 	return v.isString() ? v.toString().trimmed() : fallback;
 }
 
@@ -2906,6 +2922,13 @@ PlanToolResult RunPlanTool(TriPlan& plan, const QString& name, const QJsonObject
 			const int deck = DeckArg(plan, args);
 			res.text = DeckMap(plan, deck, BoolArg(args, "full", false));
 			res.deck = deck;
+		}
+		else if(name == "style_guide")
+		{
+			QString error;
+			res.text = StyleGuideText(StrArg(args, "shape"), StrArg(args, "style"), error);
+			if(!error.isEmpty())
+				throw Fail{ error };
 		}
 		else if(name == "design_rules")
 		{

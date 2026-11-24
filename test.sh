@@ -730,8 +730,8 @@ with open(sys.argv[1], 'wb') as f:
             f.write(struct.pack('<3f', *p))
         f.write(struct.pack('<H', 0x7c1f))
 PY
-if "$SHIPGEN" mesh-info --model "$WORK/colour.stl" 2>&1 | grep -q 'triangles      : 4$' &&
-		"$SHIPGEN" mesh-info --model "$WORK/colour.stl" 2>&1 | grep -q 'the model is closed'; then
+if "$SHIPGEN" mesh-info --model "$WORK/colour.stl" 2>&1 | qgrep 'triangles      : 4$' &&
+		"$SHIPGEN" mesh-info --model "$WORK/colour.stl" 2>&1 | qgrep 'the model is closed'; then
 	pass=$((pass+1))
 	echo "  ok    a binary STL with colours in its attribute bytes reads whole"
 else
@@ -742,10 +742,10 @@ fi
 
 # FBX, glTF and the other formats come through the Assimp library, when the
 # build found it (build.sh says so). A 10 ft cube as glTF.
-if "$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | grep -q 'unsupported model format'; then
+if "$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | qgrep 'unsupported model format'; then
 	echo "  (built without Assimp: glTF and FBX are not read)"
-elif "$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | grep -q 'triangles      : 12$' &&
-		"$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | grep -q 'the model is closed' &&
+elif "$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | qgrep 'triangles      : 12$' &&
+		"$SHIPGEN" mesh-info --model "$HERE/testdata/cube.gltf" 2>&1 | qgrep 'the model is closed' &&
 		"$SHIPGEN" plan-from-model "$HERE/testdata/cube.gltf" "$WORK/cube-plan.json" --length 50 > "$WORK/cube-plan.log" 2>&1 &&
 		grep -q '"width": 1[0-2],' "$WORK/cube-plan.json"; then
 	pass=$((pass+1))
@@ -832,8 +832,8 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 	if grep -q 'Walking room round the hull: [1-9]' "$WORK/plan/build.txt" &&
 			"$SHIPGEN" parts "$WORK/plan/example.SoH" | qgrep 'Hull Void  \[Hull Clearance\]' &&
 			! "$SHIPGEN" parts "$WORK/plan/noclear.SoH" | qgrep 'Hull Clearance' &&
-			echo "$clearWith" | grep -q "the ship's test: free" && echo "$clearWith" | grep -q 'in void .*\[Hull Clearance\]' &&
-			echo "$clearWithout" | grep -q "the ship's test: blocked"; then
+			echo "$clearWith" | qgrep "the ship's test: free" && echo "$clearWith" | qgrep 'in void .*\[Hull Clearance\]' &&
+			echo "$clearWithout" | qgrep "the ship's test: blocked"; then
 		pass=$((pass+1))
 		echo "  ok    hull voids give walking room where the game's outlines of the hull would stop people"
 	else
@@ -878,8 +878,8 @@ if "$SHIPGEN" plan-example "$WORK/plan/example.json" > /dev/null 2>&1 &&
 	sed 's/"type": "Engine Room"/"type": "Hall"/' "$WORK/plan/example.json" > "$WORK/plan/no-engine.json"
 	"$SHIPGEN" build-plan "$WORK/plan/no-engine.json" --out "$WORK/plan/no-engine.SoH" > /dev/null 2>&1
 	if [ "$(grep -c 'Service Panel' "$WORK/plan/example-parts.txt")" = 5 ] &&
-			! grep 'Service Panel' "$WORK/plan/example-parts.txt" | grep -qv 'y -50.0..-50.0' &&
-			! "$SHIPGEN" audit "$WORK/plan/example.SoH" 2>&1 | grep -q 'Service Panel' &&
+			! grep 'Service Panel' "$WORK/plan/example-parts.txt" | qgrep -v 'y -50.0..-50.0' &&
+			! "$SHIPGEN" audit "$WORK/plan/example.SoH" 2>&1 | qgrep 'Service Panel' &&
 			[ "$("$SHIPGEN" parts "$WORK/plan/no-engine.SoH" 2>&1 | grep -c 'Service Panel')" = 0 ]; then
 		pass=$((pass+1))
 		echo "  ok    maintenance consoles go on a free wall of the engine room, and only there"
@@ -1610,7 +1610,7 @@ print('yes' if len(pads) >= 2 and apart and text.count('Mesh  [Transporter 1]') 
 PY
 )"
 	if grep -qE 'Room Void  \[Sick Bay 1\]  hold access: pharmacy  only officers, crew' "$WORK/plan/uses.parts" &&
-			! grep -E 'Room Void  \[Engine Room 1\]' "$WORK/plan/uses.parts" | grep -q 'only' &&
+			! grep -E 'Room Void  \[Engine Room 1\]' "$WORK/plan/uses.parts" | qgrep 'only' &&
 			grep -qE 'Room Void  \[Engine Room 1\]  hold access: fuel coupling' "$WORK/plan/uses.parts" &&
 			grep -qE 'Room Void  \[Bridge 1\]  hold access: hold' "$WORK/plan/uses.parts" &&
 			grep -q 'No room is a hold, so the cargo' "$WORK/plan/uses.txt" &&
@@ -1641,12 +1641,12 @@ PY
 	padList=$("$SHIPGEN" effects "$WORK/plan/uses.SoH" 2>&1)
 	padFaces=$("$SHIPGEN" faces "$WORK/plan/uses.SoH" --where 2>&1)
 	if grep -q '^Errors (0):' "$WORK/plan/fx.txt" &&
-			echo "$fxList" | grep -qE 'Power Plant +[0-9]+ faces  runs' &&
-			echo "$fxList" | grep -qE 'Weapon 3 +[0-9]+ faces  never: no fire control station picks effect 3' &&
-			echo "$fxFaces" | grep 'effect Power Plant' | grep -q 'effect at s -' &&
-			! echo "$fxFaces" | grep 'effect Power Plant' | grep -q 'effect at s 0.00..0.00 t 0.00..0.00' &&
-			echo "$padList" | grep -qE 'Transporter Pad 1 +[0-9]+ faces  runs' &&
-			echo "$padFaces" | grep 'effect Transporter Pad 1' | grep -q 'effect at s 0.00..1.00 t 0.00..1.00'; then
+			echo "$fxList" | qgrep -E 'Power Plant +[0-9]+ faces  runs' &&
+			echo "$fxList" | qgrep -E 'Weapon 3 +[0-9]+ faces  never: no fire control station picks effect 3' &&
+			echo "$fxFaces" | grep 'effect Power Plant' | qgrep 'effect at s -' &&
+			! echo "$fxFaces" | grep 'effect Power Plant' | qgrep 'effect at s 0.00..0.00 t 0.00..0.00' &&
+			echo "$padList" | qgrep -E 'Transporter Pad 1 +[0-9]+ faces  runs' &&
+			echo "$padFaces" | grep 'effect Transporter Pad 1' | qgrep 'effect at s 0.00..1.00 t 0.00..1.00'; then
 		pass=$((pass+1))
 		echo "  ok    surface effects get their picture laid on the faces, and the game's conditions for running them are known"
 	else

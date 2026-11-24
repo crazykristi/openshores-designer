@@ -155,7 +155,7 @@ QJsonArray PlanToolDefinitions()
 		p["kind"] = Choice({ "ship", "building", "fighter" }, "A ship (the default), a building, or a fighter (a small craft; experimental).");
 		p["template"] = Prop("string", "A ship template (list_choices ship_templates) or, for a building, a building template. "
 							 "It decides the stations, berths and systems the build puts in.");
-		p["name"] = Prop("string", "The design's name.");
+		p["name"] = Prop("string", "The design's name, as the player sees it in the game (such as 'Kestrel').");
 		p["sizeX"] = Prop("integer", "Cells along x (fore and aft), up to 400.");
 		p["sizeY"] = Prop("integer", "Cells along y (across), up to 400.");
 		p["decks"] = Prop("integer", "How many decks (storeys).");
@@ -166,8 +166,8 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["name"] = Prop("string", "The design's name.");
-		p["template"] = Prop("string", "Ships: the ship template.");
+		p["name"] = Prop("string", "The design's name, as the player sees it in the game (such as 'Kestrel').");
+		p["template"] = Prop("string", "Ships: the ship template (list_choices ship_templates). It decides the stations, berths and systems the build puts in.");
 		p["ftlDrive"] = Prop("string", "Ships: the FTL drive (list_choices ftl_drives).");
 		p["maneuverDrive"] = Choice({ "gravity", "rocket" }, "Ships: the maneuver drive. A gravity drive runs on power; a "
 									"rocket drive burns fuel and uses no power.");
@@ -183,23 +183,34 @@ QJsonArray PlanToolDefinitions()
 		p["autoPaths"] = Prop("boolean", "Walk paths through every door, ladder and stairs.");
 		p["bridgeStyle"] = Choice({ "hazeron", "desks" }, "How stations look: swivel chairs, or integrated desks.");
 		p["hullDoorExit"] = Choice({ "auto", "ladder", "none" }, "The way down from the hull doors.");
-		p["leaveOut"] = Prop("array", "Ships: stations left out, with what goes with them: shield, firecontrol, transporter.");
+		p["leaveOut"] = Prop("array", "Ships: stations left out, with what goes with them: shield, firecontrol, transporter. "
+							 "An empty list puts them all back.");
+		{
+			QJsonObject leaveOut = p["leaveOut"].toObject();
+			leaveOut["items"] = Choice({ "shield", "firecontrol", "transporter" }, "A station left out.");
+			p["leaveOut"] = leaveOut;
+		}
 		p["statsQuality"] = Prop("integer", "The quality (1 to 255) expected_stats works the numbers out for.");
 		p["systemVolumes"] = Prop("object", "Ships: system volumes in cubic meters set by hand, by key (list_choices "
 								  "system_volumes); 0 for the template's share. The structure makes up the difference.");
+		{
+			QJsonObject volumes = p["systemVolumes"].toObject();
+			volumes["additionalProperties"] = Prop("number", "Cubic meters for that system, such as {\"fuel\": 120}.");
+			p["systemVolumes"] = volumes;
+		}
 		tools << Tool("set_settings", "Changes settings of the whole plan; only the ones given.", p);
 	}
 	{
 		QJsonObject p;
-		p["sizeX"] = Prop("integer", "Cells along x.");
-		p["sizeY"] = Prop("integer", "Cells along y.");
+		p["sizeX"] = Prop("integer", "The grid's new length in cells along x (fore and aft), up to 400. Cells drawn beyond it are lost.");
+		p["sizeY"] = Prop("integer", "The grid's new width in cells along y (across), up to 400. Cells drawn beyond it are lost.");
 		tools << Tool("resize_grid", "Makes the grid bigger or smaller, keeping what is drawn centred (so cell numbers move: "
 					  "look again with show_deck).", p, { "sizeX", "sizeY" });
 	}
 	{
 		QJsonObject p;
 		p["below"] = Prop("boolean", "Under the bottom deck (deck numbers move up); on top otherwise.");
-		tools << Tool("add_deck", "Adds an empty deck on top, or below.", p);
+		tools << Tool("add_deck", "Adds an empty deck on top of the plan, or below it; draw its hull with draw_hull.", p);
 	}
 	{
 		QJsonObject p;
@@ -240,7 +251,7 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["room"] = Prop("string", "The room's name.");
+		p["room"] = Prop("string", "The room's name, as add_room gave it or get_plan lists it (such as 'Bridge 1').");
 		p["deck"] = DeckProp();
 		AddRect(p);
 		p["replace"] = Prop("boolean", "Take the cells from rooms already there.");
@@ -249,20 +260,25 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["room"] = Prop("string", "The room's name.");
-		p["label"] = Prop("string", "A new name.");
-		p["type"] = Prop("string", "A new room type.");
+		p["room"] = Prop("string", "The room's name, as add_room gave it or get_plan lists it (such as 'Bridge 1').");
+		p["label"] = Prop("string", "A new name for the room, unique in the plan.");
+		p["type"] = Prop("string", "A new room type (list_choices room_types), such as Crew Cabin or Hold.");
 		p["access"] = Prop("array", "Who may be in it: any of officers, crew, passengers, troops (everyone if left out).");
+		{
+			QJsonObject access = p["access"].toObject();
+			access["items"] = Choice({ "officers", "crew", "passengers", "troops" }, "Who may be in the room.");
+			p["access"] = access;
+		}
 		tools << Tool("edit_room", "Renames a room, or changes its type or who may be in it.", p, { "room" });
 	}
 	{
 		QJsonObject p;
-		p["room"] = Prop("string", "The room's name.");
+		p["room"] = Prop("string", "The room's name, as add_room gave it or get_plan lists it (such as 'Bridge 1').");
 		tools << Tool("remove_room", "Takes a room away (its cells stay hull) with its doors and what was in it.", p, { "room" });
 	}
 	{
 		QJsonObject p;
-		p["from"] = Prop("string", "One room's name.");
+		p["from"] = Prop("string", "One room's name, as add_room gave it or get_plan lists it (such as 'Hall 1').");
 		p["to"] = Prop("string", "The other room's name, or \"outside\" for a door through the hull (a way in).");
 		p["deck"] = DeckProp("The deck, where the rooms meet on more than one.");
 		p["width"] = Prop("integer", "Cells wide (1 if left out; 2 or more for a wide door or a vehicle bay door).");
@@ -279,7 +295,7 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["room"] = Prop("string", "The room's name.");
+		p["room"] = Prop("string", "The room's name, as add_room gave it or get_plan lists it (such as 'Bridge 1').");
 		p["side"] = Choice({ "fore", "aft", "port", "starboard", "any" }, "Which outer wall; the longest one with any.");
 		p["length"] = Prop("integer", "Cells long (2 if left out).");
 		p["deck"] = DeckProp("The deck, for a room on more than one.");
@@ -287,10 +303,10 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["lower"] = Prop("string", "The room on the lower deck.");
+		p["lower"] = Prop("string", "The name of the room on the lower deck (as get_plan lists it).");
 		p["deck"] = DeckProp("The lower deck, when the rooms meet on more than one pair of decks (one room drawn on several "
 							 "decks joined to itself, say). The lowest pair that fits if left out.");
-		p["upper"] = Prop("string", "The room on the deck above it.");
+		p["upper"] = Prop("string", "The name of the room on the deck above it, over the same cells (as get_plan lists it).");
 		p["kind"] = Choice({ "ladder", "hatch_ladder", "hatch", "stairs", "ramp" }, "A ladder (the default), a ladder "
 						   "through a hatch that opens and closes, a hatch alone, stairs or a ramp (they need a run of "
 						   "cells in both rooms).");
@@ -301,7 +317,7 @@ QJsonArray PlanToolDefinitions()
 	}
 	{
 		QJsonObject p;
-		p["type"] = Choice(kStationTypes, "The station.");
+		p["type"] = Choice(kStationTypes, "Which station: helm, navigator and command on the Bridge, engineer in the Engine Room, firecontrol for a weapon bay, and so on (list_choices station_types).");
 		p["room"] = Prop("string", "The room it goes in (the helm, navigator and command usually on the Bridge, the "
 						 "engineer in the Engine Room).");
 		p["count"] = Prop("integer", "How many (1 if left out).");
@@ -373,12 +389,12 @@ QJsonArray PlanToolDefinitions()
 		QJsonObject p;
 		p["paint"] = Prop("string", "The palette entry: its number or its name (set_paint).");
 		p["deck"] = DeckProp("The lowest deck to paint (all of them if left out).");
-		p["toDeck"] = DeckProp("The highest deck to paint (only 'deck' if left out; all from 'deck' up if deck is given "
-							   "and toDeck is \"top\").");
+		p["toDeck"] = DeckProp("The highest deck to paint, from 1 at the bottom (only 'deck' if left out). For every deck "
+							   "from 'deck' up, give the top deck's number.");
 		p["x"] = Prop("integer", "The aft end of the box, a cell (the whole length if left out).");
-		p["sizeX"] = Prop("integer", "Cells long.");
+		p["sizeX"] = Prop("integer", "The box's length in cells along x, from x towards the fore (to the fore end if left out).");
 		p["y"] = Prop("integer", "The starboard side of the box, a cell (the whole beam if left out).");
-		p["sizeY"] = Prop("integer", "Cells across.");
+		p["sizeY"] = Prop("integer", "The box's width in cells along y, from y towards port (to the port side if left out).");
 		p["awayFromEdge"] = Prop("integer", "Paint only cells at least this many cells in from the edge of the deck's "
 								 "hull: the deck's top, not its sides (teak on the main deck, the sides grey). 0 if left out.");
 		tools << Tool("paint_hull", "Paints the hull with one palette entry over a box of cells on a range of decks. The "
@@ -391,7 +407,7 @@ QJsonArray PlanToolDefinitions()
 		p["what"] = Choice({ "doors", "windows", "ladders", "hatches", "stairs", "stations", "berths", "pads", "parking",
 						   "weapons" }, "What to take away.");
 		p["room"] = Prop("string", "Only those in or on the walls of this room.");
-		p["deck"] = DeckProp("Only those on this deck.");
+		p["deck"] = DeckProp("Only those on this deck, from 1 at the bottom (every deck if left out).");
 		tools << Tool("remove_items", "Takes doors, windows, ladders, stairs, stations or berths away.", p, { "what" });
 	}
 	{

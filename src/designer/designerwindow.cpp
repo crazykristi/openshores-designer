@@ -68,6 +68,8 @@
 #include "generate.h"
 #include "names.h"
 #include "plantools.h"
+#include "paint.h"
+#include "proctex.h"
 #include "planview.h"
 #include "stats.h"
 #include "preview.h"
@@ -2953,6 +2955,10 @@ void DesignerWindow::RefreshPalette()
 		if(p.HasTexture())
 		{
 			QString what = QFileInfo(p.texFile).fileName();
+			ProcTex tex;
+			QString unused;
+			if(IsProcTexSpec(p.texFile) && ParseProcTex(p.texFile, tex, unused))
+				what = "procedural " + tex.kind;
 			if(p.texLib >= 0)
 			{
 				const int at = m_texLib ? m_texLib->findData(p.texLib) : -1;
@@ -2965,7 +2971,12 @@ void DesignerWindow::RefreshPalette()
 			icon = GameTextureIcon(p.texLib);
 		else if(!p.texFile.isEmpty())
 		{
-			const QImage image(p.texFile);
+			QImage image;
+			QString unused;
+			if(IsProcTexSpec(p.texFile))
+				LoadPaintImage(p.texFile, image, unused);
+			else
+				image.load(p.texFile);
 			if(!image.isNull())
 				icon = QIcon(QPixmap::fromImage(image.scaled(32, 32, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
 		}

@@ -6,6 +6,7 @@
 // complete internal layout.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "proctex.h"
 #include "effects.h"
 #include "auscroute.h"
 #include "auquad.h"
@@ -21,6 +22,7 @@
 #include <functional>
 #include <QFileInfo>
 #include <QImage>
+#include <QPainter>
 #include <QTextStream>
 
 #include "aufilever.h"
@@ -2176,6 +2178,45 @@ int cmdInspect(const QStringList& args)
 // (within a tenth of a foot) are one network. Each network with how many
 // paths it has, where it lies, and the rooms its points are in.
 // Every triangle of one part, corner by corner, with its game normal.
+// A procedural texture to an image, to look at it: one repeat, or 2 by 2
+// to see that it tiles without a seam.
+int cmdProcTex(const QStringList& args)
+{
+	if(args.size() < 2)
+	{
+		err() << "usage: shipgen proctex <kind|proc:recipe> <out.png> [--tiled]\n"
+				 "  kinds: " << ProcTexKinds().join(", ") << "\n";
+		return 2;
+	}
+	QString spec = args.at(0);
+	if(!IsProcTexSpec(spec))
+		spec = "proc:" + spec;
+	ProcTex tex;
+	QString error;
+	if(!ParseProcTex(spec, tex, error))
+	{
+		err() << error << "\n";
+		return 1;
+	}
+	QImage image = MakeProcTex(tex);
+	if(args.contains("--tiled"))
+	{
+		QImage four(image.width() * 2, image.height() * 2, image.format());
+		QPainter painter(&four);
+		for(int i = 0; i < 4; ++i)
+			painter.drawImage((i % 2) * image.width(), (i / 2) * image.height(), image);
+		painter.end();
+		image = four;
+	}
+	if(!image.save(args.at(1)))
+	{
+		err() << "could not write " << args.at(1) << "\n";
+		return 1;
+	}
+	out() << ProcTexSpec(tex) << "\n";
+	return 0;
+}
+
 int cmdTris(const QStringList& args)
 {
 	if(args.size() < 2)
@@ -3604,6 +3645,7 @@ int main(int argc, char* argv[])
 	if(command == "facing-check")		return cmdFacingCheck(rest);
 	if(command == "path-check")			return cmdPathCheck(rest);
 	if(command == "tris")				return cmdTris(rest);
+	if(command == "proctex")			return cmdProcTex(rest);
 	if(command == "resave")				return cmdResave(rest);
 	if(command == "decal")				return cmdDecal(rest);
 	if(command == "parts")				return cmdParts(rest);

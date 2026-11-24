@@ -4,6 +4,7 @@
 
 #include "effects.h"
 #include "planbuild.h"
+#include "proctex.h"
 #include "paint.h"
 #include "decal.h"
 #include "windowleak.h"
@@ -5930,7 +5931,7 @@ static void PlaceSite(AuBdDesign& design, const TriPlan& plan, const AuPoint& sh
 // by ApplyPaint, kept through the cuts) gets texture coordinates the way the
 // colour is wrapped. Last, on the finished hull, so the cuts made after the
 // paint cannot spoil the wrapping.
-static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, PlanBuildReport& report)
+static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, double zShift, PlanBuildReport& report)
 {
 	QMap<int, const PlanPaint*> bySlot;
 	int noRoom = 0;
@@ -5974,7 +5975,11 @@ static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, PlanBui
 			report.notes << QString("The texture of the colour '%1' was made smaller, to %2 by %3 pixels (the game "
 					"holds %4 at most).").arg(p.name).arg(image.width()).arg(image.height()).arg(most);
 		}
-		palette[it.key()].SetImage(QFileInfo(p.texFile).fileName(), image);
+		QString imageName = QFileInfo(p.texFile).fileName();
+		ProcTex tex;
+		if(IsProcTexSpec(p.texFile) && ParseProcTex(p.texFile, tex, error))
+			imageName = ProcTexImageName(tex);
+		palette[it.key()].SetImage(imageName, image);
 	}
 	design.SetTexturePalette(palette);
 
@@ -5992,6 +5997,9 @@ static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, PlanBui
 		return;
 	const AuPoint mid = (mn + mx) * .5;
 	const int longAxis = (mx.y - mn.y) >= (mx.x - mn.x) ? 1 : 0;
+	// The facade wrap's storeys: deck 1's floor where the build put it.
+	const double floor0 = plan.DeckFloor(0) + zShift;
+	const double deckFeet = qMax(1.0, plan.deckFeet);
 	const AuPoint along = longAxis ? AuPoint(0, 1, 0) : AuPoint(1, 0, 0);
 	const AuPoint across = longAxis ? AuPoint(1, 0, 0) : AuPoint(0, 1, 0);
 	const AuPoint up(0, 0, 1);
@@ -6033,11 +6041,36 @@ static void ApplyPlanTexturePaint(AuDesign& design, const TriPlan& plan, PlanBui
 					AuScFace* f = list[fi];
 					const int n = f->VertexCount();
 					QVector<QPointF> uv(n);
+					// The facade wrap: the wall's way along, level.
+					bool facadeFlat = false;
+					AuPoint facadeAlong(1, 0, 0);
+					if(p.wrap == "facade" && n >= 3)
+					{
+						AuPoint normal = (f->Vertex(1) - f->Vertex(0)).Cross(f->Vertex(2) - f->Vertex(0));
+						const double len = normal.Length();
+						if(len > 1e-9)
+							normal = normal / len;
+						facadeFlat = fabs(normal.z) > .7;
+						const double h = sqrt(normal.x * normal.x + normal.y * normal.y);
+						if(h > 1e-9)
+							facadeAlong = AuPoint(-normal.y / h, normal.x / h, 0);
+					}
 					QVector<double> lon(n);
 					for(int v = 0; v < n; ++v)
 					{
 						const AuPoint q = f->Vertex(v) - mid;
-						if(p.wrap == "top")
+						if(p.wrap == "facade")
+						{
+							// Along the wall 'size' feet a repeat; up, one repeat a
+							// deck, from the deck floors, so storeys line up. Flat
+							// tops and bottoms: laid on from above.
+							const AuPoint at = f->Vertex(v);
+							if(facadeFlat)
+								uv[v] = QPointF(q.Dot(across), q.Dot(along)) / size;
+							else
+								uv[v] = QPointF(at.Dot(facadeAlong) / size, (at.z - floor0) / deckFeet);
+						}
+						else if(p.wrap == "top")
 							uv[v] = QPointF(q.Dot(across), q.Dot(along)) / size;
 						else if(p.wrap == "side")
 							uv[v] = QPointF(q.Dot(along), q.z) / size;
@@ -6198,7 +6231,8 @@ static void AssignWeaponEmitters(AuScParts& parts, const QVector<AuPoint>& emitt
 }
 
 static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, const QList<DeckRoom>& deckRooms,
-		const QVector<AuPoint>& weaponEmitters, const QVector<int>& weaponModules, PlanBuildReport& report)
+		const QVector<AuPoint>& weaponEmitters, const QVector<int>& weaponModules, PlanBuildReport& report,
+		double* zShift = 0)
 {
 	AuPoint mn(1e30, 1e30, 1e30), mx(-1e30, -1e30, -1e30);
 	for(AuScParts::const_iterator it = design->Parts().constBegin(); it != design->Parts().constEnd(); ++it)
@@ -6222,6 +6256,8 @@ static AuDesign* FinishPlanBuilding(AuScDesign* design, const TriPlan& plan, con
 	move.LoadIdentity();
 	move.Translate(shift);
 	design->Parts().Transform(move);
+	if(zShift)
+		*zShift = shift.z;		// For the facade wrap's storeys.
 
 	QList<PlacedRoom> rooms;
 	for(const DeckRoom& dr : deckRooms)
@@ -8982,12 +9018,14 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 	// in a building blueprint, leaving the drawn rooms as they are.
 	if(plan.IsBuilding())
 	{
-		AuDesign* building = FinishPlanBuilding(design, plan, deckRooms, weaponEmitters, weaponModules, report);
+		double buildingShift = 0;
+		AuDesign* building = FinishPlanBuilding(design, plan, deckRooms, weaponEmitters, weaponModules, report,
+				&buildingShift);
 		if(building)
 		{
 			if(plan.windowLining)
 				report.windowLining = SealWindowLeaks(*building, report.notes, report.canopyRooms);
-			ApplyPlanTexturePaint(*building, plan, report);
+			ApplyPlanTexturePaint(*building, plan, buildingShift, report);
 			ApplyPlanDecals(*building, plan, report);
 		}
 		return building;
@@ -9226,7 +9264,7 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 		report.windowLining = SealWindowLeaks(*design, report.notes, report.canopyRooms);
 
 	// Decals, last, so that they lie on the finished hull.
-	ApplyPlanTexturePaint(*design, plan, report);
+	ApplyPlanTexturePaint(*design, plan, originShift.z, report);
 	ApplyPlanDecals(*design, plan, report);
 
 	// The game's outlines of each part (what stops people walking, the hull's

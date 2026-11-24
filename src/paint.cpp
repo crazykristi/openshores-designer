@@ -3,6 +3,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "paint.h"
+#include "proctex.h"
 
 #include <QFileInfo>
 #include <QPainter>
@@ -105,6 +106,16 @@ bool LoadPaintImage(const QString& spec, QImage& image, QString& error)
 	{
 		error = "there is an empty texture name";
 		return false;
+	}
+
+	// A procedural texture: made from its recipe (proctex.h).
+	if(IsProcTexSpec(text))
+	{
+		ProcTex tex;
+		if(!ParseProcTex(text, tex, error))
+			return false;
+		image = MakeProcTex(tex);
+		return true;
 	}
 
 	// A colour looks like #rrggbb.

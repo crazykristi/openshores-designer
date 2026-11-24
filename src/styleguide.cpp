@@ -148,6 +148,14 @@ struct Paint
 	double tint;				// Of the colour over the texture.
 	double shine, reflect, selfLit;
 	const char* glow;			// #rrggbb or 0.
+	// A procedural texture (proctex.h) instead of 'texture'; 0 for none.
+	const char* proc;			// Left out of the brace lists: 0, as are the rest.
+	const char* colour2;
+	const char* colour3;
+	double wear;
+	double lit;
+	const char* wrap;			// 0: face (or facade for the storey kinds).
+	double feet;				// textureFeet; 0 for the default.
 };
 
 struct Style
@@ -156,7 +164,7 @@ struct Style
 	const char* look;
 	const char* silhouette;
 	const char* lighting;
-	Paint paints[4];
+	Paint paints[5];
 	int count;
 	const char* layOn;			// How the paints go on with paint_hull.
 	const char* notYet;			// What the tools cannot make (yet).
@@ -168,11 +176,12 @@ const Style kStyles[] = {
 	  "Warm, lived-in streets at night: brick and dark wood, warm amber windows, soft neon in pink, teal and amber "
 	  "along the edges, small signs; inviting rather than threatening (the Nivalis look).",
 	  "compact, layered, small setbacks", "warm amber light with soft pink and teal neon",
-	  { { "base", "Warm brick", "#8a5a44", 34, .3, 10, .05, 0, 0 },
-		{ "bands", "Dark wood trim", "#3b2a22", 47, .4, 20, .05, 0, 0 },
+	  { { "base", "Warm brick", "#8a5a44", -1, 0, 10, .05, 0, 0, "brick", "#cbbfae", 0, .3 },
+		{ "bands", "Dark wood trim", "#4a3226", -1, 0, 20, .05, 0, 0, "planks", "#20160f", 0, .2 },
 		{ "neon", "Soft pink neon", "#ff6fb5", -1, 0, 200, .2, 1, "#ff6fb5" },
-		{ "neon", "Teal neon", "#3fe0d0", -1, 0, 200, .2, 1, "#3fe0d0" } }, 4,
-	  "Base coat on everything (index 0). Dark wood on deck 1 (a shop-front band) and the top deck. Pink neon as a thin "
+		{ "neon", "Teal neon", "#3fe0d0", -1, 0, 200, .2, 1, "#3fe0d0" },
+		{ "windows", "Warm windows", "#6b4a3a", -1, 0, 60, .3, 0, 0, "windows", "#2a1d16", "#34485a", .25, .55, "facade", 10 } }, 5,
+	  "Warm windows on the decks between deck 1 and the top (paint_hull deck 2 toDeck top-1). Base coat on everything (index 0). Dark wood on deck 1 (a shop-front band) and the top deck. Pink neon as a thin "
 	  "band on the top deck's edge, teal neon on one vertical corner (paint_hull with x, y, sizeX 1, sizeY 1 over all "
 	  "decks). Keep neon to a few lines: it should glow, not cover.",
 	  "Signs and holo-ads need decals, which the tools do not place yet." },
@@ -180,19 +189,20 @@ const Style kStyles[] = {
 	  "Sleek, rain-slicked chrome and black plating; electric neon trim (cyan, magenta, amber) glowing along edges and "
 	  "signage; huge billboards; angular, high-contrast silhouettes; crowded, layered vertical density.",
 	  "angular, high-contrast", "glowing neon accents and billboards",
-	  { { "base", "Black plate", "#15161c", 32, .6, 300, .5, 0, 0 },
+	  { { "base", "Black plate", "#1a1b22", -1, 0, 300, .5, 0, 0, "panels", "#07070a", 0, .45 },
 		{ "bands", "Chrome", "#c8ccd4", -1, 0, 800, .9, 0, 0 },
 		{ "neon", "Cyan neon", "#00e5ff", -1, 0, 200, .2, 1, "#00e5ff" },
-		{ "neon", "Magenta neon", "#ff2bd6", -1, 0, 200, .2, 1, "#ff2bd6" } }, 4,
-	  "hullStyle angular. Black plate as the base coat; chrome bands every 4-5 decks; cyan neon on the vertical corners "
+		{ "neon", "Magenta neon", "#ff2bd6", -1, 0, 200, .2, 1, "#ff2bd6" },
+		{ "windows", "Night windows", "#1a1b22", -1, 0, 500, .6, 0, 0, "windows", "#07070a", "#1f3a4f", .4, .35, "facade", 8 } }, 5,
+	  "Night windows on most decks (paint_hull deck 2 toDeck top-1). hullStyle angular. Black plate as the base coat; chrome bands every 4-5 decks; cyan neon on the vertical corners "
 	  "(1 x 1 cell boxes over all decks), magenta on the top deck's edge.",
 	  "Billboards and holo-ads need decals, which the tools do not place yet." },
 	{ "Brutalist_Neo-brutalist",
 	  "Raw, board-formed concrete; heavy, blunt masses; exposed structure; massive horizontal and vertical bands; a "
 	  "sculptural, monumental weight.",
 	  "blunt, monumental", "plain, shadow-heavy",
-	  { { "base", "Raw concrete", "#9a9893", 38, .2, 2, 0, 0, 0 },
-		{ "bands", "Dark concrete", "#5e5d5a", 9, .2, 2, 0, 0, 0 } }, 2,
+	  { { "base", "Raw concrete", "#9a9893", -1, 0, 2, 0, 0, 0, "concrete", "#5a5956", 0, .35 },
+		{ "bands", "Dark concrete", "#66645f", -1, 0, 2, 0, 0, 0, "concrete", "#3a3936", 0, .5 } }, 2,
 	  "hullStyle angular or classic. Raw concrete everywhere; dark concrete bands on every 3rd deck and on deck 1. "
 	  "Deep setbacks and overhangs (a deck wider than the one below) give the weight.",
 	  "" },
@@ -200,8 +210,8 @@ const Style kStyles[] = {
 	  "Polished metal and glass; exposed structure (piped columns, gantries); clean, precise geometry; a corporate, "
 	  "engineered sheen with service ducts as ornament.",
 	  "clean vertical, precise", "clean and restrained",
-	  { { "base", "Polished steel", "#b9c0c8", 44, .3, 600, .8, 0, 0 },
-		{ "bands", "Blue glass", "#4a6a86", -1, 0, 900, .9, 0, 0 },
+	  { { "base", "Polished steel", "#b9c0c8", -1, 0, 600, .8, 0, 0, "panels", "#7d848c", 0, .05 },
+		{ "bands", "Glass facade", "#9aa3ab", -1, 0, 900, .9, 0, 0, "windows", "#5b636b", "#4a6a86", .05, .1, "facade", 6 },
 		{ "accent", "Copper ducts", "#b87333", 40, .2, 300, .5, 0, 0 } }, 3,
 	  "Steel base coat; blue glass on the decks between the first and the top (a band over most of the height); copper "
 	  "ducts on one or two 1 x 1 cell vertical columns.",
@@ -210,7 +220,7 @@ const Style kStyles[] = {
 	  "Symmetrical, tapering profiles; stepped ziggurat setbacks; glossy geometric ornament; elegant verticality with "
 	  "streamlined detailing.",
 	  "tapering, symmetrical", "subtle, geometric",
-	  { { "base", "Cream stone", "#e8dcc2", 49, .5, 80, .2, 0, 0 },
+	  { { "base", "Cream stone", "#e8dcc2", -1, 0, 80, .2, 0, 0, "stone", "#bfb39a", 0, .1 },
 		{ "bands", "Gold trim", "#c9a24a", 36, .2, 500, .6, 0, 0 },
 		{ "accent", "Black lacquer", "#1c1c1c", -1, 0, 600, .6, 0, 0 } }, 3,
 	  "Symmetrical setbacks (every 3-4 decks a cell smaller on each side). Cream stone base; gold on the top deck of each "
@@ -219,8 +229,8 @@ const Style kStyles[] = {
 	{ "Gothic_Vertical",
 	  "Reaching upward: tall spires and pinnacles, pointed vertical emphasis, intricate ornate detailing.",
 	  "rising, pinnacle-heavy", "stained, dramatic",
-	  { { "base", "Grey stone", "#7d7a74", 19, .3, 5, 0, 0, 0 },
-		{ "bands", "Dark stone", "#4a4744", 18, .3, 5, 0, 0, 0 },
+	  { { "base", "Grey stone", "#7d7a74", -1, 0, 5, 0, 0, 0, "stone", "#4e4b46", 0, .35 },
+		{ "bands", "Dark stone", "#55524d", -1, 0, 5, 0, 0, 0, "stone", "#2f2d2a", 0, .45 },
 		{ "accent", "Stained glass", "#7a2a8c", -1, 0, 300, .3, .6, "#b04ad0" } }, 3,
 	  "Spires and pinnacles as small rects or ellipses (1 x 1 to 2 x 2) on the upper decks at the corners. Grey stone "
 	  "base; dark stone on deck 1 and the tiers' tops; stained glass for a band of the decks with tall windows.",
@@ -229,7 +239,7 @@ const Style kStyles[] = {
 	  "Ornate ironwork and riveted metal; brass and copper accents; exposed gears and pipes; warm amber light; "
 	  "cluttered, mechanical richness.",
 	  "cluttered, mechanical", "warm amber",
-	  { { "base", "Riveted iron", "#4b4a48", 37, .4, 100, .3, 0, 0 },
+	  { { "base", "Riveted iron", "#4b4a48", -1, 0, 100, .3, 0, 0, "panels", "#2a2928", 0, .4 },
 		{ "bands", "Brass", "#b5893b", 36, .3, 400, .6, 0, 0 },
 		{ "accent", "Copper pipes", "#b87333", 40, .2, 300, .5, 0, 0 },
 		{ "neon", "Amber lamps", "#ffb347", -1, 0, 100, .1, 1, "#ffb347" } }, 4,
@@ -239,9 +249,9 @@ const Style kStyles[] = {
 	{ "Solarpunk_Eco-futurist",
 	  "Bright, hopeful, organic forms; greenery and living walls; glass and light materials; humane, sunlit proportions.",
 	  "flowing, organic", "bright, sunlit",
-	  { { "base", "White panel", "#f2f2ee", 43, .2, 60, .2, 0, 0 },
+	  { { "base", "White render", "#f2f2ee", -1, 0, 60, .2, 0, 0, "plaster", "#d6d6d0", 0, .05 },
 		{ "bands", "Living wall", "#4f8a3c", 45, .3, 5, 0, 0, 0 },
-		{ "accent", "Light glass", "#a8d8e8", -1, 0, 800, .7, 0, 0 } }, 3,
+		{ "accent", "Ribbon windows", "#f2f2ee", -1, 0, 800, .7, 0, 0, "strip_windows", "#9aa39a", "#a8d8e8", .05, .2, "facade", 12 } }, 3,
 	  "hullStyle smooth; terraces (each deck a cell smaller on one side). White base; grass on the terraces' tops "
 	  "(paint_hull with awayFromEdge 1 on each deck) and on one band; light glass on the window decks.",
 	  "Trees and planters are not something the tools place." },
@@ -249,53 +259,54 @@ const Style kStyles[] = {
 	  "Clean lines, flat planes, little ornament; honest materials; a calm, restrained palette; functional surfaces.",
 	  "flat planes, clean", "plain",
 	  { { "base", "Off-white", "#e9e7e2", -1, 0, 20, .05, 0, 0 },
-		{ "bands", "Grey", "#8d8f92", -1, 0, 20, .05, 0, 0 } }, 2,
-	  "hullStyle classic or angular. Off-white everywhere; grey only on deck 1 or one band. Long, regular windows.", "" },
+		{ "bands", "Grey", "#8d8f92", -1, 0, 20, .05, 0, 0 },
+		{ "windows", "Ribbon windows", "#e9e7e2", -1, 0, 300, .4, 0, 0, "strip_windows", "#55585c", "#5d7a8f", .05, .15, "facade", 12 } }, 3,
+	  "hullStyle classic or angular. Off-white everywhere; grey only on deck 1 or one band; ribbon windows on the upper decks.", "" },
 	{ "Industrial_decay_Rust",
 	  "Weathered, corroded metal; peeling paint; grime and wear; patched surfaces; gritty and lived-in.",
 	  "weathered, patched", "dim, grimy",
-	  { { "base", "Rusted plate", "#7a4a2e", 21, .3, 10, .05, 0, 0 },
-		{ "bands", "Grimy steel", "#5a5853", 37, .4, 40, .1, 0, 0 },
+	  { { "base", "Rusted sheet", "#7a4a2e", -1, 0, 10, .05, 0, 0, "corrugated", 0, 0, .8 },
+		{ "bands", "Grimy steel", "#5a5853", -1, 0, 40, .1, 0, 0, "panels", "#34332f", 0, .75 },
 		{ "accent", "Faded paint", "#6f7f6a", -1, 0, 5, 0, 0, 0 } }, 3,
 	  "Patches: paint_hull boxes of 2-5 cells in the accent and band paints at uneven places over the rust base, not "
 	  "neat bands.", "" },
 	{ "Gritty_street-level",
 	  "Dense, cluttered, chaotic signage; layered textures; mismatched materials; a worn, urban atmosphere.",
 	  "cluttered, layered", "mixed neon, worn",
-	  { { "base", "Worn concrete", "#77746e", 39, .3, 5, 0, 0, 0 },
-		{ "bands", "Old brick", "#7b4b3a", 35, .3, 5, 0, 0, 0 },
-		{ "accent", "Tile", "#c9c9c4", 29, .2, 40, .1, 0, 0 },
+	  { { "base", "Worn concrete", "#77746e", -1, 0, 5, 0, 0, 0, "concrete", "#4a4844", 0, .7 },
+		{ "bands", "Old brick", "#7b4b3a", -1, 0, 5, 0, 0, 0, "brick", "#9d958a", 0, .6 },
+		{ "accent", "Tile", "#c9c9c4", -1, 0, 40, .1, 0, 0, "tiles", "#7d7a74", 0, .5 },
 		{ "neon", "Worn neon", "#ff9a3c", -1, 0, 100, .1, .8, "#ff9a3c" } }, 4,
 	  "Mismatched: a different paint on each 1-2 deck band and on the lower deck's boxes; one or two small neon boxes.",
 	  "Signage needs decals, which the tools do not place yet." },
 	{ "Corporate_Brutal_corporate",
 	  "Imposing and impersonal: massive glass-and-concrete blocks, understated luxury, cold and powerful scale.",
 	  "massive, imposing", "cool, understated",
-	  { { "base", "Smooth concrete", "#a4a5a6", 38, .2, 20, .05, 0, 0 },
-		{ "bands", "Dark glass", "#202a33", -1, 0, 900, .9, 0, 0 } }, 2,
+	  { { "base", "Smooth concrete", "#a4a5a6", -1, 0, 20, .05, 0, 0, "concrete", "#6c6d6e", 0, .1 },
+		{ "bands", "Dark glass facade", "#3a3d40", -1, 0, 900, .9, 0, 0, "windows", "#15181b", "#202a33", .05, .15, "facade", 6 } }, 2,
 	  "Concrete base; dark glass on most decks between deck 2 and the top, so the building reads as glass framed by "
 	  "concrete.", "" },
 	{ "Fantasy_Medieval",
 	  "Stone, battlements, turrets and pitched roofs; a hand-built, ancient, organic feel.",
 	  "crenellated, turret-heavy", "warm, torch-lit",
-	  { { "base", "Old stone", "#8b857a", 17, .3, 5, 0, 0, 0 },
-		{ "bands", "Timber", "#5b4030", 48, .3, 5, 0, 0, 0 },
-		{ "roof", "Roof slate", "#4a4f57", 20, .4, 10, 0, 0, 0 } }, 3,
+	  { { "base", "Old stone", "#8b857a", -1, 0, 5, 0, 0, 0, "stone", "#5d5850", 0, .4 },
+		{ "bands", "Timber", "#5b4030", -1, 0, 5, 0, 0, 0, "planks", "#2e2017", 0, .4 },
+		{ "roof", "Roof slate", "#4a4f57", -1, 0, 10, 0, 0, 0, "tiles", "#2c3036", 0, .3 } }, 3,
 	  "Turrets as 3 x 3 ellipses at the corners, a deck higher; stone base, timber on an upper band, slate on the top "
 	  "deck (paint_hull with awayFromEdge 1 for the roof only).",
 	  "Battlements are too small for whole cells: use the band." },
 	{ "Sci-fi_utilitarian_Military",
 	  "Functional, modular and repetitive; utilitarian greys and greens; heavy armour plating; mass-produced.",
 	  "modular, repetitive", "plain, functional",
-	  { { "base", "Armour grey", "#6b6f6a", 44, .3, 80, .2, 0, 0 },
+	  { { "base", "Armour grey", "#6b6f6a", -1, 0, 80, .2, 0, 0, "panels", "#3c3f3b", 0, .3 },
 		{ "bands", "Olive", "#556040", -1, 0, 30, .1, 0, 0 },
-		{ "accent", "Hazard", "#d9b62b", 0, .2, 30, .1, 0, 0 } }, 3,
+		{ "accent", "Hazard", "#d9b62b", -1, 0, 30, .1, 0, 0, "hazard", "#1d1d1d", 0, .3 } }, 3,
 	  "hullStyle angular. Grey base; olive bands per module of decks; hazard stripes only round doors (small boxes on "
 	  "deck 1).", "" },
 	{ "Organic_Biomimetic",
 	  "Curved, flowing, natural forms; shell- or bone-like structures; smooth surfaces that seem grown, not built.",
 	  "curved, flowing", "soft, diffused",
-	  { { "base", "Shell", "#e6ddcf", -1, 0, 150, .3, 0, 0 },
+	  { { "base", "Shell", "#e6ddcf", -1, 0, 150, .3, 0, 0, "plaster", "#cbbfa8", 0, .05 },
 		{ "bands", "Bone", "#cbbfa8", -1, 0, 60, .1, 0, 0 },
 		{ "neon", "Soft glow", "#bfe8ff", -1, 0, 100, .1, .4, "#bfe8ff" } }, 3,
 	  "hullStyle smooth with high smoothing (set_settings smoothing 8-10); ellipses on every deck, their sizes changing "
@@ -308,7 +319,22 @@ QString PaintArgs(const Paint& p)
 	o["name"] = QString::fromLatin1(p.name);
 	if(p.colour)
 		o["colour"] = QString::fromLatin1(p.colour);
-	if(p.texture >= 0)
+	if(p.proc)
+	{
+		o["procedural"] = QString::fromLatin1(p.proc);
+		if(p.colour2)
+			o["colour2"] = QString::fromLatin1(p.colour2);
+		if(p.colour3)
+			o["colour3"] = QString::fromLatin1(p.colour3);
+		o["wear"] = p.wear;
+		if(p.lit > 0)
+			o["lit"] = p.lit;
+		if(p.wrap)
+			o["wrap"] = QString::fromLatin1(p.wrap);
+		if(p.feet > 0)
+			o["textureFeet"] = p.feet;
+	}
+	else if(p.texture >= 0)
 	{
 		o["texture"] = QString::number(p.texture);
 		o["tint"] = p.tint;
@@ -404,6 +430,8 @@ QString StyleGuideText(const QString& shape, const QString& style, QString& erro
 			out << QString("  %1: set_paint %2").arg(p.role, args);
 		}
 		out << QString("How to lay it on: %1").arg(found->layOn);
+		out << "Procedural textures are made for the design and line up: with wrap facade one repeat is one deck, so a "
+			   "windows paint gives one row of windows on each deck it is painted on.";
 		out << "Self-lit and glowing paints shine steadily; there are no flashing effects.";
 		if(*found->notYet)
 			out << QString("Not possible with the tools yet: %1").arg(found->notYet);

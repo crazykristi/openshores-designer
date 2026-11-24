@@ -2051,6 +2051,7 @@ QWidget* DesignerWindow::MakePaintPage()
 	m_texWrap = new QComboBox;
 	m_texWrap->addItem("Per face (no stretching)", "face");
 	m_texWrap->addItem("Flat, from above", "top");
+	m_texWrap->addItem("Facade: one repeat a deck, from the floors", "facade");
 	m_texWrap->addItem("Flat, from the side", "side");
 	m_texWrap->addItem("Flat, from the front", "front");
 	m_texWrap->addItem("Round the length (cylinder)", "cylinder");

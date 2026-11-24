@@ -4,6 +4,7 @@
 
 #include "plantools.h"
 #include "styleguide.h"
+#include "proctex.h"
 
 #include <QFile>
 #include <QHash>
@@ -381,9 +382,23 @@ QJsonArray PlanToolDefinitions()
 							 "of a plain colour (the game fills it in for whoever builds it).");
 		p["texture"] = Prop("string", "One of the game's library textures, by name or number (list_choices textures), or "
 							"\"none\" for plain paint.");
-		p["wrap"] = Choice({ "face", "top", "side", "front", "cylinder", "sphere" }, "How the texture is laid on: face (each "
-						   "face flat, no stretching, the usual), or projected from the top, side or front, or round the "
-						   "length (cylinder) or a ball (sphere).");
+		p["wrap"] = Choice({ "face", "facade", "top", "side", "front", "cylinder", "sphere" }, "How the texture is laid on: "
+						   "face (each face flat, no stretching, the usual); facade (walls: one repeat a deck high from the "
+						   "deck floors, textureFeet along, so window rows and bands match the storeys; flat tops laid on "
+						   "from above); projected from the top, side or front; or round the length (cylinder) or a ball "
+						   "(sphere).");
+		p["procedural"] = Choice(ProcTexKinds(), "A texture made for the design instead of a library one, which "
+								 "repeats without a seam: " + ProcTexKinds().join(", ") + ". Its colours: colour (the "
+								 "main one), colour2 (joints, frames), colour3 (glass, light); good ones if left out. "
+								 "windows, strip_windows and neon_strip are one storey each: use wrap facade.");
+		p["colour2"] = Prop("string", "procedural: the second colour as #rrggbb (mortar, seams, window frames, the wall "
+							"behind a neon strip).");
+		p["colour3"] = Prop("string", "procedural: the third colour as #rrggbb (the glass of windows).");
+		p["wear"] = Prop("number", "procedural: 0 clean to 1 grimy (stains, rain streaks); 0.2 if left out.");
+		p["density"] = Prop("number", "procedural: more (up to 4) or fewer (down to 0.25) bricks, panels or windows per "
+							"repeat; 1 if left out.");
+		p["lit"] = Prop("number", "procedural windows: the share of windows lit from inside, 0 to 1 (0 if left out).");
+		p["seed"] = Prop("integer", "procedural: a number for a different pattern of the same kind (1 if left out).");
 		p["textureFeet"] = Prop("number", "Feet per repeat of the texture (8 if left out).");
 		p["textureRotate"] = Prop("number", "Degrees to turn the texture.");
 		p["tint"] = Prop("number", "How much of the colour is laid over the texture: 0 the texture as it is, 1 only the colour.");
@@ -1875,6 +1890,8 @@ QString PaintSummary(const PlanPaint& p)
 	if(p.texLib >= 0)
 		what << QString("texture %1 %2 (%3, %4 ft, tint %5)").arg(p.texLib).arg(AuTextureLibItem::LibraryTextureName(quint16(p.texLib)))
 				.arg(p.wrap).arg(p.texFeet).arg(p.tint);
+	else if(IsProcTexSpec(p.texFile))
+		what << QString("procedural texture %1 (%2, %3 ft, tint %4)").arg(p.texFile.mid(5)).arg(p.wrap).arg(p.texFeet).arg(p.tint);
 	else if(!p.texFile.isEmpty())
 		what << "texture file " + p.texFile;
 	if(p.shine > 0 || p.reflect > 0)
@@ -1945,11 +1962,34 @@ PlanToolResult SetPaint(TriPlan& plan, const QJsonObject& args)
 			p.texFile.clear();
 		}
 	}
+	if(Has(args, "procedural"))
+	{
+		const QString kind = StrArg(args, "procedural");
+		ProcTex tex;
+		if(!DefaultProcTex(kind, tex))
+			throw Fail{ QString("There is no procedural texture \"%1\"; there are %2.").arg(kind, ProcTexKinds().join(", ")) };
+		if(Has(args, "colour"))
+			tex.colour = ColourArg(args, "colour");
+		if(Has(args, "colour2"))
+			tex.colour2 = ColourArg(args, "colour2");
+		if(Has(args, "colour3"))
+			tex.colour3 = ColourArg(args, "colour3");
+		tex.wear = qBound(0.0, NumArg(args, "wear", .2), 1.0);
+		tex.density = qBound(.25, NumArg(args, "density", 1), 4.0);
+		tex.lit = qBound(0.0, NumArg(args, "lit", 0), 1.0);
+		tex.seed = IntArg(args, "seed", 1);
+		p.texLib = -1;
+		p.texFile = ProcTexSpec(tex);
+		if(!Has(args, "tint"))
+			p.tint = 0;		// The colours are in the texture.
+		if(!Has(args, "wrap") && (kind == "windows" || kind == "strip_windows" || kind == "neon_strip"))
+			p.wrap = "facade";
+	}
 	if(Has(args, "wrap"))
 	{
 		const QString w = StrArg(args, "wrap");
-		if(!QStringList({ "face", "top", "side", "front", "cylinder", "sphere" }).contains(w))
-			throw Fail{ "wrap is face, top, side, front, cylinder or sphere." };
+		if(!QStringList({ "face", "facade", "top", "side", "front", "cylinder", "sphere" }).contains(w))
+			throw Fail{ "wrap is face, facade, top, side, front, cylinder or sphere." };
 		p.wrap = w;
 	}
 	if(Has(args, "textureFeet"))

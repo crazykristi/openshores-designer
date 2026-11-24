@@ -2240,6 +2240,23 @@ int cmdTris(const QStringList& args)
 		part->SetState(args.size() > 2 ? quint8(args.at(2).toUInt()) : quint8(AuScDoor::Closed));	// A door: its closed state, or the one given.
 	AuScFaceList faces;
 	part->Faces(faces);
+	if(args.contains("--uv"))
+	{
+		// Each face: its texture slot and its corners with their texture coordinates.
+		for(int i = 0; i < faces.size(); ++i)
+		{
+			const AuScFace* f = faces.at(i);
+			QString line = QString("slot %1 ").arg(f->TextureIndex());
+			for(int v = 0; v < f->VertexCount(); ++v)
+			{
+				const AuScPoint q = f->Vertex(v);
+				line += QString(" (%1 %2 %3 | %4 %5)").arg(q.x, 0, 'f', 2).arg(q.y, 0, 'f', 2).arg(q.z, 0, 'f', 2)
+						.arg(q.m_Tx, 0, 'f', 3).arg(q.m_Ty, 0, 'f', 3);
+			}
+			out() << line << "\n";
+		}
+		return 0;
+	}
 	AuScTriList tris;
 	faces.Triangles(tris);
 	for(const AuScTri& t : tris)
@@ -3262,7 +3279,7 @@ void usage()
 	out() << "  shipgen inspect   <design.SoH>\n";
 	out() << "  shipgen audit     <design.SoH>    rooms against the hull triangles\n";
 	out() << "  shipgen path-check <design.SoH>  the walk paths as networks: how many, how big, which rooms\n";
-	out() << "  shipgen tris     <design.SoH> <part> [state]  every triangle of one part (a door: closed, or the state given)\n"
+	out() << "  shipgen tris     <design.SoH> <part> [state] [--uv]  every triangle of one part (a door: closed, or the state given); --uv: faces with texture slots and coordinates\n"
 		"  shipgen facing-check <design.SoH>  which way the hull triangles face, by the game's clockwise rule\n";
 	out() << "  shipgen parts     <design.SoH> [<type>]  every part: type, group, door tie, module, bounds\n";
 	out() << "  shipgen kit       list | <key> | all  [--out <dir>]  the Aether kit: high-tech and magic blueprints\n";

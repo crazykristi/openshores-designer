@@ -2790,7 +2790,7 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 			p.texLib = o["texture"].toInt(-1);
 			p.texFile = p.texLib >= 0 ? QString() : o["textureFile"].toString();
 			p.wrap = o["wrap"].toString("face");
-			if(!QStringList({ "face", "top", "side", "front", "cylinder", "sphere" }).contains(p.wrap))
+			if(!QStringList({ "face", "facade", "top", "side", "front", "cylinder", "sphere" }).contains(p.wrap))
 				p.wrap = "face";
 			p.texFeet = qBound(0.25, o["textureFeet"].toDouble(8.0), 1000.0);
 			p.texRotate = o["textureRotate"].toDouble(0.0);

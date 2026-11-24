@@ -1114,9 +1114,16 @@ static AuPoint DrawnSpot(const QList<BuildingRoom>& rooms, int i, double up)
 {
 	const BuildingRoom& r = rooms.at(i % rooms.size());
 	const int along = i / rooms.size();
-	const double w = r.mx.x - r.mn.x;
-	const double x = r.mn.x + qMin(w - 1.5, 2.5 + along * 4.0);
-	return AuPoint(qMax(r.mn.x + 1.0, x), (r.mn.y + r.mx.y) / 2, r.mn.z + up);
+	const double w = r.mx.x - r.mn.x, d = r.mx.y - r.mn.y;
+	// Every 4 ft along the room, then a row 3 ft to one side and the other:
+	// spots that ran off the end of a small room were all put on its last one
+	// (two guard posts on one spot, which the game refuses as duplicates).
+	const int cols = qMax(1, int((w - 4.0) / 4.0) + 1);
+	const int col = along % cols, row = along / cols;
+	const double x = r.mn.x + qMin(w - 1.5, 2.5 + col * 4.0);
+	const double side = ((row + 1) / 2) * 3.0 * (row % 2 ? 1 : -1);
+	const double y = (r.mn.y + r.mx.y) / 2 + qBound(-(d / 2 - 1), side, d / 2 - 1);
+	return AuPoint(qMax(r.mn.x + 1.0, x), y, r.mn.z + up);
 }
 
 static void CountFaces(const AuBdDesign& design, BuildingResult& result)

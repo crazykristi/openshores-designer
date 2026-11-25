@@ -4421,18 +4421,50 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 		const int k = fabs(dx) >= fabs(dy) ? (dx > 0 ? TRI_E : TRI_W) : (dy > 0 ? TRI_N : TRI_S);
 		return TriRef(int(floor(p.z / plan.deckFeet)), cx, cy, k);
 	};
-	// A room: the plan triangle's prism between its deck's floor and ceiling.
-	// Only the rooms join the model, not every drawn hull triangle: those
-	// come from the model already, and their zigzag edges, grown by the skin,
-	// stood out of its sides as teeth.
+	// Hull drawn by hand beside the model (the user, 2026-11-25: drawn
+	// geometry round a model was lost where it had no room): a drawn hull
+	// triangle whose middle, half way up its deck, is outside the model. The
+	// drawn triangles inside the model came from it and are left out: their
+	// zigzag edges, grown by the skin, stood out of its sides as teeth.
+	const int W = plan.Width(), D = plan.Depth(), decks = plan.Decks();
+	QVector<char> byHand(qMax(0, decks * W * D * 4), 0);
+	for(int d = 0; d < decks; ++d)
+		for(int cy = 0; cy < D; ++cy)
+			for(int cx = 0; cx < W; ++cx)
+				for(int k = 0; k < 4; ++k)
+				{
+					const TriRef t(d, cx, cy, k);
+					if(!plan.Hull(t))
+						continue;
+					const QPointF c = plan.TriCentre(t);
+					if(!solid.Inside(AuPoint(c.x(), c.y(), (d + .5) * plan.deckFeet)))
+						byHand[((d * D + cy) * W + cx) * 4 + k] = 1;
+				}
+	// A room: the plan triangle's prism between its deck's floor and ceiling;
+	// hull drawn by hand: the whole deck's height, so decks above join.
 	auto drawn = [&](const AuPoint& p) {
 		const TriRef t = triangleAt(p);
-		if(p.z < 0 || !plan.Valid(t) || plan.Room(t) < 0)
+		if(p.z < 0 || !plan.Valid(t))
+			return false;
+		if(byHand[((t.deck * D + t.cy) * W + t.cx) * 4 + t.k])
+			return p.z >= t.deck * plan.deckFeet && p.z <= (t.deck + 1) * plan.deckFeet;
+		if(plan.Room(t) < 0)
 			return false;
 		double z0, z1;
 		RoomHeights(plan, t.deck, z0, z1);
 		return p.z >= z0 && p.z <= z1;
 	};
+	if(qEnvironmentVariableIsSet("SHIPGEN_DEBUG_HANDHULL"))
+	{
+		QVector<int> per(decks, 0), all(decks, 0);
+		for(int i = 0; i < byHand.size(); ++i)
+		{
+			per[i / (W * D * 4)] += byHand[i];
+			all[i / (W * D * 4)] += plan.Hull(TriRef(i / (W * D * 4), (i / 4) % W, (i / (4 * W)) % D, i % 4)) ? 1 : 0;
+		}
+		for(int d = 0; d < decks; ++d)
+			fprintf(stderr, "deck %d: %d of %d hull triangles by hand\n", d + 1, per[d], all[d]);
+	}
 	// The rooms grown by the skin: their wall.
 	auto drawnWithSkin = [&](const AuPoint& p) {
 		if(drawn(p))

@@ -359,18 +359,36 @@ bool SlopeBetweenDecks(const TriPlan& plan, IndexedMesh& mesh, const std::functi
 			const QPointF lo = plan.Corner(0, 0), hi = plan.Corner(plan.Width(), plan.Depth());
 			best = qMin(qMin(q.x() - lo.x(), hi.x() - q.x()), qMin(q.y() - lo.y(), hi.y() - q.y()));
 		}
-		for(int cy = 0; cy < plan.Depth(); ++cy)
-			for(int cx = 0; cx < plan.Width(); ++cx)
-				for(int k = 0; k < 4; ++k)
+		// Ring by ring out from the point's cell, until no cell farther out
+		// can be nearer: a triangle in ring r is at least (r - 1) cells away.
+		// Looking through the whole deck for every point took most of an
+		// hour on a big plan (160 x 160 cells, 47 decks: the user, 2026-11-25).
+		const QPointF c0 = plan.Corner(0, 0);
+		const int W = plan.Width(), D = plan.Depth();
+		const int pcx = int(floor((q.x() - c0.x()) / plan.cellFeet)), pcy = int(floor((q.y() - c0.y()) / plan.cellFeet));
+		const int last = qMax(qMax(qAbs(pcx), qAbs(W - 1 - pcx)), qMax(qAbs(pcy), qAbs(D - 1 - pcy)));
+		for(int r = 0; r <= last; ++r)
+		{
+			if((r - 1) * plan.cellFeet > best)
+				break;
+			for(int cy = pcy - r; cy <= pcy + r; ++cy)
+			{
+				if(cy < 0 || cy >= D)
+					continue;
+				const bool edgeRow = cy == pcy - r || cy == pcy + r;
+				for(int cx = pcx - r; cx <= pcx + r; cx += edgeRow ? 1 : qMax(1, 2 * r))
 				{
-					const TriRef t(deck, cx, cy, k);
-					if(plan.Hull(t) != hull)
+					if(cx < 0 || cx >= W)
 						continue;
-					const QPointF c = plan.TriCentre(t);
-					if(fabs(c.x() - q.x()) > best + plan.cellFeet || fabs(c.y() - q.y()) > best + plan.cellFeet)
-						continue;
-					best = qMin(best, PlanDistance(plan, q, t));
+					for(int k = 0; k < 4; ++k)
+					{
+						const TriRef t(deck, cx, cy, k);
+						if(plan.Hull(t) == hull)
+							best = qMin(best, PlanDistance(plan, q, t));
+					}
 				}
+			}
+		}
 		return best;
 	};
 	for(int d = 0; d + 1 < plan.Decks(); ++d)
@@ -4552,6 +4570,9 @@ static IndexedMesh ModelHullMesh(const TriPlan& plan, const SliceSolid& solid, c
 			{
 				if(!at(i, j, k))
 					continue;
+				if(at(i + 1, j, k) && at(i - 1, j, k) && at(i, j + 1, k) && at(i, j - 1, k) && at(i, j, k + 1)
+						&& at(i, j, k - 1))
+					continue;		// Inside: no face, so no paint to look up.
 				const int paint = paintAt(centreOf(i, j, k));
 				if(!at(i + 1, j, k)) quad(vertex(i+1, j, k), vertex(i+1, j+1, k), vertex(i+1, j+1, k+1), vertex(i+1, j, k+1), paint);
 				if(!at(i - 1, j, k)) quad(vertex(i, j, k), vertex(i, j, k+1), vertex(i, j+1, k+1), vertex(i, j+1, k), paint);
@@ -5039,6 +5060,11 @@ static IndexedMesh AngularHullMesh(const TriPlan& plan, const QVector<bool>& hul
 			{
 				if(!in(i, j, k))
 					continue;
+				// The paint only for a cube on the surface: looking it up for
+				// every cube inside took most of the time on a big building.
+				if(in(i + 1, j, k) && in(i - 1, j, k) && in(i, j + 1, k) && in(i, j - 1, k) && in(i, j, k + 1)
+						&& in(i, j, k - 1))
+					continue;
 				const int paint = paintAt(centreOf(i, j, k));
 				if(!in(i + 1, j, k)) quad(vertex(i+1, j, k), vertex(i+1, j+1, k), vertex(i+1, j+1, k+1), vertex(i+1, j, k+1), paint);
 				if(!in(i - 1, j, k)) quad(vertex(i, j, k), vertex(i, j, k+1), vertex(i, j+1, k+1), vertex(i, j+1, k), paint);
@@ -5216,6 +5242,11 @@ PlanHull BuildPlanHull(const TriPlan& plan, const PlanProgress& progress)
 	const double maxExtra = plan.cellFeet * 0.75;
 	struct RoomPoint { double x, y, z0, z1; };
 	QVector<RoomPoint> roomPoints;
+	// The room points by cell: only those within reach change a vertex's
+	// allowance, and looking through all of them for every vertex took hours
+	// on a big plan (160 x 160 cells, 47 decks: the user, 2026-11-25).
+	const int gridW = plan.Width(), gridD = plan.Depth();
+	QVector<QVector<int> > roomCells(gridW * gridD);
 	for(int d = 0; d < plan.Decks(); ++d)
 	{
 		double z0, z1;
@@ -5228,6 +5259,7 @@ PlanHull BuildPlanHull(const TriPlan& plan, const PlanProgress& progress)
 					if(plan.Room(t) < 0)
 						continue;
 					const QPointF c = plan.TriCentre(t);
+					roomCells[cy * gridW + cx] << roomPoints.size();
 					roomPoints << RoomPoint{ c.x(), c.y(), z0, z1 };
 				}
 	}
@@ -5283,8 +5315,16 @@ PlanHull BuildPlanHull(const TriPlan& plan, const PlanProgress& progress)
 	{
 		const AuPoint& p = mesh.v[i];
 		double best = 1e30;
-		for(const RoomPoint& r : roomPoints)
+		// Farther than maxExtra + 0.5 changes nothing (the allowance is then
+		// its most, as with no room at all): the cells within that, and one.
+		const QPointF c0 = plan.Corner(0, 0);
+		const int reach = int(ceil((maxExtra + 0.5) / plan.cellFeet)) + 1;
+		const int pcx = int(floor((p.x - c0.x()) / plan.cellFeet)), pcy = int(floor((p.y - c0.y()) / plan.cellFeet));
+		for(int cy = qMax(0, pcy - reach); cy <= qMin(gridD - 1, pcy + reach); ++cy)
+			for(int cx = qMax(0, pcx - reach); cx <= qMin(gridW - 1, pcx + reach); ++cx)
+				for(int index : roomCells.at(cy * gridW + cx))
 		{
+			const RoomPoint& r = roomPoints.at(index);
 			const double dx = r.x - p.x, dy = r.y - p.y;
 			const double dz = p.z < r.z0 ? r.z0 - p.z : (p.z > r.z1 ? p.z - r.z1 : 0.0);
 			const double horizontal = qMax(0.0, sqrt(dx*dx + dy*dy) - plan.cellFeet * 0.5);

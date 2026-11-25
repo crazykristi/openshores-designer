@@ -779,6 +779,58 @@ QWidget* DesignerWindow::MakeShipPage()
 	layout->addWidget(Help("The size of the drawing grid and what the ship is for. A cell is a square of four "
 						   "triangles; a deck is one floor of the ship."));
 	QFormLayout* form = new QFormLayout;
+	// What the plan is: picked here at any time (the user, 2026-11-25: a
+	// building must not turn into a ship unseen, and must be able to change).
+	m_planKind = new QComboBox;
+	m_planKind->addItem("Spaceship", "ship");
+	m_planKind->addItem("Space station", "station");
+	m_planKind->addItem("Fighter (experimental)", "fighter");
+	m_planKind->addItem("Building", "building");
+	m_planKind->setToolTip("What this plan is. A change keeps the hull, the rooms and the paint; the page shows the "
+						   "settings of what was picked (a building's purpose in the Building box, a ship's drives "
+						   "and template). Undo changes it back.");
+	form->addRow("What is it", m_planKind);
+	connect(m_planKind, QOverload<int>::of(&QComboBox::activated), this, [this]() {
+		const QString kind = m_planKind->currentData().toString();
+		const QString now = m_plan.IsBuilding() ? "building" : m_plan.IsFighter() ? "fighter"
+				: m_plan.station ? "station" : "ship";
+		if(m_updating || kind == now)
+			return;
+		OnAboutToChange();
+		if(m_plan.IsBuilding())
+		{
+			m_shelvedBrief = m_plan.building;		// Back if it is made a building again.
+			m_hasShelvedBrief = true;
+		}
+		if(kind == "building")
+		{
+			m_plan.station = false;
+			m_plan.MakeBuilding(QString(), false);
+			if(m_hasShelvedBrief)
+				m_plan.building = m_shelvedBrief;
+		}
+		else if(kind == "fighter")
+		{
+			m_plan.station = false;
+			m_plan.MakeFighter(false);
+		}
+		else
+		{
+			const bool wasBuilding = m_plan.IsBuilding();
+			m_plan.mode.clear();
+			if(m_plan.templateKey == "fighter")
+				m_plan.templateKey = "shuttle";
+			m_plan.autoBerths = true;
+			m_plan.autoStations = true;
+			m_plan.station = kind == "station";
+			if(wasBuilding && m_plan.ftlDrive == "none" && !m_plan.station)
+				m_plan.ftlDrive = TriPlan().ftlDrive;
+		}
+		RefreshAll();
+		OnPlanChanged(true);
+		RefreshTitle();
+		m_status->setText(QString("This plan is now a %1.").arg(m_planKind->currentText().toLower()));
+	});
 	m_fighter = new QCheckBox("Fighter mode (experimental)");
 	m_fighter->setToolTip("A small craft for one pilot (or a few, with seats placed by hand): the fighter kind of "
 						  "ship, no FTL drive (it would not fit), windows that follow the hull for the canopy, no "
@@ -843,7 +895,10 @@ QWidget* DesignerWindow::MakeShipPage()
 	connect(m_fireControl, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DesignerWindow::OnSettingsChanged);
 	m_shipForm = form;
 	// The fire control choice stays for buildings: a weapons base's bays.
-	m_shipOnly = { m_fighter, m_template, m_ftl, m_maneuver, m_station, m_noShields, m_noWeapons, m_noTransporter };
+	m_shipOnly = { m_template, m_ftl, m_maneuver, m_noShields, m_noWeapons, m_noTransporter };
+	// Both are in "What is it" now; kept (hidden) for the settings they hold.
+	m_fighter->setVisible(false);
+	m_station->setVisible(false);
 	m_cellFeet = new QDoubleSpinBox;
 	m_cellFeet->setRange(2, 20);
 	m_cellFeet->setSingleStep(0.5);
@@ -3014,6 +3069,8 @@ void DesignerWindow::RefreshAll()
 	m_deskPosture->setEnabled(m_plan.bridgeStyle == "desks");
 	m_deskHeight->setEnabled(m_plan.bridgeStyle == "desks");
 	m_fighter->setChecked(m_plan.IsFighter());
+	m_planKind->setCurrentIndex(qMax(0, m_planKind->findData(m_plan.IsBuilding() ? "building" : m_plan.IsFighter()
+			? "fighter" : m_plan.station ? "station" : "ship")));
 	m_fighterBanner->setVisible(m_plan.IsFighter());
 	m_updating = false;
 	RefreshBuilding();
@@ -3562,6 +3619,7 @@ QGroupBox* DesignerWindow::MakeBuildingBox()
 void DesignerWindow::RefreshBuilding()
 {
 	const bool building = m_plan.IsBuilding();
+	m_steps->setTabText(StepShip, building ? "1 Building" : "1 Ship");
 	m_buildingBox->setVisible(building);
 	m_buildingBanner->setVisible(building);
 	for(QWidget* w : m_shipOnly)

@@ -407,6 +407,9 @@ private:
 	// first page, and the ship-only rows it hides.
 	QLabel*			m_buildingBanner = 0;
 	QWidget*		m_areaRow = 0;
+	QComboBox*		m_planKind = 0;			// What the plan is: ship, station, fighter, building.
+	BuildingBrief	m_shelvedBrief;			// A building's brief while it is made something else.
+	bool			m_hasShelvedBrief = false;
 	QString			m_importBuilding;		// A building template while a model is imported as a building.
 	QWidget*		m_propRow = 0;
 	QWidget*		m_vehicleRow = 0;	// The vehicle a generic vehicle spot is for.

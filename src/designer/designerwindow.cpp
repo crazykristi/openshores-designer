@@ -330,7 +330,8 @@ bool* BuildItemSkip(TriPlan& plan, const QString& key, int index, int* deck, QSt
 			const QString kind = e.marking ? "markings" : e.weapon ? "weapons" : "contrails";
 			if(kind == key && n++ == index)
 				return found(e.skip, e.deck, cell(e.deck, e.cx, e.cy)
-						+ (e.marking == 1 ? ", flag" : e.marking == 2 ? ", name" : QString()));
+						+ (e.marking == 1 ? ", flag" : e.marking == 2 ? ", empire name" : e.marking == 3 ? ", ship name"
+								: e.marking == 4 ? ", captain's name" : QString()));
 		}
 		return 0;
 	}
@@ -1208,8 +1209,11 @@ QWidget* DesignerWindow::MakeRoomPage()
 		m_markingKind = new QComboBox;
 		m_markingKind->addItem("Empire flag", 1);
 		m_markingKind->addItem("Empire name", 2);
+		m_markingKind->addItem("Ship name", 3);
+		m_markingKind->addItem("Captain's name", 4);
 		m_markingKind->setToolTip("What goes on the hull: the owner's flag (a rectangle 2/3 as high as it is wide; the "
-								  "game keeps the flag's own shape inside it) or the empire's name (1/4 as high).");
+								  "game keeps the flag's own shape inside it), or a name 1/4 as high: the empire's, the "
+								  "ship's own or its captain's.");
 		markingForm->addRow("Marking", m_markingKind);
 		m_markingSize = new QDoubleSpinBox;
 		m_markingSize->setRange(1, 500);
@@ -3942,9 +3946,12 @@ void DesignerWindow::LetGoOfModel()
 // The AI's import_model: as the menu's, with no questions asked; 'notes'
 // gets what the import says about the model (closed or not, a better length).
 bool DesignerWindow::AiImportModel(const QString& modelFile, const PlanFromModelOptions& options, bool fighter,
-								   bool keepModel, QString& notes, QString& error)
+								   bool keepModel, QString& notes, QString& error, const QString& building)
 {
-	if(!ImportModel(modelFile, options, false, fighter))
+	m_importBuilding = fighter ? QString() : building;
+	const bool made = ImportModel(modelFile, options, false, fighter);
+	m_importBuilding.clear();		// Also when it failed: the next import is a ship again.
+	if(!made)
 	{
 		error = m_status->text();
 		return false;

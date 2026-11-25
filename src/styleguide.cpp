@@ -303,14 +303,9 @@ const Style kStyles[] = {
 		{ "accent", "Hazard", "#d9b62b", -1, 0, 30, .1, 0, 0, "hazard", "#1d1d1d", 0, .3 } }, 3,
 	  "hullStyle angular. Grey base; olive bands per module of decks; hazard stripes only round doors (small boxes on "
 	  "deck 1).", "" },
-	{ "Organic_Biomimetic",
-	  "Curved, flowing, natural forms; shell- or bone-like structures; smooth surfaces that seem grown, not built.",
-	  "curved, flowing", "soft, diffused",
-	  { { "base", "Shell", "#e6ddcf", -1, 0, 150, .3, 0, 0, "plaster", "#cbbfa8", 0, .05 },
-		{ "bands", "Bone", "#cbbfa8", -1, 0, 60, .1, 0, 0 },
-		{ "neon", "Soft glow", "#bfe8ff", -1, 0, 100, .1, .4, "#bfe8ff" } }, 3,
-	  "hullStyle smooth with high smoothing (set_settings smoothing 8-10); ellipses on every deck, their sizes changing "
-	  "a little from deck to deck. Shell base, bone bands, a soft glow band.", "" },
+	// Organic / biomimetic is left out: its continuous shells cannot be drawn
+	// in cells and decks (stacked ellipses came out as a wedding cake: the
+	// user, 2026-11-24); back once generated geometry can make shells (#11).
 };
 
 QJsonObject PaintObject(const Paint& p)

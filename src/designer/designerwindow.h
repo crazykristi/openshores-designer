@@ -102,7 +102,8 @@ public:
 	bool	AiSavePlan(const QString& fileName, QString& error);
 	bool	AiOpenPlan(const QString& fileName, QString& error);
 	bool	AiImportModel(const QString& modelFile, const PlanFromModelOptions& options, bool fighter, bool keepModel,
-						  QString& notes, QString& error);
+						  QString& notes, QString& error,
+			const QString& building = QString());
 	// Builds and saves the blueprint, even when the engine has errors (they
 	// are in 'report').
 	bool	AiSaveBlueprint(const QString& fileName, QString& report, QString& error);

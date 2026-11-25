@@ -3,6 +3,7 @@
 // see mcpserver.h.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include "building.h"
 #include "mcpserver.h"
 
 #include <QApplication>
@@ -299,8 +300,16 @@ QJsonArray McpServer::ToolDefinitions() const
 		p["lengthFeet"] = Prop("number", "Ships: how long the ship is made, in feet, fore to aft (150 if left out and no decks "
 							   "given). The model is scaled to it and sliced into decks.");
 		p["decks"] = Prop("integer", "Ships: how many decks high the model is made instead; its length follows from it.");
-		p["kind"] = Choice({ "ship", "fighter" }, "ship (the default) or fighter: a small craft at the model's real size, "
-						   "with 2.5 ft cells (experimental).");
+		p["kind"] = Choice({ "ship", "fighter", "building" }, "ship (the default); fighter: a small craft at the model's "
+						   "real size, with 2.5 ft cells (experimental); building: deck 1 stands on the ground, and "
+						   "buildingType says what it is for.");
+		{
+			QStringList types;
+			for(const BuildingTemplate& t : AllBuildingTemplates())
+				types << t.key;
+			p["buildingType"] = Choice(types, "kind building: what the building is (office_block if left out); it can be "
+									   "changed later.");
+		}
 		p["keepModel"] = Prop("boolean", "true (the default): the plan keeps the model, and its own surface can be the hull. "
 							  "false: the model only gives the decks' outlines and is let go; the hull is shaped from the "
 							  "drawn cells, with far fewer faces.");
@@ -308,7 +317,7 @@ QJsonArray McpServer::ToolDefinitions() const
 		p["yUp"] = Prop("boolean", "The model was made with y up (many .obj and .gltf files are), not z up.");
 		p["threshold"] = Prop("number", "How much of a cell has to be inside the model to be hull, 0.05 to 1 (0.5 if left "
 							  "out): lower for a fuller hull, higher for a slimmer one.");
-		tools << Tool("import_model", "Starts a new plan from a 3D model, as the designer's New spaceship from a 3D model: "
+		tools << Tool("import_model", "Starts a new plan from a 3D model, as the designer's New spaceship (or building) from a 3D model: "
 					  "the model is sliced into decks and each deck's hull cells are drawn from it. Then draw the rooms, "
 					  "doors and the rest on them. Replaces the plan open now (undo takes it back). Look at the result with "
 					  "picture, and at the notes: a model that is not closed, or too small for its rooms, says so.", p, { "file" });
@@ -426,6 +435,15 @@ QJsonObject McpServer::CallTool(const QString& name, const QJsonObject& args)
 			return ToolResult(QString("There is no %1; list_files has the models there are.").arg(path), true);
 		PlanFromModelOptions options;
 		const bool fighter = args["kind"].toString() == "fighter";
+		QString building;
+		if(args["kind"].toString() == "building")
+		{
+			building = args["buildingType"].toString().trimmed();
+			if(building.isEmpty())
+				building = "office_block";
+			else if(!FindBuildingTemplate(building))
+				return ToolResult(QString("There is no building type %1.").arg(building), true);
+		}
 		if(args.contains("lengthFeet"))
 			options.lengthFeet = qBound(10.0, args["lengthFeet"].toDouble(), 20000.0);
 		if(args.contains("decks"))
@@ -437,7 +455,7 @@ QJsonObject McpServer::CallTool(const QString& name, const QJsonObject& args)
 		options.cellFeet = 0;		// The plan's own.
 		const bool keepModel = args.contains("keepModel") ? args["keepModel"].toBool() : true;
 		QString notes;
-		if(!m_window->AiImportModel(path, options, fighter, keepModel, notes, error))
+		if(!m_window->AiImportModel(path, options, fighter, keepModel, notes, error, building))
 			return ToolResult(error.isEmpty() ? QString("The model could not be read.") : error, true);
 		TriPlan plan = m_window->Plan();
 		return ToolResult(QString("Made a new plan from %1%2.\n%3\n\n%4").arg(QFileInfo(path).fileName(),

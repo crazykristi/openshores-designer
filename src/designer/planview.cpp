@@ -1447,7 +1447,7 @@ void PlanView::mousePressEvent(QMouseEvent* event)
 		emit AboutToChange();
 		auto toggle = [this](const TriRef& at) -> bool {
 			// One marking per triangle: a click takes away a flag or a name.
-			for(int marking = 1; marking <= 2; ++marking)
+			for(int marking = 1; marking <= 4; ++marking)
 			{
 				const int existing = m_plan->EmitterAt(at, false, marking);
 				if(existing >= 0)

@@ -1498,7 +1498,7 @@ QList<QPair<QString, QString> > TriPlan::BuildKinds()
 		{ "balconies", "Balconies" }, { "windows", "Windows" }, { "skylights", "Ceiling windows" },
 		{ "liveries", "Livery cuts (liveries are plain paint without)" }, { "ladders", "Ladders" }, { "hatches", "Doors in floors and ceilings" }, { "stairs", "Stairs and ramps" },
 		{ "ramps", "Ramps and ladders down from hull doors" }, { "parking", "Vehicle parking and landing spots" },
-		{ "contrails", "Contrail emitters" }, { "weapons", "Weapon emitters" }, { "markings", "Empire flags and names" },
+		{ "contrails", "Contrail emitters" }, { "weapons", "Weapon emitters" }, { "markings", "Empire flags and names, ship and captain names" },
 		{ "stations", "Stations" }, { "berths", "Berths" }, { "pads", "Transporter pads" },
 		{ "systems", "System volumes and service panels" }, { "paths", "Walk paths" }, { "decals", "Decals" },
 		{ "strokes", "Paint brushed in the 3D view" } };
@@ -2208,7 +2208,8 @@ bool TriPlan::Save(const QString& fileName, QString& error) const
 		o["x"] = e.cx;
 		o["y"] = e.cy;
 		o["side"] = e.k;
-		o["kind"] = e.marking == 1 ? "flag" : e.marking == 2 ? "name" : e.weapon ? "weapon" : "contrail";
+		o["kind"] = e.marking == 1 ? "flag" : e.marking == 2 ? "name" : e.marking == 3 ? "shipName" : e.marking == 4
+				? "captainName" : e.weapon ? "weapon" : "contrail";
 		o["size"] = e.sizeFeet;
 		if(e.weapon && e.module > 0)
 			o["module"] = e.module;
@@ -2670,7 +2671,10 @@ bool TriPlan::Load(const QString& fileName, QString& error)
 		e.cy = o["y"].toInt();
 		e.k = qBound(0, o["side"].toInt(), 3);
 		e.weapon = o["kind"].toString() == "weapon";
-		e.marking = o["kind"].toString() == "flag" ? 1 : o["kind"].toString() == "name" ? 2 : 0;
+		{
+			const QString kind = o["kind"].toString();
+			e.marking = kind == "flag" ? 1 : kind == "name" ? 2 : kind == "shipName" ? 3 : kind == "captainName" ? 4 : 0;
+		}
 		e.sizeFeet = o["size"].toDouble(e.sizeFeet);
 		e.module = e.weapon ? o["module"].toInt(0) : 0;
 		e.skip = o["skip"].toBool();

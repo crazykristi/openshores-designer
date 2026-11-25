@@ -2381,9 +2381,10 @@ static bool AddHullMarking(AuScDesign& design, const TriPlan& plan, const AuScTr
 	up.Unit();
 	AuPoint right = up.Cross(outward);
 	right.Unit();
-	const double w = qMax(1.0, e.sizeFeet), h = w * (e.marking == 2 ? .25 : 2. / 3.);
+	const double w = qMax(1.0, e.sizeFeet), h = w * (e.marking >= 2 ? .25 : 2. / 3.);
 	bool added = false;
-	AuScPart* part = AuScPart::Create(e.marking == 2 ? AuScPart::Part_EmpireName : AuScPart::Part_EmpireFlag);
+	AuScPart* part = AuScPart::Create(e.marking == 2 ? AuScPart::Part_EmpireName
+			: e.marking == 3 ? AuScPart::Part_ShipName : e.marking == 4 ? AuScPart::Part_CaptName : AuScPart::Part_EmpireFlag);
 	AuScScreen* screen = dynamic_cast<AuScScreen*>(part);
 	if(screen)
 	{
@@ -9057,8 +9058,9 @@ AuDesign* BuildPlanDesign(const TriPlan& drawn, const PlanBuildOptions& given, P
 			if(AddHullMarking(*design, plan, hull.tris, e))
 				++report.markings;
 			else
-				report.warnings << QString("An empire %1 on deck %2 found no hull to go on.")
-						.arg(e.marking == 2 ? "name" : "flag").arg(e.deck + 1);
+				report.warnings << QString("The %1 on deck %2 found no hull to go on.")
+						.arg(e.marking == 2 ? "empire name" : e.marking == 3 ? "ship name" : e.marking == 4
+						? "captain's name" : "empire flag").arg(e.deck + 1);
 			continue;
 		}
 		if(e.weapon)

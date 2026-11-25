@@ -312,7 +312,8 @@ struct PlanEmitter
 	// weapon emitter is a weapon bay of its own (the user, 2026-11-06).
 	int		module = 0;
 	// A marking instead of an emitter: 1 the owner's empire flag
-	// (AuScEmpireFlag), 2 the empire's name (AuScEmpireName), flat on the
+	// (AuScEmpireFlag), 2 the empire's name (AuScEmpireName), 3 the ship's
+	// name (AuScShipName), 4 the captain's name (AuScCaptName), flat on the
 	// nearest point of the hull, sizeFeet wide (a flag 2/3 as high, a name
 	// 1/4). The game draws the owner's flag or name on it.
 	int		marking = 0;
